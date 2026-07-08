@@ -12,12 +12,44 @@ auth:
 
 # Bambu Lab cloud account (required for Bambu printers)
 # No LAN mode or developer mode needed — works with standard cloud-connected printers.
+#
+# TOKEN ACQUISITION (recommended for SSO users):
+#   If you sign in with Google/Apple SSO, the email/password login won't work.
+#   Use the bambu-login CLI tool (option 2) for step-by-step browser token extraction:
+#
+#     1. Open https://bambulab.com/en/sign-in → Sign in with Google
+#     2. DevTools → Console → object.keys(localStorage)
+#     3. Find the key with value starting with 'eyJ' (JWT token)
+#     4. Run: bambu-login (select option 2) → paste the token
+#
+#   The token is saved to ~/.printer-dashboard/ and auto-loaded on server restart.
+#   Token lasts ~3 months; you only need to re-extract when it expires.
+#
+# EXAMPLE CONFIGURATIONS:
+#
+#   Option A: Email/password login (auto 2FA handling):
+#   bambu_account:
+#     email: "your-bambu-email@example.com"
+#     password: "your-bambu-password"
+#     region: "global"
+#
+#   Option B: Pre-obtained JWT token (for SSO users):
+#   bambu_account:
+#     user_id: "123456789"
+#     token: "eyJhbGciOiJSUzI1NiIs..."
+#     region: "global"
+#
+#   Option C: Token saved by bambu-login (simplest — no token in config.yaml):
+#   bambu_account:
+#     user_id: "123456789"
+#     region: "global"
+#
+#   The token file at ~/.printer-dashboard/bambu_token_*.json is loaded automatically.
 bambu_account:
-  email: "your-bambu-email@example.com"
-  password: "your-bambu-password"
-  # Alternatively, use a pre-obtained JWT token (avoids 2FA prompts):
-  # token: "eyJhbGciOiJSUzI1NiIs..."
-  # user_id: "123456789"
+  email: ""
+  password: ""
+  # user_id: ""
+  # token: ""
   region: "global"  # "global" or "china"
 
 printers:

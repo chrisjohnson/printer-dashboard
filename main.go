@@ -25,7 +25,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	srv, err := server.New(cfg)
+	srv, err := server.New(cfg, cfgPath)
 	if err != nil {
 		log.Fatalf("Failed to create server: %v", err)
 	}

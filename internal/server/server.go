@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"log"
 	"net/http"
+	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,84 +20,154 @@ import (
 
 // Server holds the HTTP server, printer registry, and dependencies.
 type Server struct {
-	cfg      *config.Config
-	http     *http.Server
-	mux      *http.ServeMux
-	printers map[string]printers.Printer
-	mu       sync.RWMutex
+	cfg        *config.Config
+	http       *http.Server
+	mux        *http.ServeMux
+	printers   map[string]printers.Printer
+	mu         sync.RWMutex
+	bambuCloud *bambu.BambuCloudClient // cached for onboarding/reload
+	configPath string                   // path to config.yaml for saving
+	printersCtx context.CancelFunc      // cancel for printer connection goroutines
+
+	// Onboarding provisional state (single-user, set during wizard)
+	onboardingMu        sync.Mutex
+	onboardingEmail     string // email for 2FA flow
+	onboardingToken     string
+	onboardingUserID    string
+	onboardingDevices   []bambu.DeviceInfo
+	onboardingCloud     *bambu.BambuCloudClient // partially-authenticated client
 }
 
 // New creates a new Server from the provided config.
-func New(cfg *config.Config) (*Server, error) {
+func New(cfg *config.Config, configPath string) (*Server, error) {
 	mux := http.NewServeMux()
 
 	s := &Server{
-		cfg:      cfg,
-		mux:      mux,
-		printers: make(map[string]printers.Printer),
+		cfg:        cfg,
+		mux:        mux,
+		printers:   make(map[string]printers.Printer),
+		configPath: configPath,
 		http: &http.Server{
 			Addr:    cfg.Listen,
 			Handler: mux,
 		},
 	}
 
-	// Authenticate with Bambu Cloud if we have Bambu printers
-	var bambuCloud *bambu.BambuCloudClient
-	if cfg.BambuAccount != nil {
-		bambuCloud = bambu.NewBambuCloudClient(cfg.BambuAccount.Region)
-		if cfg.BambuAccount.Token != "" {
-			if err := bambuCloud.LoginWithToken(cfg.BambuAccount.Token); err != nil {
-				log.Printf("WARNING: Bambu cloud token login failed: %v", err)
-			}
-		} else if cfg.BambuAccount.Email != "" && cfg.BambuAccount.Password != "" {
-			// Attempt login — if 2FA is required, we'll log a warning and the user
-			// can provide a pre-obtained token instead.
-			if err := bambuCloud.Login(cfg.BambuAccount.Email, cfg.BambuAccount.Password, nil); err != nil {
-				log.Printf("WARNING: Bambu cloud login failed (2FA may be required): %v", err)
-				log.Printf("  To fix: obtain a token manually and set it in config as 'bambu_account.token'")
-				log.Printf("  See PLAN.md or run external tools to get a token.")
+	s.initBambuCloud()
+	s.initPrinters()
+	s.registerRoutes()
+	return s, nil
+}
+
+// initBambuCloud sets up the Bambu cloud client and attempts authentication.
+func (s *Server) initBambuCloud() {
+	cfg := s.cfg
+	if cfg.BambuAccount == nil {
+		return
+	}
+
+	s.bambuCloud = bambu.NewBambuCloudClient(cfg.BambuAccount.Region)
+
+	// Token persistence: ~/.printer-dashboard/bambu_token_{email}.json
+	tokenPath := bambu.DefaultTokenPath(cfg.BambuAccount.Email)
+	if cfg.BambuAccount.Token != "" {
+		tokenPath = filepath.Join(bambu.DefaultTokenDir, "bambu_token.json")
+	}
+	s.bambuCloud.SetTokenFile(tokenPath)
+
+	// Authentication strategy (tried in order):
+	// 1. Token from config
+	// 2. Saved token from disk
+	// 3. Email/password login (may require 2FA)
+
+	authenticated := false
+
+	// Strategy 1: Token from config
+	if cfg.BambuAccount.Token != "" {
+		log.Printf("Trying Bambu cloud auth with config token...")
+		if err := s.bambuCloud.LoginWithToken(cfg.BambuAccount.Token); err != nil {
+			log.Printf("WARNING: Bambu cloud token from config rejected: %v", err)
+		} else {
+			authenticated = true
+		}
+	}
+
+	// Strategy 2: Saved token from disk
+	if !authenticated {
+		if loaded, err := s.bambuCloud.LoadToken(); err != nil {
+			log.Printf("WARNING: Could not load saved Bambu token: %v", err)
+		} else if loaded {
+			log.Printf("Loaded saved Bambu token from %s", tokenPath)
+			if s.bambuCloud.TokenValid() {
+				if _, err := s.bambuCloud.GetDevices(); err != nil {
+					log.Printf("WARNING: Saved Bambu token expired or invalid: %v", err)
+					s.bambuCloud.DeleteToken()
+				} else {
+					authenticated = true
+					log.Printf("Bambu cloud: saved token is valid, expires in %s",
+						bambu.FormatDuration(s.bambuCloud.TokenLifetimeLeft()))
+				}
+			} else {
+				log.Printf("Saved Bambu token expired (was valid for %s, delete and re-auth)",
+					bambu.FormatDuration(s.bambuCloud.TokenLifetimeLeft()))
+				s.bambuCloud.DeleteToken()
 			}
 		}
 	}
 
-	// Initialize printer clients from config
+	// Strategy 3: Email/password (best-effort)
+	if !authenticated && cfg.BambuAccount.Email != "" && cfg.BambuAccount.Password != "" {
+		log.Printf("Attempting Bambu cloud login with email/password...")
+		if err := s.bambuCloud.Login(cfg.BambuAccount.Email, cfg.BambuAccount.Password, nil); err != nil {
+			log.Printf("WARNING: Bambu cloud login failed (2FA may be required): %v", err)
+		} else {
+			authenticated = true
+		}
+	}
+
+	if !authenticated {
+		log.Printf("WARNING: No valid Bambu cloud authentication available.")
+		log.Printf("  Bambu printers will be skipped. Use the onboarding wizard to add printers.")
+	}
+}
+
+// initPrinters creates printer clients from config. Safe to call after config change.
+func (s *Server) initPrinters() {
+	cfg := s.cfg
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Clear existing printers
+	s.printers = make(map[string]printers.Printer)
+
 	for _, pdef := range cfg.Printers {
 		var p printers.Printer
 		switch pdef.Type {
 		case "bambu":
-			if bambuCloud == nil || bambuCloud.Token() == "" {
+			if s.bambuCloud == nil || s.bambuCloud.Token() == "" {
 				log.Printf("WARNING: printer %q requires Bambu cloud auth, skipping", pdef.Name)
 				continue
 			}
-			p = bambu.New(pdef, bambuCloud)
+			p = bambu.New(pdef, s.bambuCloud)
 		// case "snapmaker":
 		// 	p = snapmaker.New(pdef)
 		default:
-			log.Printf("WARNING: printer %q has unsupported type %q — skipping (add support in internal/printers/)", pdef.Name, pdef.Type)
+			log.Printf("WARNING: printer %q has unsupported type %q — skipping", pdef.Name, pdef.Type)
 			continue
 		}
 		s.printers[pdef.ID] = p
 		log.Printf("Registered printer: %s (%s)", pdef.Name, pdef.Type)
 	}
-
-	s.registerRoutes()
-	return s, nil
 }
 
 // Start begins the HTTP server and printer connections, blocks until ctx cancels.
 func (s *Server) Start(ctx context.Context) error {
 	// Start printer connection loops in background
 	printerCtx, cancelPrinters := context.WithCancel(context.Background())
+	s.printersCtx = cancelPrinters
 	defer cancelPrinters()
 
-	for _, p := range s.printers {
-		go func(printer printers.Printer) {
-			log.Printf("Connecting to printer: %s", printer.Name())
-			if err := printer.Connect(printerCtx); err != nil {
-				log.Printf("Printer %s disconnected with error: %v", printer.Name(), err)
-			}
-		}(p)
-	}
+	s.connectAllPrinters(printerCtx)
 
 	// Start HTTP server
 	errCh := make(chan error, 1)
@@ -115,9 +189,63 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
+// connectAllPrinters launches all registered printer connection goroutines.
+func (s *Server) connectAllPrinters(ctx context.Context) {
+	for _, p := range s.printers {
+		go func(printer printers.Printer) {
+			log.Printf("Connecting to printer: %s", printer.Name())
+			if err := printer.Connect(ctx); err != nil {
+				log.Printf("Printer %s disconnected with error: %v", printer.Name(), err)
+			}
+		}(p)
+	}
+}
+
+// reloadConfig re-reads config.yaml, re-initializes Bambu cloud + printers.
+// Used after onboarding writes a new config.
+func (s *Server) reloadConfig() error {
+	// Cancel existing printer connections
+	if s.printersCtx != nil {
+		s.printersCtx()
+	}
+
+	// Re-read config
+	cfg, err := config.Load(s.configPath)
+	if err != nil {
+		return fmt.Errorf("reloading config: %w", err)
+	}
+	s.cfg = cfg
+
+	// Re-init Bambu cloud
+	s.bambuCloud = nil
+	s.initBambuCloud()
+
+	// Re-init printers
+	s.initPrinters()
+
+	// Restart connections
+	printerCtx, cancel := context.WithCancel(context.Background())
+	s.printersCtx = cancel
+	s.connectAllPrinters(printerCtx)
+
+	log.Printf("Configuration reloaded: %d printer(s) registered", len(s.printers))
+	return nil
+}
+
 func (s *Server) registerRoutes() {
 	// Web UI
 	s.mux.HandleFunc("GET /", s.handleIndex)
+
+	// Onboarding wizard
+	s.mux.HandleFunc("GET /onboarding", s.handleOnboardingStart)
+	s.mux.HandleFunc("GET /onboarding/bambu", s.handleOnboardingBambuLoginPage)
+	s.mux.HandleFunc("POST /onboarding/bambu/login", s.handleOnboardingBambuLogin)
+	s.mux.HandleFunc("GET /onboarding/bambu/code", s.handleOnboardingBambuCodePage)
+	s.mux.HandleFunc("POST /onboarding/bambu/code", s.handleOnboardingBambuCodeSubmit)
+	s.mux.HandleFunc("GET /onboarding/bambu/select", s.handleOnboardingBambuSelect)
+	s.mux.HandleFunc("POST /onboarding/bambu/save", s.handleOnboardingBambuSave)
+	s.mux.HandleFunc("GET /onboarding/snapmaker", s.handleOnboardingSnapmakerPage)
+	s.mux.HandleFunc("POST /onboarding/snapmaker/save", s.handleOnboardingSnapmakerSave)
 
 	// API
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -127,6 +255,19 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/resume", s.handleResume)
 	s.mux.HandleFunc("POST /api/printers/{id}/cancel", s.handleCancel)
 	s.mux.HandleFunc("POST /api/printers/{id}/skip", s.handleSkipObject)
+}
+
+// renderTemplate is a helper that executes a Go template and writes to the response.
+func renderTemplate(w http.ResponseWriter, tmpl string, data any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	t, err := template.New("page").Parse(tmpl)
+	if err != nil {
+		http.Error(w, "Template error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := t.Execute(w, data); err != nil {
+		log.Printf("Template execute error: %v", err)
+	}
 }
 
 // getPrinter safely retrieves a printer by ID from the registry.
@@ -154,102 +295,20 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // --- Web UI ---
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	printerCount := len(s.printers)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Printer Dashboard</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #111; color: #eee; padding: 20px; }
-    h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #fff; }
-    .printers { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-    .card { background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 16px; }
-    .card h2 { font-size: 1.1rem; margin-bottom: 8px; }
-    .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }
-    .status.printing { background: #2d7d46; }
-    .status.paused { background: #b8860b; }
-    .status.idle { background: #555; }
-    .status.error { background: #c0392b; }
-    .status.unknown { background: #666; }
-    .progress-bar { background: #333; height: 8px; border-radius: 4px; margin: 8px 0; overflow: hidden; }
-    .progress-bar .fill { background: #2d7d46; height: 100%; transition: width 0.5s; }
-    .temps { font-size: 0.85rem; color: #aaa; margin-top: 4px; }
-    .controls { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
-    .controls button { background: #333; color: #fff; border: 1px solid #555; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
-    .controls button:hover { background: #444; }
-    .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
-    #printer-list { margin-top: 16px; }
-  </style>
-</head>
-<body>
-  <h1>🖨 Printer Dashboard</h1>
-  <div class="printers" id="printer-list">
-    <p>Loading printers...</p>
-  </div>
-  <script>
-    async function loadPrinters() {
-      try {
-        const res = await fetch('/api/printers');
-        const data = await res.json();
-        const container = document.getElementById('printer-list');
-        if (!data.printers || data.printers.length === 0) {
-          container.innerHTML = '<p>No printers configured.</p>';
-          return;
-        }
-        container.innerHTML = data.printers.map(p => renderCard(p)).join('');
-      } catch (e) {
-        document.getElementById('printer-list').innerHTML = '<p>Error loading printers.</p>';
-      }
-    }
 
-    function renderCard(p) {
-      const stateClass = p.state || 'unknown';
-      const progress = (p.progress * 100).toFixed(1);
-      const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
-      return '<div class="card" id="printer-' + p.id + '">' +
-        '<h2>' + escapeHtml(p.name) + ' <span class="status ' + stateClass + '">' + stateClass + '</span></h2>' +
-        '<div class="progress-bar"><div class="fill" style="width:' + progress + '%"></div></div>' +
-        '<div><strong>' + progress + '%</strong> ' + timeStr + '</div>' +
-        (p.current_file ? '<div style="font-size:0.8rem;color:#888;margin-top:4px">' + escapeHtml(p.current_file) + '</div>' : '') +
-        '<div class="temps">🔥 Bed: ' + p.bed_temp.toFixed(1) + '°C / ' + p.bed_target_temp.toFixed(1) + '°C &nbsp;|&nbsp; 🌡 Nozzle: ' + p.nozzle_temp.toFixed(1) + '°C / ' + p.nozzle_target_temp.toFixed(1) + '°C</div>' +
-        '<div class="controls">' +
-        '<button onclick="sendCmd(\'' + p.id + '\',\'pause\')" ' + (p.state !== 'printing' ? 'disabled' : '') + '>⏸ Pause</button>' +
-        '<button onclick="sendCmd(\'' + p.id + '\',\'resume\')" ' + (p.state !== 'paused' ? 'disabled' : '') + '>▶ Resume</button>' +
-        '<button onclick="sendCmd(\'' + p.id + '\',\'cancel\')" ' + (p.state !== 'printing' && p.state !== 'paused' ? 'disabled' : '') + '>⏹ Cancel</button>' +
-        '<button onclick="sendCmd(\'' + p.id + '\',\'skip\')" ' + (p.state !== 'printing' ? 'disabled' : '') + '>⏭ Skip</button>' +
-        '</div>' +
-        '</div>';
-    }
+	if printerCount == 0 {
+		// Show onboarding welcome page
+		renderTemplate(w, indexOnboardingTemplate, nil)
+		return
+	}
 
-    function formatTime(sec) {
-      const h = Math.floor(sec / 3600);
-      const m = Math.floor((sec % 3600) / 60);
-      return '⏱ ' + h + 'h ' + m + 'm left';
-    }
-
-    function escapeHtml(s) {
-      if (!s) return '';
-      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
-
-    async function sendCmd(id, cmd) {
-      try {
-        const res = await fetch('/api/printers/' + id + '/' + cmd, { method: 'POST' });
-        const data = await res.json();
-        if (!res.ok) alert('Error: ' + (data.error || res.statusText));
-      } catch (e) {
-        alert('Network error: ' + e.message);
-      }
-    }
-
-    loadPrinters();
-    setInterval(loadPrinters, 5000); // Poll every 5 seconds for now
-  </script>
-</body>
-</html>`)
+	// Show the dashboard
+	renderTemplate(w, indexDashboardTemplate, map[string]any{
+		"HasPrinters": true,
+	})
 }
 
 // --- API Handlers ---
@@ -265,6 +324,11 @@ func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 		printerList = append(printerList, p.Status())
 	}
 	s.mu.RUnlock()
+
+	// Sort by name (case-insensitive) for consistent ordering
+	sort.Slice(printerList, func(i, j int) bool {
+		return strings.ToLower(printerList[i].Name) < strings.ToLower(printerList[j].Name)
+	})
 
 	writeJSON(w, 200, map[string]any{"printers": printerList})
 }

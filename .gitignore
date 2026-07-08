@@ -1,6 +1,7 @@
 # Binaries
 printer-dashboard
 printer-dashboard.exe
+bambu-login
 *.out
 *.test
 

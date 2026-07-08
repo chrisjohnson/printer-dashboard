@@ -36,9 +36,9 @@ Scoped, prioritised, ready to pick up.
 - [ ] **Dockerfile + Docker Compose** — Multi-stage build and `docker compose up` for full stack.
 - [ ] **Retry MQTT connect on failure** — Bambu client should retry initial connection in a loop.
 - [ ] **Graceful printer disconnect on shutdown** — Ensure printers disconnect cleanly when server stops.
-- [ ] **Run `bambu-login` to get JWT token** — User runs CLI tool to authenticate with Bambu Cloud.
-
 ---
+
+
 
 ## 🏗 In Progress
 
@@ -59,7 +59,11 @@ Scoped, prioritised, ready to pick up.
 - [x] **Skip object support** — UI button + Bambu command for skip-object.
 - [x] **Configuration file** — YAML config loader with Bambu account support.
 - [x] **Bambu Cloud authentication** — Auth module with email/password login, 2FA handling, token management.
-- [x] **`bambu-login` CLI tool** — Interactive login to get JWT token and user ID for config.
+- [x] **`bambu-login` CLI tool** — Interactive login to get JWT token and user ID for config (email/password + SSO browser mode).
+- [x] **SSO browser token extraction support** — CLI tool option 2 walks Google SSO users through extracting JWT from devtools.
+- [x] **Token persistence** — Token saved to `~/.printer-dashboard/`, auto-loaded on server restart, ~3 month lifetime.
+- [x] **Onboarding wizard (web UI)** — Full browser-based setup flow: printer type selection, Bambu Cloud login with 2FA, device selection, config save, and server hot-reload. Snapmaker manual-entry form also included. [Implemented, uncommitted.]
+- [x] **Config hot-reload** — Server re-reads `config.yaml` and reconnects printers without restart (via `reloadConfig()`). Used by onboarding save flow.
 
 ---
 

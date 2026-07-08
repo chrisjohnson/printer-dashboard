@@ -8,23 +8,30 @@ type report struct {
 	Camera *cameraStatus `json:"camera,omitempty"`
 }
 
+// infoData captures the H2S-style ambient/chamber temperature at print.info.temp.
+type infoData struct {
+	Temp *float64 `json:"temp"`
+}
+
 type printStatus struct {
-	GcodeState       string  `json:"gcode_state"`
-	GcodeFile        string  `json:"gcode_file"`
-	McPercent        *int    `json:"mc_percent"`
-	McRemainingTime  *int    `json:"mc_remaining_time"`
-	BedTemper        float64 `json:"bed_temper"`
-	BedTarget        float64 `json:"bed_target"`
-	NozzleTemper     float64 `json:"nozzle_temper"`
-	NozzleTarget     float64 `json:"nozzle_target"`
-	LayerNum         *int    `json:"layer_num"`
-	TotalLayerNum    *int    `json:"total_layer_num"`
-	WifiSignal       *int    `json:"wifi_signal"`
-	HomeFlag         int     `json:"home_flag"`
-	StgCur           *int    `json:"stg_cur"` // current stage
-	StgTotal         *int    `json:"stg_total"`
-	PrintError       *int    `json:"print_error"`
-	Lifecycle        *string `json:"lifecycle,omitempty"`
+	GcodeState       string   `json:"gcode_state"`
+	GcodeFile        string   `json:"gcode_file"`
+	McPercent        *int     `json:"mc_percent"`
+	McRemainingTime  *int     `json:"mc_remaining_time"`
+	BedTemper        *float64 `json:"bed_temper"`
+	BedTarget        *float64 `json:"bed_target_temper"`
+	NozzleTemper     *float64 `json:"nozzle_temper"`
+	NozzleTarget     *float64 `json:"nozzle_target_temper"`
+	ChamberTemper    *float64 `json:"chamber_temper"`
+	Info             *infoData `json:"info"`
+	LayerNum         *int     `json:"layer_num"`
+	TotalLayerNum    *int     `json:"total_layer_num"`
+	WifiSignal       *string  `json:"wifi_signal"`
+	HomeFlag         int      `json:"home_flag"`
+	StgCur           *int     `json:"stg_cur"` // current stage
+	StgTotal         *int     `json:"stg_total"`
+	PrintError       *int     `json:"print_error"`
+	Lifecycle        *string  `json:"lifecycle,omitempty"`
 }
 
 type cameraStatus struct {
@@ -52,10 +59,12 @@ func mapState(bambuState string) string {
 		return "complete"
 	case "FAILED":
 		return "error"
-	case "IDLE":
+	case "IDLE", "":
 		return "idle"
 	case "PREPARE":
 		return "printing" // warming up, homing, etc.
+	case "STANDBY":
+		return "idle"
 	default:
 		return "unknown"
 	}

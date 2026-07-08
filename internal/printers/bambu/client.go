@@ -197,10 +197,27 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// Map states
 	s.State = mapState(p.GcodeState)
 	s.CurrentFile = p.GcodeFile
-	s.BedTemp = p.BedTemper
-	s.BedTargetTemp = p.BedTarget
-	s.NozzleTemp = p.NozzleTemper
-	s.NozzleTargetTemp = p.NozzleTarget
+
+	// Temperatures — only update when the field is present in the report.
+	// Many status reports omit temperature fields, and Go defaults *float64 to nil.
+	if p.BedTemper != nil {
+		s.BedTemp = *p.BedTemper
+	}
+	if p.NozzleTemper != nil {
+		s.NozzleTemp = *p.NozzleTemper
+	}
+	if p.BedTarget != nil {
+		s.BedTargetTemp = *p.BedTarget
+	}
+	if p.NozzleTarget != nil {
+		s.NozzleTargetTemp = *p.NozzleTarget
+	}
+	if p.ChamberTemper != nil {
+		s.ChamberTemp = *p.ChamberTemper
+	} else if p.Info != nil && p.Info.Temp != nil {
+		// H2S (O1S) reports chamber temp via info.temp instead of chamber_temper
+		s.ChamberTemp = *p.Info.Temp
+	}
 
 	if p.McPercent != nil {
 		s.Progress = float64(*p.McPercent) / 100.0

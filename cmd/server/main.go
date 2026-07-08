@@ -21,7 +21,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv, err := server.New(cfg)
+	srv, err := server.New(cfg, cfgPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating server: %v\n", err)
 		os.Exit(1)

@@ -12,7 +12,8 @@ A self-hosted web application that provides a unified dashboard for monitoring a
 
 **Key constraint:** No LAN mode or developer mode is enabled on the Bambu printers.
 All Bambu communication goes through Bambu's cloud infrastructure (`us.mqtt.bambulab.com:8883`),
-authenticated with a JWT token from the Bambu account login flow (email + password + 2FA).
+authenticated with a JWT token. The token can be obtained either via email/password (with 2FA)
+or via browser-based SSO (Google/Apple) — the `bambu-login` CLI supports both methods.
 
 The Snapmaker U1 is accessed directly on the LAN via Paxx's REST API.
 
@@ -85,7 +86,7 @@ The dashboard is exposed through a public reverse proxy (Caddy / nginx) with aut
 
 ### Data Flow
 
-1. **Authentication** — Server logs into Bambu Cloud API with email/password (handling 2FA if needed). Gets JWT token and user ID.
+1. **Authentication** — Server authenticates via pre-obtained JWT token (from config or `~/.printer-dashboard/` persisted file). Token can come from email/password login or browser-based SSO extraction. The `bambu-login` CLI handles both flows and persists the token to disk.
 2. **Ingestion** — Server connects to each printer and subscribes to status updates.
    - Bambu: Connect to **cloud MQTT** (`us.mqtt.bambulab.com:8883`), subscribe to `device/{dev_id}/report`
    - Snapmaker: poll REST endpoint + WebSocket for push events (local LAN)
@@ -108,6 +109,7 @@ The dashboard is exposed through a public reverse proxy (Caddy / nginx) with aut
 
 #### Authentication Flow
 
+**Email/password (option 1):**
 ```
 POST /v1/user-service/user/login  (email + password)
   → 2FA: email verification code required
@@ -119,6 +121,12 @@ GET /v1/design-user-service/my/preference  (Bearer token)
 GET /v1/iot-service/api/user/bind  (Bearer token)
   → Returns: list of devices with dev_id, dev_access_code, etc.
 ```
+
+**Google SSO (option 2):**
+The email/password endpoint does not work for SSO accounts. Instead, the user extracts a JWT
+token from the browser's local storage after logging in at https://bambulab.com/en/sign-in with Google SSO.
+This token is fed to `LoginWithToken()` and validated against the Bambu preference endpoint.
+The `bambu-login` CLI tool provides step-by-step instructions for this process.
 
 #### Cloud MQTT Connection
 
@@ -212,16 +220,17 @@ printer-dashboard/
 
 ### Phase 1 — Core (now)
 - [x] Git repo, kanban, plan
-- [ ] Go module + scaffolding
-- [ ] Printer interface
-- [ ] Bambu MQTT client (connect, subscribe, parse reports)
-- [ ] In-memory printer state
-- [ ] REST API (GET /printers, GET /printers/:id)
-- [ ] Minimal web UI (list printers, show status + progress)
+- [x] Go module + scaffolding
+- [x] Printer interface
+- [x] Bambu MQTT client (connect, subscribe, parse reports)
+- [x] In-memory printer state
+- [x] REST API (GET /printers, GET /printers/:id)
+- [x] Minimal web UI (list printers, show status + progress)
+- [x] Bambu cloud auth with token persistence + SSO support
 
 ### Phase 2 — Control
-- [ ] Pause / Resume / Cancel commands via REST
-- [ ] Skip object command
+- [x] Pause / Resume / Cancel commands via REST
+- [x] Skip object command
 - [ ] Camera stream proxy
 - [ ] WebSocket push for live updates
 - [ ] Auth (login page, sessions)
@@ -262,4 +271,4 @@ printer-dashboard/
 
 ---
 
-*Last updated: 2026-07-08*
+*Last updated: 2026-07-09*

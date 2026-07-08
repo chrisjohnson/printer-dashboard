@@ -14,6 +14,7 @@ type Config struct {
 	BambuAccount *BambuAccount  `yaml:"bambu_account,omitempty"` // Bambu cloud account
 	Printers     []PrinterDef   `yaml:"printers"`
 	Cameras      []CameraDef    `yaml:"cameras"`
+	configPath   string         // path to the YAML file (set by Load, used by Save)
 }
 
 // AuthConfig holds dashboard authentication settings.
@@ -63,7 +64,8 @@ func Load(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Listen: ":8080",
+		Listen:     ":8080",
+		configPath: path,
 	}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
@@ -74,6 +76,22 @@ func Load(path string) (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// Save writes the config back to its YAML file, preserving existing content
+// by doing a round-trip through the struct.
+func (c *Config) Save() error {
+	if c.configPath == "" {
+		return fmt.Errorf("config path not set")
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("marshaling config: %w", err)
+	}
+	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
+		return fmt.Errorf("writing config file: %w", err)
+	}
+	return nil
 }
 
 func (c *Config) validate() error {
@@ -98,8 +116,9 @@ func (c *Config) validate() error {
 		if c.BambuAccount == nil {
 			return fmt.Errorf("bambu printers configured but 'bambu_account' section is missing")
 		}
-		if c.BambuAccount.Token == "" && (c.BambuAccount.Email == "" || c.BambuAccount.Password == "") {
-			return fmt.Errorf("bambu_account requires either 'token' or 'email' + 'password'")
+		if c.BambuAccount.Token == "" && c.BambuAccount.UserID == "" &&
+			(c.BambuAccount.Email == "" || c.BambuAccount.Password == "") {
+			return fmt.Errorf("bambu_account requires one of: 'token', 'user_id' (with token on disk), or 'email' + 'password'")
 		}
 	}
 
