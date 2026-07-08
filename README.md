@@ -31,10 +31,25 @@ go build -o printer-dashboard .
 
 Then open http://localhost:8080 in your browser.
 
-## Project Management
+## Testing
 
-See [`KANBAN.md`](KANBAN.md) for the current task board and  
-[`PLAN.md`](PLAN.md) for the full architecture plan.
+All new features are developed test-first (TDD). Tests use only the Go standard library
+(plus `gorilla/websocket` for WebSocket handler tests). Mocks are hand-written in `_test.go` files.
+
+```bash
+# Run all tests
+go test ./... -v -count=1
+
+# With race detector (always run before committing)
+go test ./... -race -count=1
+
+# Coverage report
+go test ./coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
+
+See [`KANBAN.md`](KANBAN.md) for the current task board,  
+[`PLAN.md`](PLAN.md) for the full architecture plan and testing standards.
 
 ## License
 

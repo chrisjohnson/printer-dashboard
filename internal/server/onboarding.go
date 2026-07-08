@@ -560,6 +560,40 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     <p style="color:#666;padding:20px;">Loading printers...</p>
   </div>
   <script>
+    window._printerCache = {};
+    window._wsReconnectDelay = 1000;
+
+    function mergeWithCache(p) {
+      const cached = window._printerCache[p.id] || {};
+      const merged = {};
+      // Copy all cached values first
+      Object.keys(cached).forEach(k => merged[k] = cached[k]);
+      // Override with new values (only if they're not null/undefined)
+      Object.keys(p).forEach(k => {
+        if (p[k] !== null && p[k] !== undefined) {
+          merged[k] = p[k];
+        }
+      });
+      window._printerCache[p.id] = merged;
+      return merged;
+    }
+
+    function updateCard(p) {
+      const container = document.getElementById('printer-list');
+      const card = document.getElementById('printer-' + p.id);
+      if (!card) {
+        // New printer appeared — rebuild entire list
+        loadPrinters();
+        return;
+      }
+      // Update printer count
+      const count = document.getElementById('printer-count');
+      const list = Object.keys(window._printerCache);
+      count.textContent = list.length + ' printer' + (list.length !== 1 ? 's' : '');
+      // Replace the card's outerHTML with a freshly rendered one
+      card.outerHTML = renderCard(p);
+    }
+
     function loadPrinters() {
       fetch('/api/printers')
         .then(r => r.json())
@@ -572,6 +606,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             container.innerHTML = '<p style="color:#666;padding:20px;">No printers configured. <a href="/onboarding" style="color:#0071e3;">Add one</a>.</p>';
             return;
           }
+          // Populate cache with full response
+          list.forEach(function(p) {
+            window._printerCache[p.id] = p;
+          });
           container.innerHTML = list.map(renderCard).join('');
         })
         .catch(() => {
@@ -645,8 +683,35 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .catch(() => alert('Network error'));
     }
 
+    function connectWebSocket() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = protocol + '//' + location.host + '/ws';
+      const ws = new WebSocket(wsUrl);
+
+      ws.onmessage = function(event) {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'printer_update') {
+          const merged = mergeWithCache(msg.printer);
+          updateCard(merged);
+        }
+      };
+
+      ws.onclose = function() {
+        setTimeout(function() {
+          // On reconnect, re-fetch full state to make sure we're in sync
+          loadPrinters();
+          connectWebSocket();
+        }, window._wsReconnectDelay);
+        window._wsReconnectDelay = Math.min(window._wsReconnectDelay * 2, 30000);
+      };
+
+      ws.onopen = function() {
+        window._wsReconnectDelay = 1000; // Reset on successful connection
+      };
+    }
+
     loadPrinters();
-    setInterval(loadPrinters, 5000);
+    connectWebSocket();
   </script>
 </body>
 </html>`

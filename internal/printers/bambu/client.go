@@ -22,6 +22,11 @@ type Client struct {
 	status     printers.PrinterStatus
 	mqttClient mqtt.Client
 	camURLs    []string
+
+	// StatusCh is an optional channel that receives the full printer status
+	// after each report parse. If nil, no status updates are emitted.
+	// The channel should be buffered to avoid blocking MQTT processing.
+	StatusCh chan printers.PrinterStatus
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -71,11 +76,21 @@ func (c *Client) Status() printers.PrinterStatus {
 	return c.status
 }
 
-// setStatus updates the cached status under the write lock.
+// setStatus updates the cached status under the write lock and sends the
+// updated status on StatusCh if configured. The send is non-blocking to avoid
+// slowing down MQTT processing.
 func (c *Client) setStatus(s printers.PrinterStatus) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.status = s
+	c.mu.Unlock()
+
+	if c.StatusCh != nil {
+		select {
+		case c.StatusCh <- s:
+		default:
+			// Channel full, drop update (reader is slow)
+		}
+	}
 }
 
 // Connect establishes the cloud MQTT connection and begins listening for reports.
@@ -196,7 +211,9 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 
 	// Map states
 	s.State = mapState(p.GcodeState)
-	s.CurrentFile = p.GcodeFile
+	if p.GcodeFile != nil && *p.GcodeFile != "" {
+		s.CurrentFile = *p.GcodeFile
+	}
 
 	// Temperatures — only update when the field is present in the report.
 	// Many status reports omit temperature fields, and Go defaults *float64 to nil.

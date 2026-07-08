@@ -15,7 +15,7 @@ type infoData struct {
 
 type printStatus struct {
 	GcodeState       string   `json:"gcode_state"`
-	GcodeFile        string   `json:"gcode_file"`
+	GcodeFile        *string  `json:"gcode_file"`
 	McPercent        *int     `json:"mc_percent"`
 	McRemainingTime  *int     `json:"mc_remaining_time"`
 	BedTemper        *float64 `json:"bed_temper"`

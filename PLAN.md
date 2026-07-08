@@ -227,6 +227,8 @@ printer-dashboard/
 - [x] REST API (GET /printers, GET /printers/:id)
 - [x] Minimal web UI (list printers, show status + progress)
 - [x] Bambu cloud auth with token persistence + SSO support
+- [x] Comprehensive unit tests across all packages (parser, commands, config, auth, client, server, onboarding)
+- [x] TDD mandate adopted — all new code written test-first
 
 ### Phase 2 — Control
 - [x] Pause / Resume / Cancel commands via REST
@@ -245,7 +247,7 @@ printer-dashboard/
 - [ ] Rate limiting
 - [ ] HTTPS / TLS configuration
 - [ ] Public deployment guide (reverse proxy, env vars)
-- [ ] Testing (unit + integration)
+- [ ] Integration tests with real MQTT broker or recorded fixtures
 - [ ] Prometheus metrics (optional)
 
 ---
@@ -264,10 +266,51 @@ printer-dashboard/
 ## 8. Development Workflow
 
 1. Work natively on macOS (Go toolchain, no Docker required for dev).
-2. Test with real printers on LAN.
-3. Use `config.example.yaml` (committed) + `config.yaml` (gitignored).
-4. Commit after every logical chunk.
-5. Docker multi-stage build for production.
+2. **TDD:** Write the test first → see it fail → write implementation → see it pass → refactor.
+3. Run `go test ./... -race -count=1` before every commit.
+4. Use `config.example.yaml` (committed) + `config.yaml` (gitignored).
+5. Commit after every logical chunk.
+6. PR reviews verify test coverage meets targets (≥85% new code, ≥70% existing).
+7. Docker multi-stage build for production.
+
+## 9. Testing & TDD Workflow
+
+### Philosophy
+All new code is developed test-first (TDD). Tests are written in `_test.go` files alongside the code they test, using only the Go standard library. Mocks are hand-written in `_test.go` files — no external mock framework is needed or used.
+
+### Test structure
+- **Pure functions** (parsers, commands, mappers): 100% coverage target, table-driven tests.
+- **HTTP handlers**: Use `httptest.Server` for end-to-end routing and `MockPrinter` for decoupling from real printers.
+- **MQTT client**: Test `handleReport` parsing logic directly; mock the MQTT connection layer.
+- **Auth/API client**: Use `httptest.Server` to simulate external API endpoints.
+- **Config**: Use `t.TempDir()` for isolated file I/O in tests.
+
+### Running tests
+```bash
+go test ./... -v -count=1            # All tests
+go test ./... -race -count=1         # With race detector
+go test ./... -coverprofile=c.out    # Coverage report
+go tool cover -html=c.out            # View in browser
+```
+
+### Coverage targets
+| Package | Target |
+|---|---|
+| `internal/printers/bambu/parser.go` | 100% |
+| `internal/printers/bambu/commands.go` | 100% |
+| `internal/printers/bambu/auth.go` | ≥ 90% |
+| `internal/printers/bambu/client.go` | ≥ 85% |
+| `internal/config/config.go` | ≥ 95% |
+| `internal/server/server.go` | ≥ 80% |
+| `internal/server/onboarding.go` | ≥ 80% |
+| `internal/ws/hub.go` (future) | 100% |
+| `internal/ws/client.go` (future) | ≥ 90% |
+
+### Preventing data flicker
+One specific concern identified during development is **UI flickering** caused by status fields transitioning through zero/empty values during update cycles. All status update paths must:
+- Preserve previous field values when the incoming report doesn't supply new values (already done: pointer-field semantics in `handleReport`).
+- Never clear and re-populate a status struct in two steps — always atomically swap the full status.
+- The frontend must hold previous values and only update fields that actually changed.
 
 ---
 

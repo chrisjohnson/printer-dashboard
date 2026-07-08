@@ -16,6 +16,8 @@ import (
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers/bambu"
+	"github.com/chrisjohnson/printer-dashboard/internal/ws"
+	"github.com/gorilla/websocket"
 )
 
 // Server holds the HTTP server, printer registry, and dependencies.
@@ -36,6 +38,9 @@ type Server struct {
 	onboardingUserID    string
 	onboardingDevices   []bambu.DeviceInfo
 	onboardingCloud     *bambu.BambuCloudClient // partially-authenticated client
+
+	// wsHub manages WebSocket connections for real-time status updates.
+	wsHub *ws.Hub
 }
 
 // New creates a new Server from the provided config.
@@ -52,6 +57,10 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 			Handler: mux,
 		},
 	}
+
+	// Initialize WebSocket hub for real-time status updates
+	s.wsHub = ws.NewHub()
+	go s.wsHub.Run()
 
 	s.initBambuCloud()
 	s.initPrinters()
@@ -148,7 +157,14 @@ func (s *Server) initPrinters() {
 				log.Printf("WARNING: printer %q requires Bambu cloud auth, skipping", pdef.Name)
 				continue
 			}
-			p = bambu.New(pdef, s.bambuCloud)
+			bp := bambu.New(pdef, s.bambuCloud)
+			if s.wsHub != nil {
+				// Set up a buffered channel for real-time status updates.
+				// The broadcast goroutine is started in connectAllPrinters
+				// so it can be cancelled with the printer context on reload.
+				bp.StatusCh = make(chan printers.PrinterStatus, 16)
+			}
+			p = bp
 		// case "snapmaker":
 		// 	p = snapmaker.New(pdef)
 		default:
@@ -189,9 +205,40 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 }
 
-// connectAllPrinters launches all registered printer connection goroutines.
+// connectAllPrinters launches all registered printer connection goroutines
+// and, for Bambu printers with a StatusCh, forwarding goroutines that
+// broadcast status updates to all connected WebSocket clients.
 func (s *Server) connectAllPrinters(ctx context.Context) {
-	for _, p := range s.printers {
+	for id, p := range s.printers {
+		// Start a status forwarding goroutine for Bambu printers with StatusCh.
+		if bp, ok := p.(*bambu.Client); ok && bp.StatusCh != nil && s.wsHub != nil {
+			printerID := id
+			go func(client *bambu.Client, pid string) {
+				log.Printf("[ws] starting status forwarder for printer %s", pid)
+				defer log.Printf("[ws] stopped status forwarder for printer %s", pid)
+				for {
+					select {
+					case status, ok := <-client.StatusCh:
+						if !ok {
+							return
+						}
+						msg := map[string]any{
+							"type":    "printer_update",
+							"printer": status,
+						}
+						data, err := json.Marshal(msg)
+						if err != nil {
+							continue
+						}
+						s.wsHub.Broadcast(data)
+					case <-ctx.Done():
+						return
+					}
+				}
+			}(bp, printerID)
+		}
+
+		// Start the printer connection goroutine (blocks until ctx cancelled).
 		go func(printer printers.Printer) {
 			log.Printf("Connecting to printer: %s", printer.Name())
 			if err := printer.Connect(ctx); err != nil {
@@ -232,6 +279,12 @@ func (s *Server) reloadConfig() error {
 	return nil
 }
 
+// wsUpgrader upgrades HTTP connections to WebSocket connections.
+// It allows all origins since the dashboard is a single-user application.
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
 func (s *Server) registerRoutes() {
 	// Web UI
 	s.mux.HandleFunc("GET /", s.handleIndex)
@@ -246,6 +299,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /onboarding/bambu/save", s.handleOnboardingBambuSave)
 	s.mux.HandleFunc("GET /onboarding/snapmaker", s.handleOnboardingSnapmakerPage)
 	s.mux.HandleFunc("POST /onboarding/snapmaker/save", s.handleOnboardingSnapmakerSave)
+
+	// WebSocket
+	s.mux.HandleFunc("GET /ws", s.handleWebSocket)
 
 	// API
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -290,6 +346,25 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError is a helper to write a JSON error response.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// --- WebSocket ---
+
+// handleWebSocket upgrades an HTTP connection to a WebSocket connection and
+// registers the client with the hub. Clients receive real-time printer status
+// updates as JSON messages.
+func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("[ws] upgrade error: %v", err)
+		return
+	}
+
+	client := ws.NewClient(s.wsHub, conn)
+	s.wsHub.Register(client)
+
+	go client.WritePump()
+	go client.ReadPump()
 }
 
 // --- Web UI ---
