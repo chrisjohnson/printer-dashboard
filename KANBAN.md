@@ -47,7 +47,7 @@ Scoped, prioritised, ready to pick up.
 
 ## 🏗 In Progress
 
-> *Nothing currently in progress.*
+- [ ] **Bambu Lab MQTT client** — Connect to P1S & H2S via LAN MQTT, parse status reports, handle commands.
 
 ---
 
