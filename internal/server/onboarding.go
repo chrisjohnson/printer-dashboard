@@ -232,14 +232,12 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 
-		// Generate a short ID from the serial
-		shortID := strings.ToLower(dev.DevID)
-		if len(shortID) > 8 {
-			shortID = shortID[:8]
-		}
+		// Use the full serial as the printer ID to guarantee uniqueness.
+		// Serial numbers are unique identifiers for Bambu devices.
+		id := strings.ToLower(dev.DevID)
 
 		newPrinters = append(newPrinters, config.PrinterDef{
-			ID:     shortID,
+			ID:     id,
 			Name:   dev.Name,
 			Type:   "bambu",
 			Serial: dev.DevID,
