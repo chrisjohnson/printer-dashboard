@@ -27,35 +27,36 @@ Ideas / feature requests that haven't been scoped yet.
 
 Scoped, prioritised, ready to pick up.
 
-- [ ] **Project scaffolding** — Go module, directory layout, Dockerfile skeleton, CI config.
-- [ ] **Printer interface (Go)** — Define `Printer` interface (Status, Pause, Resume, Cancel, SkipObject, Cameras).
-- [ ] **Bambu Lab MQTT client** — Connect to P1S & H2S via LAN MQTT, parse status reports.
 - [ ] **Snapmaker Paxx client** — Connect to U1 via Paxx REST + WebSocket API.
-- [ ] **Polling / event loop** — Background goroutine that keeps printer state fresh.
-- [ ] **REST API layer** — Expose printer state and actions via HTTP endpoints.
-- [ ] **WebSocket events** — Push state changes / notifications to connected browsers.
-- [ ] **Basic web UI** — React (or vanilla) SPA showing printer cards with status, progress, controls.
 - [ ] **Camera stream proxy** — Proxy MJPEG/RTSP streams through the server with auth.
 - [ ] **Authentication** — Login page, session management, optional OIDC.
-- [ ] **Docker Compose** — Single `docker compose up` to run full stack.
-- [ ] **Job completion notifications** — Desktop/browser notifications when a print finishes.
+- [ ] **Job completion notifications** — Detect and notify when a print finishes.
 - [ ] **Error & failure notifications** — Detect and alert on printer errors, pauses, or thermal runaway.
-- [ ] **Skip object support** — UI button that sends skip-object command per printer protocol.
-- [ ] **Configuration file** — YAML/TOML config for printer definitions, credentials, camera URLs.
+- [ ] **Dockerfile + Docker Compose** — Multi-stage build and `docker compose up` for full stack.
+- [ ] **Retry MQTT connect on failure** — Bambu client should retry initial connection in a loop rather than exiting.
+- [ ] **Add real printer config** — Fill config.yaml with actual IPs, access codes, serials.
+- [ ] **Graceful printer disconnect on shutdown** — Ensure printers disconnect cleanly when server stops.
 
 ---
 
 ## 🏗 In Progress
 
-- [ ] **Bambu Lab MQTT client** — Connect to P1S & H2S via LAN MQTT, parse status reports, handle commands.
+> *Nothing currently in progress.*
 
 ---
 
 ## ✅ Done
 
-- [x] **Git repo initialised** — Empty repo with root `KANBAN.md`.
+- [x] **Git repo initialised** — Empty repo with root KANBAN.md.
 - [x] **Kanban board created** — This file.
-- [x] **Architecture plan drafted** — See `PLAN.md`.
+- [x] **Architecture plan drafted** — See PLAN.md.
+- [x] **Project scaffolding** — Go module, directory layout, skeleton files.
+- [x] **Printer interface (Go)** — Defined `Printer` interface (Status, Pause, Resume, Cancel, SkipObject, Cameras).
+- [x] **Bambu Lab MQTT client** — Connect to P1S & H2S via LAN MQTT, parse status reports, handle commands.
+- [x] **REST API layer** — Expose printer state and actions via HTTP endpoints (with real data).
+- [x] **Basic web UI** — HTML page with printer cards, progress bars, temperatures, and control buttons (polling-based).
+- [x] **Skip object support** — UI button + Bambu command for skip-object.
+- [x] **Configuration file** — YAML config loader with validation.
 
 ---
 
