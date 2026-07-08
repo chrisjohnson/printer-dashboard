@@ -4,13 +4,19 @@
 
 A self-hosted web application that provides a unified dashboard for monitoring and controlling multiple 3D printers:
 
-| Printer   | Firmware / API                              | Protocol                |
-|-----------|---------------------------------------------|-------------------------|
-| Bambu P1S | Pre-Bambu-Connect (stock LAN mode)          | MQTT (TLS, port 8883)  |
-| Bambu H2S | Bambu Connect firmware                      | MQTT (TLS, port 8883)  |
-| Snapmaker U1 | Paxx custom firmware                     | REST + WebSocket        |
+| Printer   | Firmware / API                              | Protocol                              |
+|-----------|---------------------------------------------|---------------------------------------|
+| Bambu P1S | Stock firmware (pre-Bambu Connect)          | **Cloud MQTT** via Bambu Cloud API    |
+| Bambu H2S | Bambu Connect firmware                      | **Cloud MQTT** via Bambu Cloud API    |
+| Snapmaker U1 | Paxx custom firmware                     | REST + WebSocket (local)              |
 
-All printers are on the same local LAN. The dashboard will be exposed through a public reverse proxy (Caddy / nginx) with authentication.
+**Key constraint:** No LAN mode or developer mode is enabled on the Bambu printers.
+All Bambu communication goes through Bambu's cloud infrastructure (`us.mqtt.bambulab.com:8883`),
+authenticated with a JWT token from the Bambu account login flow (email + password + 2FA).
+
+The Snapmaker U1 is accessed directly on the LAN via Paxx's REST API.
+
+The dashboard is exposed through a public reverse proxy (Caddy / nginx) with authentication.
 
 ---
 
@@ -37,8 +43,7 @@ All printers are on the same local LAN. The dashboard will be exposed through a 
                     └──────┬────────┘
                            │ HTTPS
                     ┌──────▼────────┐
-                    │  Reverse Proxy │  ← Caddy / nginx (TLS termination, rate-limit)
-                    │  (auth gate)   │
+                    │  Reverse Proxy │  ← Caddy / nginx (TLS, rate-limit, auth)
                     └──────┬────────┘
                            │
                     ┌──────▼────────┐
@@ -52,81 +57,98 @@ All printers are on the same local LAN. The dashboard will be exposed through a 
                     │  ├─────────┤  │
                     │  │  WS      │  │  ← real-time push to browser
                     │  ├─────────┤  │
-                    │  │  MQTT   │  │  ← Bambu printer comms
+                    │  │  MQTT   │  │  ← Bambu Cloud MQTT
                     │  ├─────────┤  │
-                    │  │  HTTP   │  │  ← Snapmaker / Paxx comms
+                    │  │  HTTP   │  │  ← Snapmaker / Paxx (local)
                     │  ├─────────┤  │
-                    │  │  Camera  │  │  ← proxy streams with auth
+                    │  │  Camera  │  │  ← proxy local + external streams
                     │  └─────────┘  │
                     └──────┬────────┘
                            │
-              ┌────────────┼────────────┐
-              │            │            │
-       ┌──────▼────┐ ┌────▼────┐ ┌────▼──────┐
-       │ Bambu P1S │ │Bambu H2S│ │Snapmaker  │
-       │ (MQTT)    │ │ (MQTT)  │ │ U1 (Paxx) │
-       │           │ │         │ │ REST+WS    │
-       └───────────┘ └─────────┘ └───────────┘
+              ┌────────────┼──────────────────┐
+              │            │                  │
+       ┌──────▼──────┐ ┌──▼────────┐  ┌──────▼──────┐
+       │  Bambu      │ │  Bambu    │  │ Snapmaker   │
+       │  Cloud MQTT │ │  Cloud    │  │ U1 (Paxx)   │
+       │  (us.mqtt.  │ │  API      │  │ REST+WS     │
+       │   bambulab  │ │  (auth,   │  │ (local LAN) │
+       │   .com:8883)│ │  devices) │  │             │
+       └──────┬──────┘ └───────────┘  └─────────────┘
+              │
+     ┌────────┴────────┐
+     │                 │
+  ┌──▼───┐        ┌───▼──┐
+  │ P1S  │        │ H2S  │
+  │      │        │      │
+  └──────┘        └──────┘
 ```
 
 ### Data Flow
 
-1. **Ingestion** — Server connects to each printer and subscribes to status updates.
-   - Bambu: MQTT subscribe to `device/{serial}/report`
-   - Snapmaker: poll REST endpoint + WebSocket for push events
-2. **State store** — In-memory struct per printer, protected by `sync.RWMutex`. (No DB needed initially.)
-3. **Web push** — On state change, broadcast via WebSocket to all authenticated browser sessions.
-4. **Commands** — Browser sends REST POST → server translates to printer-native command → sends to printer.
-5. **Cameras** — Server proxies MJPEG streams, injecting auth check before forwarding raw frames.
+1. **Authentication** — Server logs into Bambu Cloud API with email/password (handling 2FA if needed). Gets JWT token and user ID.
+2. **Ingestion** — Server connects to each printer and subscribes to status updates.
+   - Bambu: Connect to **cloud MQTT** (`us.mqtt.bambulab.com:8883`), subscribe to `device/{dev_id}/report`
+   - Snapmaker: poll REST endpoint + WebSocket for push events (local LAN)
+3. **State store** — In-memory struct per printer, protected by `sync.RWMutex`. (No DB needed initially.)
+4. **Web push** — On state change, broadcast via WebSocket to all authenticated browser sessions.
+5. **Commands** — Browser sends REST POST → server translates to printer-native command → publishes to cloud MQTT `device/{dev_id}/request`.
+6. **Cameras** — Server proxies local MJPEG streams (port 6000 for Bambu, or external RTSP cameras), injecting auth check before forwarding raw frames. Remote camera requires TUTK SDK or Bambu Handy app.
 
 ---
 
 ## 4. Printer API Research
 
-### 4.1 Bambu Lab (P1S & H2S)
+### 4.1 Bambu Lab (P1S & H2S) — Cloud API + Cloud MQTT
 
-**Connection:**
-- LAN-only mode: MQTT over TLS on port 8883
-- Username: `bblp` (fixed)
-- Password: printer's **access code** (found in Settings → Network → LAN mode)
-- Client ID: any unique string
-- CA cert: Bambu's published CA (self-signed on printer, need to extract or trust on first connect)
+**Constraint:** No LAN mode. No Developer mode. Both printers use standard cloud connectivity.
 
-**Topics:**
-- `device/{serial}/report` — Printer pushes JSON status ~1-2 sec interval
-- `device/{serial}/request` — Server sends commands here
-- `device/{serial}/upload` — For file uploads
+**Architecture:**
+1. **Cloud API** (`https://api.bambulab.com`) — Used for authentication and device discovery
+2. **Cloud MQTT** (`us.mqtt.bambulab.com:8883`) — Used for real-time printer status and commands
 
-**Report JSON highlights:**
-```json
-{
-  "print": {
-    "gcode_state": "RUNNING",
-    "gcode_file": "Benchy_0.2mm_ABS_5h48m.gcode",
-    "mc_percent": 42,
-    "mc_remaining_time": 12500,
-    "wifi_signal": -54,
-    "bed_temper": 65,
-    "nozzle_temper": 240,
-    "home_flag": 0,
-    "layer_num": 86,
-    "total_layer_num": 215
-  }
-}
+#### Authentication Flow
+
+```
+POST /v1/user-service/user/login  (email + password)
+  → 2FA: email verification code required
+  → Returns: JWT access token
+
+GET /v1/design-user-service/my/preference  (Bearer token)
+  → Returns: user_id (numeric)
+
+GET /v1/iot-service/api/user/bind  (Bearer token)
+  → Returns: list of devices with dev_id, dev_access_code, etc.
 ```
 
-**Commands (publish to `device/{serial}/request`):**
+#### Cloud MQTT Connection
+
+| Field    | Value                        |
+|----------|------------------------------|
+| Broker   | `us.mqtt.bambulab.com:8883` |
+| TLS      | Required (port 8883)        |
+| Username | `u_{user_id}`               |
+| Password | `{jwt_access_token}`        |
+
+**Topics:**
+- `device/{dev_id}/report` — Printer pushes JSON status ~0.5-2 sec interval
+- `device/{dev_id}/request` — Server sends commands here
+
+**Commands (publish to `device/{dev_id}/request`):**
 ```json
 {"print": {"command": "pause"}}
 {"print": {"command": "resume"}}
 {"print": {"command": "stop"}}
-{"print": {"sequence_id": "0", "command": "project_file", "param": "MetadataPlate"}}
+{"print": {"command": "project_file", "param": "skip_object"}}
 ```
 
 **Camera:**
-- MJPEG stream at `http://{printer_ip}:6000/?token={access_code}` (port 6000 for P1S)
-- Port 6000 also serves a still frame at `http://{printer_ip}:6000/?action=snapshot`
-- H2S may use port 6000 or 8884 depending on firmware
+- **Local access** (same LAN): MJPEG stream at `http://{printer_ip}:6000/?token={access_code}`
+  - The access code is available from the printer screen even without LAN mode
+  - Also still frame at `http://{printer_ip}:6000/?action=snapshot`
+- **Remote access**: Uses TUTK P2P protocol (proprietary SDK, used by Bambu Studio/Handy)
+  - Cloud API provides TTCode credentials for TUTK via `POST /v1/iot-service/api/user/ttcode`
+  - Not implementable without TUTK SDK — users should use Bambu Handy app for remote camera
+- **Future**: Bambu may add WebRTC-based cloud streaming (fields already present in API but null)
 
 ### 4.2 Snapmaker U1 (Paxx Firmware)
 

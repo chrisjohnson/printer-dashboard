@@ -23,7 +23,8 @@ type printStatus struct {
 	HomeFlag         int     `json:"home_flag"`
 	StgCur           *int    `json:"stg_cur"` // current stage
 	StgTotal         *int    `json:"stg_total"`
-	Lifecycle         *string `json:"lifecycle,omitempty"`
+	PrintError       *int    `json:"print_error"`
+	Lifecycle        *string `json:"lifecycle,omitempty"`
 }
 
 type cameraStatus struct {

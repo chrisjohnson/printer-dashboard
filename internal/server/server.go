@@ -37,12 +37,35 @@ func New(cfg *config.Config) (*Server, error) {
 		},
 	}
 
+	// Authenticate with Bambu Cloud if we have Bambu printers
+	var bambuCloud *bambu.BambuCloudClient
+	if cfg.BambuAccount != nil {
+		bambuCloud = bambu.NewBambuCloudClient(cfg.BambuAccount.Region)
+		if cfg.BambuAccount.Token != "" {
+			if err := bambuCloud.LoginWithToken(cfg.BambuAccount.Token); err != nil {
+				log.Printf("WARNING: Bambu cloud token login failed: %v", err)
+			}
+		} else if cfg.BambuAccount.Email != "" && cfg.BambuAccount.Password != "" {
+			// Attempt login — if 2FA is required, we'll log a warning and the user
+			// can provide a pre-obtained token instead.
+			if err := bambuCloud.Login(cfg.BambuAccount.Email, cfg.BambuAccount.Password, nil); err != nil {
+				log.Printf("WARNING: Bambu cloud login failed (2FA may be required): %v", err)
+				log.Printf("  To fix: obtain a token manually and set it in config as 'bambu_account.token'")
+				log.Printf("  See PLAN.md or run external tools to get a token.")
+			}
+		}
+	}
+
 	// Initialize printer clients from config
 	for _, pdef := range cfg.Printers {
 		var p printers.Printer
 		switch pdef.Type {
 		case "bambu":
-			p = bambu.New(pdef)
+			if bambuCloud == nil || bambuCloud.Token() == "" {
+				log.Printf("WARNING: printer %q requires Bambu cloud auth, skipping", pdef.Name)
+				continue
+			}
+			p = bambu.New(pdef, bambuCloud)
 		// case "snapmaker":
 		// 	p = snapmaker.New(pdef)
 		default:

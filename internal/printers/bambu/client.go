@@ -13,30 +13,39 @@ import (
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 )
 
-// Client implements the printers.Printer interface for Bambu Lab printers.
+// Client implements the printers.Printer interface for Bambu Lab printers
+// via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
 type Client struct {
 	cfg        config.PrinterDef
+	cloud      *BambuCloudClient
 	mu         sync.RWMutex
 	status     printers.PrinterStatus
 	mqttClient mqtt.Client
 	camURLs    []string
 }
 
-// New creates a new Bambu printer client from the given configuration.
-func New(cfg config.PrinterDef) *Client {
+// New creates a new Bambu printer client for cloud MQTT connectivity.
+//
+// The cloud client must already be authenticated (Login or LoginWithToken called).
+func New(cfg config.PrinterDef, cloud *BambuCloudClient) *Client {
 	status := printers.PrinterStatus{
 		ID:   cfg.ID,
 		Name: cfg.Name,
 		Type: "bambu",
 	}
 
-	// Build camera URLs (printer provides MJPEG on port 6000)
-	camURLs := []string{
-		fmt.Sprintf("http://%s:6000/?token=%s", cfg.Host, cfg.AccessCode),
+	// Build camera URLs if we have the local IP and access code.
+	// The local camera stream on port 6000 works even without LAN mode enabled.
+	camURLs := []string{}
+	if cfg.Host != "" && cfg.AccessCode != "" {
+		camURLs = append(camURLs,
+			fmt.Sprintf("http://%s:6000/?token=%s", cfg.Host, cfg.AccessCode),
+		)
 	}
 
 	return &Client{
 		cfg:     cfg,
+		cloud:   cloud,
 		status:  status,
 		camURLs: camURLs,
 	}
@@ -50,6 +59,8 @@ func (c *Client) Name() string { return c.cfg.Name }
 
 // CameraURLs returns the printer's camera stream URLs.
 func (c *Client) CameraURLs() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.camURLs
 }
 
@@ -67,21 +78,18 @@ func (c *Client) setStatus(s printers.PrinterStatus) {
 	c.status = s
 }
 
-// Connect establishes the MQTT connection and begins listening for reports.
+// Connect establishes the cloud MQTT connection and begins listening for reports.
 // Blocks until the context is cancelled (caller should run in a goroutine).
 func (c *Client) Connect(ctx context.Context) error {
-	broker := fmt.Sprintf("ssl://%s:%d", c.cfg.Host, c.cfg.Port)
-	if c.cfg.Port == 0 {
-		broker = fmt.Sprintf("ssl://%s:8883", c.cfg.Host)
-	}
+	broker := "ssl://" + MQTTBroker(c.cloud.region)
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
-		SetClientID(fmt.Sprintf("printer-dashboard-%s", c.cfg.ID)).
-		SetUsername("bblp").
-		SetPassword(c.cfg.AccessCode).
+		SetClientID(fmt.Sprintf("printer-dashboard-%s-%d", c.cfg.ID, time.Now().UnixNano())).
+		SetUsername(c.cloud.MQTTUsername()).
+		SetPassword(c.cloud.MQTTPassword()).
 		SetTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, // Bambu uses self-signed certs
+			InsecureSkipVerify: true, // Bambu's cloud cert may not be in system store
 		}).
 		SetOnConnectHandler(c.onConnect).
 		SetConnectionLostHandler(c.onConnectionLost).
@@ -94,10 +102,10 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	c.mqttClient = mqtt.NewClient(opts)
 
-	// Connect (with timeout)
+	// Connect with timeout
 	token := c.mqttClient.Connect()
 	if !token.WaitTimeout(15 * time.Second) {
-		return fmt.Errorf("bambu %s: MQTT connection timeout", c.cfg.ID)
+		return fmt.Errorf("bambu %s: cloud MQTT connection timeout to %s", c.cfg.ID, broker)
 	}
 	if err := token.Error(); err != nil {
 		c.setStatus(printers.PrinterStatus{
@@ -108,33 +116,25 @@ func (c *Client) Connect(ctx context.Context) error {
 			State:  "error",
 			ErrorMsg: fmt.Sprintf("MQTT connect failed: %v", err),
 		})
-		return fmt.Errorf("bambu %s: MQTT connect: %w", c.cfg.ID, err)
+		return fmt.Errorf("bambu %s: cloud MQTT connect: %w", c.cfg.ID, err)
 	}
 
-	log.Printf("bambu %s: connected to MQTT broker at %s", c.cfg.ID, broker)
+	log.Printf("bambu %s: connected to cloud MQTT at %s (user=%s)", c.cfg.ID, broker, c.cloud.MQTTUsername())
 
-	// Block until context is cancelled (keep the goroutine alive)
+	// Block until context is cancelled (keep goroutine alive)
 	<-ctx.Done()
 
 	// Disconnect
 	if c.mqttClient != nil && c.mqttClient.IsConnected() {
 		c.mqttClient.Disconnect(1000)
-		log.Printf("bambu %s: disconnected", c.cfg.ID)
+		log.Printf("bambu %s: disconnected from cloud MQTT", c.cfg.ID)
 	}
 	return nil
 }
 
 // onConnect is called when the MQTT client connects (or reconnects).
 func (c *Client) onConnect(client mqtt.Client) {
-	log.Printf("bambu %s: MQTT connected (or reconnected)", c.cfg.ID)
-
-	// Mark online
-	c.setStatus(printers.PrinterStatus{
-		ID:   c.cfg.ID,
-		Name: c.cfg.Name,
-		Type: "bambu",
-		Online: true,
-	})
+	log.Printf("bambu %s: cloud MQTT connected (or reconnected)", c.cfg.ID)
 
 	// Subscribe to the printer's report topic
 	topic := fmt.Sprintf("device/%s/report", c.cfg.Serial)
@@ -146,11 +146,26 @@ func (c *Client) onConnect(client mqtt.Client) {
 		}
 	}
 	log.Printf("bambu %s: subscribed to %s", c.cfg.ID, topic)
+
+	// Request a full status push to get current state
+	c.requestPushAll(client)
+}
+
+// requestPushAll sends a pushall command to get the full printer state.
+func (c *Client) requestPushAll(client mqtt.Client) {
+	topic := fmt.Sprintf("device/%s/request", c.cfg.Serial)
+	payload := `{"pushing":{"command":"pushall","version":1,"push_target":1}}`
+	token := client.Publish(topic, 0, false, []byte(payload))
+	if token.WaitTimeout(5 * time.Second) {
+		if err := token.Error(); err != nil {
+			log.Printf("bambu %s: pushall error: %v", c.cfg.ID, err)
+		}
+	}
 }
 
 // onConnectionLost is called when the MQTT connection is lost.
 func (c *Client) onConnectionLost(client mqtt.Client, err error) {
-	log.Printf("bambu %s: MQTT connection lost: %v", c.cfg.ID, err)
+	log.Printf("bambu %s: cloud MQTT connection lost: %v", c.cfg.ID, err)
 	s := c.Status()
 	s.Online = false
 	s.State = "error"
@@ -160,14 +175,14 @@ func (c *Client) onConnectionLost(client mqtt.Client, err error) {
 
 // onReconnecting is called when the client begins reconnecting.
 func (c *Client) onReconnecting(client mqtt.Client, opts *mqtt.ClientOptions) {
-	log.Printf("bambu %s: MQTT reconnecting...", c.cfg.ID)
+	log.Printf("bambu %s: cloud MQTT reconnecting...", c.cfg.ID)
 }
 
 // handleReport processes incoming MQTT messages on the report topic.
 func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	r, err := parseReport(msg.Payload())
 	if err != nil {
-		log.Printf("bambu %s: failed to parse report: %v\n  payload: %s", c.cfg.ID, err, string(msg.Payload()))
+		log.Printf("bambu %s: failed to parse report: %v", c.cfg.ID, err)
 		return
 	}
 
@@ -200,8 +215,13 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		s.TotalLayers = *p.TotalLayerNum
 	}
 
-	// Clear error message when not in error state
-	if s.State != "error" {
+	// Check for error state
+	if p.GcodeState == "FAILED" || p.PrintError != nil && *p.PrintError != 0 {
+		s.State = "error"
+		if p.PrintError != nil {
+			s.ErrorMsg = fmt.Sprintf("print_error=%d", *p.PrintError)
+		}
+	} else if s.State != "error" {
 		s.ErrorMsg = ""
 	}
 
@@ -213,7 +233,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 // publishCommand publishes a command JSON payload to the printer's request topic.
 func (c *Client) publishCommand(ctx context.Context, payload []byte) error {
 	if c.mqttClient == nil || !c.mqttClient.IsConnected() {
-		return fmt.Errorf("bambu %s: not connected", c.cfg.ID)
+		return fmt.Errorf("bambu %s: not connected to cloud MQTT", c.cfg.ID)
 	}
 
 	topic := fmt.Sprintf("device/%s/request", c.cfg.Serial)
@@ -240,6 +260,8 @@ func (c *Client) Cancel(ctx context.Context) error {
 }
 
 // SkipObject attempts to skip the current object.
+// Note: For Bambu, this uses the project_file command with skip_object param.
+// The skip_objects command with obj_list may also work on newer firmware.
 func (c *Client) SkipObject(ctx context.Context) error {
 	return c.publishCommand(ctx, skipObjectCommand())
 }

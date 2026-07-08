@@ -29,13 +29,14 @@ Scoped, prioritised, ready to pick up.
 
 - [ ] **Snapmaker Paxx client** — Connect to U1 via Paxx REST + WebSocket API.
 - [ ] **Camera stream proxy** — Proxy MJPEG/RTSP streams through the server with auth.
-- [ ] **Authentication** — Login page, session management, optional OIDC.
+- [ ] **WebSocket push** — Replace 5-second polling with real-time push from server to browser.
+- [ ] **Authentication** — Login page, session management.
 - [ ] **Job completion notifications** — Detect and notify when a print finishes.
-- [ ] **Error & failure notifications** — Detect and alert on printer errors, pauses, or thermal runaway.
+- [ ] **Error & failure notifications** — Detect and alert on printer errors.
 - [ ] **Dockerfile + Docker Compose** — Multi-stage build and `docker compose up` for full stack.
-- [ ] **Retry MQTT connect on failure** — Bambu client should retry initial connection in a loop rather than exiting.
-- [ ] **Add real printer config** — Fill config.yaml with actual IPs, access codes, serials.
+- [ ] **Retry MQTT connect on failure** — Bambu client should retry initial connection in a loop.
 - [ ] **Graceful printer disconnect on shutdown** — Ensure printers disconnect cleanly when server stops.
+- [ ] **Run `bambu-login` to get JWT token** — User runs CLI tool to authenticate with Bambu Cloud.
 
 ---
 
@@ -52,11 +53,13 @@ Scoped, prioritised, ready to pick up.
 - [x] **Architecture plan drafted** — See PLAN.md.
 - [x] **Project scaffolding** — Go module, directory layout, skeleton files.
 - [x] **Printer interface (Go)** — Defined `Printer` interface (Status, Pause, Resume, Cancel, SkipObject, Cameras).
-- [x] **Bambu Lab MQTT client** — Connect to P1S & H2S via LAN MQTT, parse status reports, handle commands.
+- [x] **Bambu Lab Cloud MQTT client** — Connect via Bambu Cloud MQTT (`us.mqtt.bambulab.com:8883`) with JWT auth. No LAN mode or dev mode needed.
 - [x] **REST API layer** — Expose printer state and actions via HTTP endpoints (with real data).
 - [x] **Basic web UI** — HTML page with printer cards, progress bars, temperatures, and control buttons (polling-based).
 - [x] **Skip object support** — UI button + Bambu command for skip-object.
-- [x] **Configuration file** — YAML config loader with validation.
+- [x] **Configuration file** — YAML config loader with Bambu account support.
+- [x] **Bambu Cloud authentication** — Auth module with email/password login, 2FA handling, token management.
+- [x] **`bambu-login` CLI tool** — Interactive login to get JWT token and user ID for config.
 
 ---
 

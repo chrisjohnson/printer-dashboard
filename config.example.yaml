@@ -3,29 +3,39 @@
 
 listen: ":8080"
 
+# Dashboard web authentication (for remote access)
 auth:
   enabled: true
   username: admin
-  # Generate with: htpasswd -bnBC 10 "" yourpassword | tr -d ':\n' | sed 's/$2y/$2a/'
-  password: "$2a$10$..."  # bcrypt hash
+  password: "$2a$10$..."  # bcrypt hash — generate with: htpasswd -bnBC 10 "" yourpassword | tr -d ':\n'
   secret: "change-me-to-a-random-secret"
 
+# Bambu Lab cloud account (required for Bambu printers)
+# No LAN mode or developer mode needed — works with standard cloud-connected printers.
+bambu_account:
+  email: "your-bambu-email@example.com"
+  password: "your-bambu-password"
+  # Alternatively, use a pre-obtained JWT token (avoids 2FA prompts):
+  # token: "eyJhbGciOiJSUzI1NiIs..."
+  # user_id: "123456789"
+  region: "global"  # "global" or "china"
+
 printers:
+  # Bambu printers use cloud MQTT — no host/port needed.
+  # host + access_code are optional and used only for local camera access.
   - id: p1s
     name: "Bambu P1S"
     type: bambu
-    host: 192.168.1.100
-    port: 8883
-    access_code: "12345678"
-    serial: "P1S-XXXXXXXXXXXX"
+    serial: "SERIAL000000000001"    # dev_id from Bambu Cloud / printer label
+    host: 192.168.1.100             # LAN IP (for camera, optional)
+    access_code: "12345678"         # from printer screen (for camera, optional)
 
   - id: h2s
     name: "Bambu H2S"
     type: bambu
+    serial: "SERIAL000000000002"
     host: 192.168.1.101
-    port: 8883
     access_code: "12345678"
-    serial: "H2S-XXXXXXXXXXXX"
 
   - id: u1
     name: "Snapmaker U1"
