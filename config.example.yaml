@@ -1,0 +1,46 @@
+# Printer Dashboard Configuration
+# Copy this to config.yaml and fill in your printer details.
+
+listen: ":8080"
+
+auth:
+  enabled: true
+  username: admin
+  # Generate with: htpasswd -bnBC 10 "" yourpassword | tr -d ':\n' | sed 's/$2y/$2a/'
+  password: "$2a$10$..."  # bcrypt hash
+  secret: "change-me-to-a-random-secret"
+
+printers:
+  - id: p1s
+    name: "Bambu P1S"
+    type: bambu
+    host: 192.168.1.100
+    port: 8883
+    access_code: "12345678"
+    serial: "P1S-XXXXXXXXXXXX"
+
+  - id: h2s
+    name: "Bambu H2S"
+    type: bambu
+    host: 192.168.1.101
+    port: 8883
+    access_code: "12345678"
+    serial: "H2S-XXXXXXXXXXXX"
+
+  - id: u1
+    name: "Snapmaker U1"
+    type: snapmaker
+    host: 192.168.1.102
+    port: 8080
+    access_code: ""  # API key if required
+
+cameras:
+  - id: cam-p1s-ext
+    name: "P1S Exterior Camera"
+    url: "rtsp://192.168.1.200:554/stream"
+    printer_id: p1s
+
+  - id: cam-h2s-ext
+    name: "H2S Exterior Camera"
+    url: "rtsp://192.168.1.201:554/stream"
+    printer_id: h2s

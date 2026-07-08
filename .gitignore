@@ -1,0 +1,28 @@
+# Binaries
+printer-dashboard
+printer-dashboard.exe
+*.out
+*.test
+
+# Config
+config.yaml
+config.local.yaml
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+dist/
+
+# Docker
+.docker/
