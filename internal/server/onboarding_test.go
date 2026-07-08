@@ -1160,7 +1160,7 @@ func TestOnboarding_SnapmakerSave(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid port defaults to 8080", func(t *testing.T) {
+	t.Run("invalid port returns 400", func(t *testing.T) {
 		cfg, configPath := writeValidConfig(t)
 		s := &Server{
 			cfg:        cfg,
@@ -1173,43 +1173,39 @@ func TestOnboarding_SnapmakerSave(t *testing.T) {
 		ts := httptest.NewServer(s.mux)
 		t.Cleanup(ts.Close)
 
-		resp, err := http.PostForm(ts.URL+"/onboarding/snapmaker/save", url.Values{
-			"name": {"Workshop U1"},
-			"host": {"192.168.1.100"},
-			"port": {"notanumber"},
-		})
-		if err != nil {
-			t.Fatal(err)
+		tests := []struct {
+			name  string
+			port  string
+			errMsg string
+		}{
+			{"non-numeric", "notanumber", "Invalid port"},
+			{"negative", "-1", "Invalid port"},
+			{"zero", "0", "Invalid port"},
+			{"too large", "65536", "Invalid port"},
 		}
-		defer resp.Body.Close()
-
-		// The handler defaults to port 8080 on invalid input, so this succeeds
-		var body map[string]any
-		decodeOnboardingBody(t, resp, &body)
-
-		// It might fail if reloadConfig fails (no mock transport for non-bambu),
-		// but reloadConfig doesn't make HTTP calls. It should succeed.
-		if body["success"] != true {
-			t.Errorf("expected success true, got %v — error: %v", body["success"], body["error"])
-		}
-
-		// Verify port defaulted to 8080
-		found := false
-		for _, p := range s.cfg.Printers {
-			if p.Name == "Workshop U1" {
-				found = true
-				if p.Port != 8080 {
-					t.Errorf("expected port 8080 (default for 'notanumber'), got %d", p.Port)
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				resp, err := http.PostForm(ts.URL+"/onboarding/snapmaker/save", url.Values{
+					"name": {"Workshop U1"},
+					"host": {"192.168.1.100"},
+					"port": {tc.port},
+				})
+				if err != nil {
+					t.Fatal(err)
 				}
-				break
-			}
-		}
-		if !found {
-			t.Error("expected printer 'Workshop U1' in config")
-		}
+				defer resp.Body.Close()
 
-		if s.printersCtx != nil {
-			s.printersCtx()
+				if resp.StatusCode != http.StatusBadRequest {
+					t.Errorf("expected 400 for port %q, got %d", tc.port, resp.StatusCode)
+				}
+
+				var body map[string]any
+				decodeOnboardingBody(t, resp, &body)
+				errBody, _ := body["error"].(string)
+				if !strings.Contains(errBody, tc.errMsg) {
+					t.Errorf("expected error containing %q, got %q", tc.errMsg, errBody)
+				}
+			})
 		}
 	})
 

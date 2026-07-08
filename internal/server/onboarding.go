@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
@@ -333,11 +334,17 @@ func (s *Server) handleOnboardingSnapmakerSave(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	port := 8080 // default
+	port := 8080 // default when not specified
 	if portStr != "" {
-		if p, err := fmt.Sscanf(portStr, "%d", &port); err != nil || p != 1 {
-			port = 8080
+		p, err := strconv.Atoi(portStr)
+		if err != nil || p < 1 || p > 65535 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"success": false,
+				"error":   fmt.Sprintf("Invalid port %q: must be a number between 1 and 65535", portStr),
+			})
+			return
 		}
+		port = p
 	}
 
 	// Generate a short ID from the name
