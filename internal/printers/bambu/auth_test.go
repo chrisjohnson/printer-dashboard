@@ -495,17 +495,35 @@ func TestTokenPersistence(t *testing.T) {
 
 func TestLoginStep1(t *testing.T) {
 	t.Run("direct success (no 2FA)", func(t *testing.T) {
+		var loginCalled, prefCalled bool
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Method != "POST" || r.URL.Path != "/v1/user-service/user/login" {
+			switch r.URL.Path {
+			case "/v1/user-service/user/login":
+				loginCalled = true
+				if r.Method != "POST" {
+					t.Errorf("login method = %s; want POST", r.Method)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(loginResponse{
+					Success:     true,
+					AccessToken: "direct-token-abc",
+					ExpiresIn:   86400,
+				})
+			case "/v1/design-user-service/my/preference":
+				prefCalled = true
+				if r.Method != "GET" {
+					t.Errorf("preference method = %s; want GET", r.Method)
+				}
+				if r.Header.Get("Authorization") != "Bearer direct-token-abc" {
+					t.Errorf("Authorization = %q; want %q", r.Header.Get("Authorization"), "Bearer direct-token-abc")
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(preferenceResponse{UserID: json.Number("12345")})
+			default:
 				t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(loginResponse{
-				Success:     true,
-				AccessToken: "direct-token-abc",
-				ExpiresIn:   86400,
-			})
 		}))
 		defer srv.Close()
 
@@ -522,6 +540,18 @@ func TestLoginStep1(t *testing.T) {
 		}
 		if lr.ExpiresIn != 86400 {
 			t.Errorf("ExpiresIn = %d; want %d", lr.ExpiresIn, 86400)
+		}
+		if !loginCalled {
+			t.Error("login endpoint was not called")
+		}
+		if !prefCalled {
+			t.Error("preference endpoint was not called")
+		}
+		if c.Token() != "direct-token-abc" {
+			t.Errorf("client.Token() = %q; want %q", c.Token(), "direct-token-abc")
+		}
+		if c.UserID() != "12345" {
+			t.Errorf("client.UserID() = %q; want %q", c.UserID(), "12345")
 		}
 	})
 

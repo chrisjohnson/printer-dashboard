@@ -411,8 +411,13 @@ func (c *BambuCloudClient) Login(email, password string, codeCallback func() (st
 // ---------------------------------------------------------------------------
 
 // LoginStep1 sends the email/password and returns the login response.
+//
 // If the response indicates 2FA is needed (LoginType == "verifyCode"),
 // call SendVerificationCode then LoginStep2.
+//
+// If the response includes an access token and no 2FA is required, the client
+// is fully authenticated after this call: token and userID are set, and the
+// token is persisted (if a tokenFile is configured).
 func (c *BambuCloudClient) LoginStep1(email, password string) (*loginResponse, error) {
 	loginBody := loginRequest{
 		Account:  email,
@@ -427,6 +432,33 @@ func (c *BambuCloudClient) LoginStep1(email, password string) (*loginResponse, e
 	if err := json.Unmarshal(data, &lr); err != nil {
 		return nil, fmt.Errorf("parsing login response: %w", err)
 	}
+
+	// If the response includes a token and no 2FA is needed, the login is
+	// complete — set the token, fetch the user ID, and persist.
+	if lr.AccessToken != "" && lr.LoginType != "verifyCode" {
+		c.token = lr.AccessToken
+		if lr.ExpiresIn > 0 {
+			c.tokenExpiry = time.Now().Add(time.Duration(lr.ExpiresIn) * time.Second)
+		}
+
+		uid, err := c.getUserID()
+		if err != nil {
+			// Fallback: try to extract user_id from JWT without an API call
+			if jp, parseErr := parseJWT(c.token); parseErr == nil && jp.UserID != "" {
+				uid = jp.UserID
+				err = nil
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("getting user ID after login: %w", err)
+		}
+		c.userID = uid
+
+		if err := c.SaveToken(); err != nil {
+			log.Printf("bambu cloud: warning: failed to save token: %v", err)
+		}
+	}
+
 	return &lr, nil
 }
 
