@@ -2,11 +2,15 @@ package snapmaker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
@@ -374,6 +378,455 @@ func TestConnect_BlocksUntilCancelled(t *testing.T) {
 	err := <-errCh
 
 	if err != context.Canceled {
+		t.Errorf("Connect() returned %v; want %v", err, context.Canceled)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleStatusReport tests
+// ---------------------------------------------------------------------------
+
+func TestHandleStatusReport_FullUpdate(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	report := &paxxStatus{
+		Status:        "running",
+		Progress:      float64Ptr(0.5),
+		File:          stringPtr("model.gcode"),
+		BedTemp:       float64Ptr(55.0),
+		BedTarget:     float64Ptr(60.0),
+		NozzleTemp:    float64Ptr(210.0),
+		NozzleTarget:  float64Ptr(220.0),
+		ChamberTemp:   float64Ptr(30.0),
+		RemainingTime: intPtr(1800),
+		CurrentLayer:  intPtr(5),
+		TotalLayers:   intPtr(100),
+	}
+
+	p.handleStatusReport(report)
+	s := p.Status()
+
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q", s.State, "printing")
+	}
+	if s.Progress != 0.5 {
+		t.Errorf("Progress = %f; want 0.5", s.Progress)
+	}
+	if s.CurrentFile != "model.gcode" {
+		t.Errorf("CurrentFile = %q; want %q", s.CurrentFile, "model.gcode")
+	}
+	if s.BedTemp != 55.0 {
+		t.Errorf("BedTemp = %f; want 55.0", s.BedTemp)
+	}
+	if s.NozzleTemp != 210.0 {
+		t.Errorf("NozzleTemp = %f; want 210.0", s.NozzleTemp)
+	}
+	if s.BedTargetTemp != 60.0 {
+		t.Errorf("BedTargetTemp = %f; want 60.0", s.BedTargetTemp)
+	}
+	if s.NozzleTargetTemp != 220.0 {
+		t.Errorf("NozzleTargetTemp = %f; want 220.0", s.NozzleTargetTemp)
+	}
+	if s.ChamberTemp != 30.0 {
+		t.Errorf("ChamberTemp = %f; want 30.0", s.ChamberTemp)
+	}
+	if s.RemainingTime != 1800 {
+		t.Errorf("RemainingTime = %d; want 1800", s.RemainingTime)
+	}
+	if s.CurrentLayer != 5 {
+		t.Errorf("CurrentLayer = %d; want 5", s.CurrentLayer)
+	}
+	if s.TotalLayers != 100 {
+		t.Errorf("TotalLayers = %d; want 100", s.TotalLayers)
+	}
+	if !s.Online {
+		t.Error("Online = false; want true")
+	}
+}
+
+func TestHandleStatusReport_PartialUpdate(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	// First: full update.
+	full := &paxxStatus{
+		Status:       "running",
+		Progress:     float64Ptr(0.5),
+		File:         stringPtr("model.gcode"),
+		BedTemp:      float64Ptr(55.0),
+		NozzleTemp:   float64Ptr(210.0),
+		CurrentLayer: intPtr(5),
+		TotalLayers:  intPtr(100),
+	}
+	p.handleStatusReport(full)
+
+	// Second: partial update — only state and progress change.
+	partial := &paxxStatus{
+		Status:   "running",
+		Progress: float64Ptr(0.75),
+	}
+	p.handleStatusReport(partial)
+	s := p.Status()
+
+	// Fields from the partial update.
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q", s.State, "printing")
+	}
+	if s.Progress != 0.75 {
+		t.Errorf("Progress = %f; want 0.75", s.Progress)
+	}
+
+	// Fields from the first update should be preserved.
+	if s.CurrentFile != "model.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (preserved)", s.CurrentFile, "model.gcode")
+	}
+	if s.BedTemp != 55.0 {
+		t.Errorf("BedTemp = %f; want 55.0 (preserved)", s.BedTemp)
+	}
+	if s.NozzleTemp != 210.0 {
+		t.Errorf("NozzleTemp = %f; want 210.0 (preserved)", s.NozzleTemp)
+	}
+	if s.CurrentLayer != 5 {
+		t.Errorf("CurrentLayer = %d; want 5 (preserved)", s.CurrentLayer)
+	}
+	if s.TotalLayers != 100 {
+		t.Errorf("TotalLayers = %d; want 100 (preserved)", s.TotalLayers)
+	}
+}
+
+func TestHandleStatusReport_ErrorState(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	report := &paxxStatus{
+		Status: "error",
+		Error:  stringPtr("Heater timeout"),
+	}
+	p.handleStatusReport(report)
+	s := p.Status()
+
+	if s.State != "error" {
+		t.Errorf("State = %q; want %q", s.State, "error")
+	}
+	if s.ErrorMsg != "Heater timeout" {
+		t.Errorf("ErrorMsg = %q; want %q", s.ErrorMsg, "Heater timeout")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fetchStatus tests
+// ---------------------------------------------------------------------------
+
+func TestFetchStatus_Success(t *testing.T) {
+	// Mock REST server that returns a printer status.
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/printer" {
+			t.Errorf("path = %q; want %q", r.URL.Path, "/api/printer")
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"status":"idle","progress":0}`)
+	}))
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	status, err := p.fetchStatus(context.Background())
+	if err != nil {
+		t.Fatalf("fetchStatus() returned error: %v", err)
+	}
+	if status.Status != "idle" {
+		t.Errorf("Status = %q; want %q", status.Status, "idle")
+	}
+}
+
+func TestFetchStatus_HTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, "printer error")
+	}))
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	_, err := p.fetchStatus(context.Background())
+	if err == nil {
+		t.Fatal("expected error for HTTP 500")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Connect lifecycle tests (with mock REST + WebSocket server)
+// ---------------------------------------------------------------------------
+
+// mockPaxx represents a mock Snapmaker U1 that serves REST and WebSocket.
+type mockPaxx struct {
+	Server *httptest.Server
+
+	connMu   sync.Mutex
+	wsConn   *websocket.Conn  // client-side WS conn (snapmaker → mock)
+	srvConn  *websocket.Conn  // server-side WS conn (mock handler side)
+	ready    chan struct{}    // closed once wsConn is set
+}
+
+// mockSnapmakerServer creates an httptest.Server that acts as a Snapmaker
+// U1 with Paxx firmware. It serves:
+//   - GET /api/printer → returns the current status JSON
+//   - WebSocket /ws → pushes status JSON messages
+func mockSnapmakerServer(t *testing.T) *mockPaxx {
+	t.Helper()
+
+	m := &mockPaxx{
+		ready: make(chan struct{}),
+	}
+
+	var upgrader = websocket.Upgrader{}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/printer", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":   "idle",
+			"progress": 0,
+		})
+	})
+
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Logf("ws upgrade: %v", err)
+			return
+		}
+		m.connMu.Lock()
+		m.srvConn = conn
+		m.connMu.Unlock()
+		close(m.ready)
+
+		// Block until the connection drops.
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+		}
+	})
+
+	m.Server = httptest.NewServer(mux)
+	return m
+}
+
+// waitConn blocks until the mock server has accepted a WebSocket connection
+// or the context is cancelled.
+func (m *mockPaxx) waitConn(ctx context.Context) error {
+	select {
+	case <-m.ready:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// sendWS sends a JSON status report over the established WebSocket.
+// It must be called after waitConn has succeeded.
+func (m *mockPaxx) sendWS(t *testing.T, status map[string]any) {
+	t.Helper()
+
+	m.connMu.Lock()
+	conn := m.srvConn
+	m.connMu.Unlock()
+
+	if conn == nil {
+		t.Fatal("sendWS: WebSocket not connected; call waitConn first")
+	}
+
+	if err := conn.WriteJSON(status); err != nil {
+		t.Fatalf("writing WS message: %v", err)
+	}
+}
+
+// Close shuts down the mock server. It closes the server-side WebSocket
+// connection first to unblock the WS handler's read loop, then closes the
+// HTTP server.
+func (m *mockPaxx) Close() {
+	m.connMu.Lock()
+	if m.srvConn != nil {
+		m.srvConn.Close()
+	}
+	m.connMu.Unlock()
+	m.Server.Close()
+}
+
+// runConnect starts p.Connect(ctx) in a goroutine and returns the error
+// channel. The caller must call stopConnect to shut it down.
+func runConnect(p *Printer) (context.CancelFunc, <-chan error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Connect(ctx)
+	}()
+	return cancel, errCh
+}
+
+// stopConnect cancels the context, closes the mock server so the WS read
+// loop exits promptly, and waits for Connect to return.
+//
+// Close the mock server FIRST to drop the WS connection before cancelling.
+// This lets wsConnect's ReadMessage error out immediately instead of
+// waiting for the read deadline (wsReadWait = 10s).
+func stopConnect(mock *mockPaxx, cancel context.CancelFunc, errCh <-chan error) error {
+	mock.Close()
+	cancel()
+	return <-errCh
+}
+
+func TestConnect_FetchInitialStatus(t *testing.T) {
+	mock := mockSnapmakerServer(t)
+	defer mock.Close()
+
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.testBaseURL = mock.Server.URL
+	p.httpClient = mock.Server.Client()
+
+	cancel, errCh := runConnect(p)
+
+	// Wait for WebSocket connection (means initial fetch + WS dial succeeded).
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), time.Second)
+	defer wsCancel()
+	if err := mock.waitConn(wsCtx); err != nil {
+		t.Fatalf("timed out waiting for WebSocket connection: %v", err)
+	}
+
+	s := p.Status()
+	if s.State != "idle" {
+		t.Errorf("initial State = %q; want %q", s.State, "idle")
+	}
+	if !s.Online {
+		t.Error("Online = false after initial status fetch; want true")
+	}
+
+	// Stop Connect by cancelling and closing the mock server.
+	if err := stopConnect(mock, cancel, errCh); err != context.Canceled {
+		t.Errorf("Connect() returned %v; want %v", err, context.Canceled)
+	}
+}
+
+func TestConnect_WebSocketMessage(t *testing.T) {
+	mock := mockSnapmakerServer(t)
+	defer mock.Close()
+
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.testBaseURL = mock.Server.URL
+	p.httpClient = mock.Server.Client()
+
+	cancel, errCh := runConnect(p)
+
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), time.Second)
+	defer wsCancel()
+	if err := mock.waitConn(wsCtx); err != nil {
+		t.Fatalf("timed out waiting for WebSocket connection: %v", err)
+	}
+
+	// Send a status update via WebSocket.
+	mock.sendWS(t, map[string]any{
+		"status":        "running",
+		"progress":      0.5,
+		"file":          "model.gcode",
+		"bed_temp":      55.0,
+		"nozzle_temp":   210.0,
+		"current_layer": 5,
+		"total_layers":  100,
+	})
+
+	// Give Connect time to process the message.
+	time.Sleep(50 * time.Millisecond)
+
+	s := p.Status()
+	if s.State != "printing" {
+		t.Errorf("after WS: State = %q; want %q", s.State, "printing")
+	}
+	if s.Progress != 0.5 {
+		t.Errorf("after WS: Progress = %f; want 0.5", s.Progress)
+	}
+	if s.CurrentFile != "model.gcode" {
+		t.Errorf("after WS: CurrentFile = %q; want %q", s.CurrentFile, "model.gcode")
+	}
+	if s.BedTemp != 55.0 {
+		t.Errorf("after WS: BedTemp = %f; want 55.0", s.BedTemp)
+	}
+	if s.CurrentLayer != 5 {
+		t.Errorf("after WS: CurrentLayer = %d; want 5", s.CurrentLayer)
+	}
+	if s.TotalLayers != 100 {
+		t.Errorf("after WS: TotalLayers = %d; want 100", s.TotalLayers)
+	}
+
+	if err := stopConnect(mock, cancel, errCh); err != context.Canceled {
+		t.Errorf("Connect() returned %v; want %v", err, context.Canceled)
+	}
+}
+
+func TestConnect_WebSocketPartialUpdate(t *testing.T) {
+	mock := mockSnapmakerServer(t)
+	defer mock.Close()
+
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.testBaseURL = mock.Server.URL
+	p.httpClient = mock.Server.Client()
+
+	cancel, errCh := runConnect(p)
+
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), time.Second)
+	defer wsCancel()
+	if err := mock.waitConn(wsCtx); err != nil {
+		t.Fatalf("timed out waiting for WebSocket connection: %v", err)
+	}
+
+	// First message: full update.
+	mock.sendWS(t, map[string]any{
+		"status":        "running",
+		"progress":      0.5,
+		"file":          "model.gcode",
+		"bed_temp":      55.0,
+		"nozzle_temp":   210.0,
+		"current_layer": 5,
+		"total_layers":  100,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Second message: partial update (only progress and layer change).
+	mock.sendWS(t, map[string]any{
+		"status":        "running",
+		"progress":      0.75,
+		"current_layer": 42,
+	})
+
+	time.Sleep(50 * time.Millisecond)
+
+	s := p.Status()
+
+	// Updated fields.
+	if s.Progress != 0.75 {
+		t.Errorf("after partial: Progress = %f; want 0.75", s.Progress)
+	}
+	if s.CurrentLayer != 42 {
+		t.Errorf("after partial: CurrentLayer = %d; want 42", s.CurrentLayer)
+	}
+
+	// Preserved fields.
+	if s.CurrentFile != "model.gcode" {
+		t.Errorf("after partial: CurrentFile = %q; want %q (preserved)", s.CurrentFile, "model.gcode")
+	}
+	if s.BedTemp != 55.0 {
+		t.Errorf("after partial: BedTemp = %f; want 55.0 (preserved)", s.BedTemp)
+	}
+	if s.TotalLayers != 100 {
+		t.Errorf("after partial: TotalLayers = %d; want 100 (preserved)", s.TotalLayers)
+	}
+
+	if err := stopConnect(mock, cancel, errCh); err != context.Canceled {
 		t.Errorf("Connect() returned %v; want %v", err, context.Canceled)
 	}
 }

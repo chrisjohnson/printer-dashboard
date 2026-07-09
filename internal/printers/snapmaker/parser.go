@@ -6,12 +6,15 @@ import "encoding/json"
 // running Paxx firmware. Fields are sent via WebSocket push or returned from
 // the REST API (GET /api/printer, GET /api/print).
 //
-// Pointer fields (BedTemp, NozzleTemp, etc.) are optional — they may be
+// Pointer fields (Progress, File, BedTemp, etc.) are optional — they may be
 // absent in partial reports. nil means the field was not present in the JSON.
 type paxxStatus struct {
-	Status  string  `json:"status"`            // "idle", "running", "paused", etc.
-	Progress float64 `json:"progress,omitempty"` // 0.0 to 1.0
-	File     string  `json:"file,omitempty"`    // current print file
+	Status string `json:"status"` // "idle", "running", "paused", etc.
+
+	// These fields use pointers so partial JSON reports can be detected.
+	// A nil pointer means the field was absent from the JSON message.
+	Progress *float64 `json:"progress,omitempty"` // 0.0 to 1.0
+	File     *string  `json:"file,omitempty"`     // current print file
 
 	// Temperatures
 	BedTemp      *float64 `json:"bed_temp,omitempty"`
@@ -27,7 +30,7 @@ type paxxStatus struct {
 	TotalLayers   *int `json:"total_layers,omitempty"`
 
 	// Errors
-	Error string `json:"error,omitempty"` // error message if status is "error"
+	Error *string `json:"error,omitempty"` // error message if status is "error"
 }
 
 // parseReport unmarshals a raw Paxx JSON report into a paxxStatus struct.

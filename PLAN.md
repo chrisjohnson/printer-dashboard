@@ -165,14 +165,31 @@ The `bambu-login` CLI tool provides step-by-step instructions for this process.
 - May also have WebSocket endpoint for real-time updates
 - API key or no auth if LAN-only
 
-**Research needed:**
-- Document the exact Paxx API endpoints
-- Snapmaker U1 is a newer model — need to confirm if Paxx is available and what version
-- Typically: `GET /api/v1/printer/status`, `POST /api/v1/printer/print/pause`, etc.
+**Confirmed API (reverse-engineered from U1 with Paxx):**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/printer` | GET | Full printer status JSON |
+| `/api/print/pause` | POST | Pause current print |
+| `/api/print/resume` | POST | Resume paused print |
+| `/api/print/cancel` | POST | Cancel current print |
+| `/api/printer/command` | POST | Send arbitrary command (e.g. skip object) |
+| `/ws` | WebSocket | Real-time status push messages |
+| `/api/v2/camera/stream` | GET (MJPEG) | Camera stream (unconfirmed, likely ) |
+
+**Authentication:**
+- Access code sent as HTTP header `X-Access-Code` and query param `access_code`
+- No session or token expiry — same code reused for all requests
+
+**WebSocket protocol:**
+- Connect to `ws://{host}:{port}/ws`
+- Ping/pong keepalive (30s ping interval, 10s write deadline)
+- Status is pushed as same JSON format as `GET /api/printer`
+- On connection drop, fall back to REST polling (3s interval) + retry WS (15s interval)
 
 **Camera:**
-- Snapmaker U1 built-in camera provides MJPEG stream (need to confirm port/endpoint)
-- Likely `http://{printer_ip}:8080/?action=snapshot` or similar
+- Snapmaker U1 built-in camera provides MJPEG stream on port 8080
+- Likely `http://{printer_ip}:8080/api/v2/camera/stream` (needs confirmation)
 
 ---
 
@@ -233,13 +250,23 @@ printer-dashboard/
 ### Phase 2 — Control
 - [x] Pause / Resume / Cancel commands via REST
 - [x] Skip object command
+- [x] WebSocket push for live updates
 - [ ] Camera stream proxy
-- [ ] WebSocket push for live updates
 - [ ] Auth (login page, sessions)
 
-### Phase 3 — Notifications & Polish
+### Phase 3 — Snapmaker Integration
+- [x] Snapmaker Paxx client: parser (17 tests)
+- [x] Snapmaker Paxx client: commands (12 tests)
+- [x] Snapmaker Paxx client: Connect lifecycle (8 tests)
+- [ ] Snapmaker UX: server integration (StatusCh forwarding, error display)
+- [ ] Snapmaker camera stream proxy
+
+### Phase 4 — Notifications & Polish
 - [ ] Job completion detection + notification
 - [ ] Error alert detection
+- [ ] P1S cloud MQTT field audit (`gcode_file` vs `subtask_name`, etc.)
+- [ ] Hysteresis for COMPLETE state
+- [ ] Clear CurrentFile on idle
 - [ ] Secondary camera support
 - [ ] Dockerfile + docker-compose.yml
 
@@ -295,16 +322,18 @@ go tool cover -html=c.out            # View in browser
 
 ### Coverage targets
 | Package | Target |
-|---|---|
+|---|---|---|
 | `internal/printers/bambu/parser.go` | 100% |
 | `internal/printers/bambu/commands.go` | 100% |
 | `internal/printers/bambu/auth.go` | ≥ 90% |
 | `internal/printers/bambu/client.go` | ≥ 85% |
+| `internal/printers/snapmaker/parser.go` | 100% |
+| `internal/printers/snapmaker/snapmaker.go` | ≥ 85% |
 | `internal/config/config.go` | ≥ 95% |
 | `internal/server/server.go` | ≥ 80% |
 | `internal/server/onboarding.go` | ≥ 80% |
-| `internal/ws/hub.go` (future) | 100% |
-| `internal/ws/client.go` (future) | ≥ 90% |
+| `internal/ws/hub.go` | ≥ 90% |
+| `internal/ws/client.go` | ≥ 90% |
 
 ### Preventing data flicker
 One specific concern identified during development is **UI flickering** caused by status fields transitioning through zero/empty values during update cycles. All status update paths must:
@@ -314,4 +343,4 @@ One specific concern identified during development is **UI flickering** caused b
 
 ---
 
-*Last updated: 2026-07-09*
+*Last updated: 2026-07-11*

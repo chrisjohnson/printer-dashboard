@@ -27,9 +27,10 @@ Ideas / feature requests that haven't been scoped yet.
 
 Issues discovered during testing that need fixing.
 
-- [ ] **No-2FA login leaves empty token/userID** — When `LoginStep1` returns a token directly (no 2FA required), the cloud client's `token` and `userID` fields are not set, so `Token()` and `UserID()` return empty strings after a successful no-2FA login.
-- [ ] **Device serial ID collision** — Printer IDs are derived from the first 8 characters of the serial number. Devices with serials like `SERIAL001` and `SERIAL002` both map to `"serial00"`, causing the second to overwrite the first in the printer map.
-- [ ] **Invalid snapmaker port silently defaults to 8080** — The onboarding form accepts non-numeric port values and uses 8080 instead of returning a validation error.
+- [ ] **P1S gcode file not shown** — `printStatus` only parses `"gcode_file"` but P1S likely sends the file path under `"subtask_name"` instead. Need field audit + fallback in `handleReport`.
+- [ ] **CurrentFile not cleared on idle** — When a print finishes, `CurrentFile` retains the last filename because `handleReport` only *sets* it, never clears it. After `SUCCESS→IDLE` transition, state shows "idle" but old filename persists.
+- [ ] **COMPLETE state is purely transient** — `SUCCESS`/`FINISH` maps to `"complete"` but the next `IDLE` report immediately overwrites it. No hysteresis — user never sees "complete" in the UI unless they catch it mid-report-cycle.
+- [ ] **Snapmaker U1 ErrorMsg not shown** — When `Connect()` fails (unreachable printer), `ErrorMsg` is populated with the dial error but the UI template never renders it — user just sees "error" with no explanation.
 
 ---
 
@@ -37,12 +38,14 @@ Issues discovered during testing that need fixing.
 
 Scoped, prioritised, ready to pick up.
 
-- [ ] **Snapmaker Paxx client** [must have tests] — Connect to U1 via Paxx REST + WebSocket API.
+- [ ] **P1S cloud MQTT field audit** — Investigate which optional status fields (`gcode_file` vs `subtask_name`, temperatures, etc.) the P1S vs H2S report via cloud MQTT. Add fallback parsing for alternative field names.
+- [ ] **Hysteresis for COMPLETE state** — Retain `"complete"` state after `SUCCESS`/`FINISH` instead of letting `IDLE` overwrite it immediately. E.g., stay "complete" until a new print starts or user dismisses.
+- [ ] **Clear CurrentFile on idle** — In `handleReport`, clear `CurrentFile` when `gcode_state` transitions to `IDLE` and no `gcode_file` is present in the report.
 - [ ] **Camera stream proxy** [must have tests] — Proxy MJPEG/RTSP streams through the server with auth.
 - [ ] **Authentication** [must have tests] — Login page, session management.
-- [ ] **P1S cloud MQTT field audit** — Investigate which optional status fields (gcode_file, temperatures, etc.) the P1S vs H2S report via cloud MQTT; some models may omit certain fields entirely.
 - [ ] **Job completion notifications** [must have tests] — Detect and notify when a print finishes.
 - [ ] **Error & failure notifications** [must have tests] — Detect and alert on printer errors.
+- [ ] **Snapmaker U1 error visibility** — Include `ErrorMsg` in the UI template so users see why the U1 is showing "error" (wrong IP, wrong port, wrong access code, etc.).
 - [ ] **Dockerfile + Docker Compose** [must have tests] — Multi-stage build and `docker compose up` for full stack.
 - [ ] **Retry MQTT connect on failure** [must have tests] — Bambu client should retry initial connection in a loop.
 - [ ] **Graceful printer disconnect on shutdown** [must have tests] — Ensure printers disconnect cleanly when server stops.
@@ -58,7 +61,7 @@ Work related to test infrastructure and coverage.
 
 ## 🏗 In Progress
 
-> *Nothing currently in progress.*
+- [ ] **Snapmaker UX — server integration** — Wire `StatusCh` forwarding for snapmaker printers in `connectAllPrinters` (currently Bambu-only). Show error messages in UI. Handle unreachable printer gracefully.
 
 ---
 
@@ -91,6 +94,13 @@ Work related to test infrastructure and coverage.
 - [x] **TDD mandate** — All new code must include tests first; documented in PLAN.md, KANBAN.md, README.md
 - [x] **WebSocket push** — Real-time status push from server to browser via ws.Hub + ws.Client. Replaces 5-second polling. Includes exponential backoff reconnection.
 - [x] **GcodeFile flicker fix** — Changed `GcodeFile` from `string` to `*string` in parser, added nil-guard in client. Prevents filename from disappearing on partial MQTT reports. Also added frontend value cache (`mergeWithCache`) for same protection on all fields.
+- [x] **No-2FA login fixed** — `LoginStep1` now sets token, fetches userID, and persists token when API returns token directly (previously only `LoginStep2` did this).
+- [x] **Device serial ID collision fixed** — Printer IDs now use full serial instead of `strings.ToLower(serial)[:8]`. No more `SERIAL001` / `SERIAL002` collision.
+- [x] **Invalid snapmaker port validation** — Port validated with `strconv.Atoi` + range 1–65535, returns 400 on invalid input. Blank port still defaults to 8080.
+- [x] **Snapmaker Paxx client: parser** — `parseReport()` for JSON status, `mapState()` with 11 mapping cases, `paxxStatus` struct with pointer-field nil-guards. 17 subtests.
+- [x] **Snapmaker Paxx client: commands** — Pause, Resume, Cancel, SkipObject via `POST /api/print/{action}` with access-code auth (header + query param). HTTP error handling (500/401/unreachable). 12 tests.
+- [x] **Snapmaker Paxx client: Connect lifecycle** — Initial REST fetch, WebSocket dial with ping/pong, WS message read loop with status merge, REST polling fallback with 3s interval, WS retry at 15s. `handleStatusReport` with nil-guard value preservation. 8 new tests (handleStatusReport, fetchStatus, Connect with WS messages, partial update preservation).
+- [x] **Snapmaker Paxx client: partial report fix** — `Progress`, `File`, `Error` changed from value to pointer types so absent JSON fields don't overwrite cached values (matches existing pattern for temp/layer fields).
 
 ---
 
@@ -111,4 +121,4 @@ Work related to test infrastructure and coverage.
 
 ---
 
-*Last updated: 2026-07-09* (session 2: tests + WebSocket push + bug tracking)
+*Last updated: 2026-07-11* (session 3: Snapmaker Connect lifecycle + partial report fix + bug fixes)

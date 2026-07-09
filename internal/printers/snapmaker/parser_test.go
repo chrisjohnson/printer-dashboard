@@ -9,6 +9,7 @@ const epsilon = 1e-9
 
 func float64Ptr(v float64) *float64 { return &v }
 func intPtr(v int) *int             { return &v }
+func stringPtr(v string) *string    { return &v }
 
 // ---------------------------------------------------------------------------
 // parseReport tests
@@ -40,8 +41,8 @@ func TestParseReport(t *testing.T) {
 			}`,
 			want: &paxxStatus{
 				Status:        "running",
-				Progress:      0.75,
-				File:          "benchy.gcode",
+				Progress:      float64Ptr(0.75),
+				File:          stringPtr("benchy.gcode"),
 				BedTemp:       float64Ptr(55.5),
 				BedTarget:     float64Ptr(60.0),
 				NozzleTemp:    float64Ptr(210.0),
@@ -51,7 +52,7 @@ func TestParseReport(t *testing.T) {
 				RemainingTime: intPtr(1200),
 				CurrentLayer:  intPtr(42),
 				TotalLayers:   intPtr(100),
-				Error:         "",
+				Error:         stringPtr(""),
 			},
 			wantErr: false,
 		},
@@ -61,8 +62,7 @@ func TestParseReport(t *testing.T) {
 				"status": "idle"
 			}`,
 			want: &paxxStatus{
-				Status:  "idle",
-				Error:   "",
+				Status: "idle",
 			},
 			wantErr: false,
 		},
@@ -74,10 +74,9 @@ func TestParseReport(t *testing.T) {
 				"nozzle_temp": null
 			}`,
 			want: &paxxStatus{
-				Status:   "idle",
-				BedTemp:  nil,
+				Status:     "idle",
+				BedTemp:    nil,
 				NozzleTemp: nil,
-				Error:    "",
 			},
 			wantErr: false,
 		},
@@ -89,7 +88,7 @@ func TestParseReport(t *testing.T) {
 			}`,
 			want: &paxxStatus{
 				Status: "error",
-				Error:  "Heater timeout",
+				Error:  stringPtr("Heater timeout"),
 			},
 			wantErr: false,
 		},
@@ -102,9 +101,8 @@ func TestParseReport(t *testing.T) {
 			}`,
 			want: &paxxStatus{
 				Status:   "running",
-				Progress: 0,
-				File:     "model.gcode",
-				Error:    "",
+				Progress: float64Ptr(0),
+				File:     stringPtr("model.gcode"),
 			},
 			wantErr: false,
 		},
@@ -200,17 +198,11 @@ func comparePaxxStatus(t *testing.T, want, got *paxxStatus) {
 	if got.Status != want.Status {
 		t.Errorf("Status = %q; want %q", got.Status, want.Status)
 	}
-	if got.File != want.File {
-		t.Errorf("File = %q; want %q", got.File, want.File)
-	}
-	if got.Error != want.Error {
-		t.Errorf("Error = %q; want %q", got.Error, want.Error)
-	}
 
-	// Float64 fields.
-	if math.Abs(got.Progress-want.Progress) > epsilon {
-		t.Errorf("Progress = %f; want %f", got.Progress, want.Progress)
-	}
+	// Pointer fields (Progress, File, Error).
+	compareFloat64Ptr(t, "Progress", want.Progress, got.Progress)
+	compareStringPtr(t, "File", want.File, got.File)
+	compareStringPtr(t, "Error", want.Error, got.Error)
 
 	// Float64 pointer fields.
 	compareFloat64Ptr(t, "BedTemp", want.BedTemp, got.BedTemp)
@@ -242,6 +234,25 @@ func compareIntPtr(t *testing.T, name string, want, got *int) {
 	}
 	if *got != *want {
 		t.Errorf("%s = %d; want %d", name, *got, *want)
+	}
+}
+
+func compareStringPtr(t *testing.T, name string, want, got *string) {
+	t.Helper()
+
+	if want == nil && got == nil {
+		return
+	}
+	if want == nil {
+		t.Errorf("%s = %q; want nil", name, *got)
+		return
+	}
+	if got == nil {
+		t.Errorf("%s = nil; want %q", name, *want)
+		return
+	}
+	if *got != *want {
+		t.Errorf("%s = %q; want %q", name, *got, *want)
 	}
 }
 
