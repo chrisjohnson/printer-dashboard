@@ -16,12 +16,12 @@ import (
 // Client implements the printers.Printer interface for Bambu Lab printers
 // via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
 type Client struct {
-	cfg        config.PrinterDef
-	cloud      *BambuCloudClient
-	mu         sync.RWMutex
-	status     printers.PrinterStatus
-	mqttClient mqtt.Client
-	camURLs    []string
+	cfg         config.PrinterDef
+	cloud       *BambuCloudClient
+	mu          sync.RWMutex
+	status      printers.PrinterStatus
+	mqttClient  mqtt.Client
+	camIPCamURL string
 
 	// StatusCh is an optional channel that receives the full printer status
 	// after each report parse. If nil, no status updates are emitted.
@@ -39,20 +39,10 @@ func New(cfg config.PrinterDef, cloud *BambuCloudClient) *Client {
 		Type: "bambu",
 	}
 
-	// Build camera URLs if we have the local IP and access code.
-	// The local camera stream on port 6000 works even without LAN mode enabled.
-	camURLs := []string{}
-	if cfg.Host != "" && cfg.AccessCode != "" {
-		camURLs = append(camURLs,
-			fmt.Sprintf("http://%s:6000/?token=%s", cfg.Host, cfg.AccessCode),
-		)
-	}
-
 	return &Client{
-		cfg:     cfg,
-		cloud:   cloud,
-		status:  status,
-		camURLs: camURLs,
+		cfg:    cfg,
+		cloud:  cloud,
+		status: status,
 	}
 }
 
@@ -61,13 +51,6 @@ func (c *Client) ID() string { return c.cfg.ID }
 
 // Name returns the printer's human-readable name.
 func (c *Client) Name() string { return c.cfg.Name }
-
-// CameraURLs returns the printer's camera stream URLs.
-func (c *Client) CameraURLs() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.camURLs
-}
 
 // Status returns the current cached status. Safe for concurrent use.
 func (c *Client) Status() printers.PrinterStatus {
@@ -90,6 +73,26 @@ func (c *Client) setStatus(s printers.PrinterStatus) {
 		default:
 			// Channel full, drop update (reader is slow)
 		}
+	}
+}
+
+// CameraStreams returns the available camera/display streams for this printer.
+func (c *Client) CameraStreams() []printers.CameraStream {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var internalURL string
+	if c.camIPCamURL != "" {
+		internalURL = c.camIPCamURL
+	} else if c.cfg.Host != "" && c.cfg.AccessCode != "" {
+		internalURL = fmt.Sprintf("http://%s:6000/?token=%s", c.cfg.Host, c.cfg.AccessCode)
+	}
+
+	if internalURL == "" {
+		return nil
+	}
+	return []printers.CameraStream{
+		{URL: internalURL, Type: "internal", Label: "Camera"},
 	}
 }
 
@@ -201,6 +204,13 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		return
 	}
 
+	// Capture camera URL from camera reports (even without print data)
+	if r.Camera != nil && r.Camera.IPCamURL != "" {
+		c.mu.Lock()
+		c.camIPCamURL = r.Camera.IPCamURL
+		c.mu.Unlock()
+	}
+
 	if r.Print == nil {
 		return // not a print status report
 	}
@@ -218,22 +228,22 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// Temperatures — only update when the field is present in the report.
 	// Many status reports omit temperature fields, and Go defaults *float64 to nil.
 	if p.BedTemper != nil {
-		s.BedTemp = *p.BedTemper
+		s.BedTemp = p.BedTemper
 	}
 	if p.NozzleTemper != nil {
-		s.NozzleTemp = *p.NozzleTemper
+		s.NozzleTemp = p.NozzleTemper
 	}
 	if p.BedTarget != nil {
-		s.BedTargetTemp = *p.BedTarget
+		s.BedTargetTemp = p.BedTarget
 	}
 	if p.NozzleTarget != nil {
-		s.NozzleTargetTemp = *p.NozzleTarget
+		s.NozzleTargetTemp = p.NozzleTarget
 	}
 	if p.ChamberTemper != nil {
-		s.ChamberTemp = *p.ChamberTemper
+		s.ChamberTemp = p.ChamberTemper
 	} else if p.Info != nil && p.Info.Temp != nil {
 		// H2S (O1S) reports chamber temp via info.temp instead of chamber_temper
-		s.ChamberTemp = *p.Info.Temp
+		s.ChamberTemp = p.Info.Temp
 	}
 
 	if p.McPercent != nil {

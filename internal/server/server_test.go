@@ -77,7 +77,7 @@ func (m *MockPrinter) SkipObject(_ context.Context) error {
 	return m.skipErr
 }
 
-func (m *MockPrinter) CameraURLs() []string { return nil }
+func (m *MockPrinter) CameraStreams() []printers.CameraStream { return nil }
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -97,6 +97,9 @@ func newTestServer(printersMap map[string]printers.Printer) *Server {
 	s.registerRoutes()
 	return s
 }
+
+// float64Ptr returns a pointer to the given float64 value.
+func float64Ptr(v float64) *float64 { return &v }
 
 // mustGet is a helper that GETs a URL and returns the response.
 func mustGet(t *testing.T, baseURL, path string) *http.Response {
@@ -297,11 +300,11 @@ func TestHandleListPrinters(t *testing.T) {
 			Progress:         0.45,
 			RemainingTime:    3600,
 			CurrentFile:      "benchy.gcode",
-			BedTemp:          60.5,
-			BedTargetTemp:    65.0,
-			NozzleTemp:       220.0,
-			NozzleTargetTemp: 220.0,
-			ChamberTemp:      35.0,
+			BedTemp:          float64Ptr(60.5),
+			BedTargetTemp:    float64Ptr(65.0),
+			NozzleTemp:       float64Ptr(220.0),
+			NozzleTargetTemp: float64Ptr(220.0),
+			ChamberTemp:      float64Ptr(35.0),
 			CurrentLayer:     5,
 			TotalLayers:      100,
 			ErrorMsg:         "",
@@ -408,6 +411,145 @@ func TestHandleListPrinters(t *testing.T) {
 			t.Errorf(`error_msg: expected "Heater anomaly detected", got %v`, msg)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// enrichStatusWithCameras tests
+// ---------------------------------------------------------------------------
+
+type mockPrinterWithCameras struct {
+	MockPrinter
+	cameras []printers.CameraStream
+}
+
+func (m *mockPrinterWithCameras) CameraStreams() []printers.CameraStream {
+	return m.cameras
+}
+
+func TestEnrichStatusWithCameras_DriverOnly(t *testing.T) {
+	cfg := &config.Config{
+		Listen: ":0",
+	}
+	s := &Server{
+		cfg:      cfg,
+		printers: make(map[string]printers.Printer),
+		mux:      http.NewServeMux(),
+	}
+
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: "http://camera.local/stream", Type: "internal", Label: "Camera"},
+		},
+	}
+	s.printers["p1"] = p
+
+	status := printers.PrinterStatus{ID: "p1", Name: "Test"}
+	enriched := s.enrichStatusWithCameras("p1", status)
+
+	if len(enriched.CameraStreams) != 1 {
+		t.Fatalf("expected 1 camera stream, got %d", len(enriched.CameraStreams))
+	}
+	if enriched.CameraStreams[0].URL != "http://camera.local/stream" {
+		t.Errorf("URL = %q; want %q", enriched.CameraStreams[0].URL, "http://camera.local/stream")
+	}
+	if enriched.CameraStreams[0].Type != "internal" {
+		t.Errorf("Type = %q; want %q", enriched.CameraStreams[0].Type, "internal")
+	}
+}
+
+func TestEnrichStatusWithCameras_ConfigOnly(t *testing.T) {
+	cfg := &config.Config{
+		Listen: ":0",
+		Cameras: []config.CameraDef{
+			{ID: "cam1", Name: "Workshop", URL: "http://cam.local/feed", PrinterID: "p1"},
+		},
+	}
+	s := &Server{
+		cfg:      cfg,
+		printers: make(map[string]printers.Printer),
+		mux:      http.NewServeMux(),
+	}
+
+	p := &MockPrinter{id: "p1", name: "Test"}
+	s.printers["p1"] = p
+
+	status := printers.PrinterStatus{ID: "p1", Name: "Test"}
+	enriched := s.enrichStatusWithCameras("p1", status)
+
+	if len(enriched.CameraStreams) != 1 {
+		t.Fatalf("expected 1 camera stream, got %d", len(enriched.CameraStreams))
+	}
+	if enriched.CameraStreams[0].URL != "http://cam.local/feed" {
+		t.Errorf("URL = %q; want %q", enriched.CameraStreams[0].URL, "http://cam.local/feed")
+	}
+	if enriched.CameraStreams[0].Type != "external" {
+		t.Errorf("Type = %q; want %q", enriched.CameraStreams[0].Type, "external")
+	}
+	if enriched.CameraStreams[0].Label != "Workshop" {
+		t.Errorf("Label = %q; want %q", enriched.CameraStreams[0].Label, "Workshop")
+	}
+}
+
+func TestEnrichStatusWithCameras_Merged(t *testing.T) {
+	cfg := &config.Config{
+		Listen: ":0",
+		Cameras: []config.CameraDef{
+			{ID: "cam1", Name: "Front Door", URL: "http://front/feed", PrinterID: "p1"},
+		},
+	}
+	s := &Server{
+		cfg:      cfg,
+		printers: make(map[string]printers.Printer),
+		mux:      http.NewServeMux(),
+	}
+
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: "http://internal/stream", Type: "internal", Label: "Camera"},
+			{URL: "http://touch/display", Type: "touchscreen", Label: "Touchscreen"},
+		},
+	}
+	s.printers["p1"] = p
+
+	status := printers.PrinterStatus{ID: "p1", Name: "Test"}
+	enriched := s.enrichStatusWithCameras("p1", status)
+
+	if len(enriched.CameraStreams) != 3 {
+		t.Fatalf("expected 3 camera streams, got %d", len(enriched.CameraStreams))
+	}
+
+	// Order: internal → config external → remaining (touchscreen)
+	if enriched.CameraStreams[0].Type != "internal" {
+		t.Errorf("stream[0].Type = %q; want %q", enriched.CameraStreams[0].Type, "internal")
+	}
+	if enriched.CameraStreams[1].Type != "external" || enriched.CameraStreams[1].Label != "Front Door" {
+		t.Errorf("stream[1] = %+v; want Type=external Label=Front Door", enriched.CameraStreams[1])
+	}
+	if enriched.CameraStreams[2].Type != "touchscreen" {
+		t.Errorf("stream[2].Type = %q; want %q", enriched.CameraStreams[2].Type, "touchscreen")
+	}
+}
+
+func TestEnrichStatusWithCameras_PrinterNotFound(t *testing.T) {
+	cfg := &config.Config{Listen: ":0"}
+	s := &Server{
+		cfg:      cfg,
+		printers: make(map[string]printers.Printer),
+		mux:      http.NewServeMux(),
+	}
+
+	status := printers.PrinterStatus{ID: "nonexistent", Name: "Ghost"}
+	enriched := s.enrichStatusWithCameras("nonexistent", status)
+
+	// Should return status unchanged
+	if len(enriched.CameraStreams) != 0 {
+		t.Errorf("expected 0 camera streams for unknown printer, got %d", len(enriched.CameraStreams))
+	}
+	if enriched.ID != "nonexistent" {
+		t.Errorf("ID = %q; want %q", enriched.ID, "nonexistent")
+	}
 }
 
 // ---------------------------------------------------------------------------

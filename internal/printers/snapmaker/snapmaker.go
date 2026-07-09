@@ -74,19 +74,6 @@ func New(cfg config.PrinterDef) *Printer {
 	}
 }
 
-// buildCameraURLs derives the camera stream URL from the printer config.
-// Snapmaker U1 with Paxx typically streams at http://{host}:{port}/camera.
-func buildCameraURLs(cfg config.PrinterDef) []string {
-	if cfg.Host == "" {
-		return nil
-	}
-	port := cfg.Port
-	if port == 0 {
-		port = 80
-	}
-	return []string{fmt.Sprintf("http://%s:%d/camera", cfg.Host, port)}
-}
-
 // ID returns the printer's unique identifier.
 func (p *Printer) ID() string { return p.cfg.ID }
 
@@ -216,7 +203,7 @@ func (p *Printer) wsConnect(ctx context.Context, wsCh chan<- wsMsg) {
 		return
 	}
 
-	// Store the connection so CameraURLs and other methods can check it.
+	// Store the connection so other methods can check it.
 	p.wsMu.Lock()
 	p.wsConn = conn
 	p.wsMu.Unlock()
@@ -391,34 +378,26 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 		current.State = mapMoonrakerState(s.State.Text, s.State.Flags)
 	}
 
-	// Temperatures — nil-check each sensor
+	// Temperatures — dynamically handle any number of toolheads
 	if s.Temperature != nil {
-		if s.Temperature.Bed != nil {
-			current.BedTemp = s.Temperature.Bed.Actual
-			current.BedTargetTemp = s.Temperature.Bed.Target
+		if bed := s.Temperature.BedEntry(); bed != nil {
+			current.BedTemp = &bed.Actual
+			current.BedTargetTemp = &bed.Target
 		}
 		var nozzleTemps []printers.NozzleTempEntry
-		tools := []struct {
-			entry **temperatureEntry
-			index int
-		}{
-			{&s.Temperature.Tool0, 0},
-			{&s.Temperature.Tool1, 1},
-			{&s.Temperature.Tool2, 2},
-			{&s.Temperature.Tool3, 3},
-		}
-		for _, tool := range tools {
-			if *tool.entry != nil {
-				if tool.index == 0 {
-					current.NozzleTemp = (*tool.entry).Actual
-					current.NozzleTargetTemp = (*tool.entry).Target
-				}
-				nozzleTemps = append(nozzleTemps, printers.NozzleTempEntry{
-					Index:  tool.index,
-					Actual: (*tool.entry).Actual,
-					Target: (*tool.entry).Target,
-				})
+		for _, tool := range s.Temperature.ToolEntries() {
+			if tool.Entry == nil {
+				continue
 			}
+			if tool.Index == 0 {
+				current.NozzleTemp = &tool.Entry.Actual
+				current.NozzleTargetTemp = &tool.Entry.Target
+			}
+			nozzleTemps = append(nozzleTemps, printers.NozzleTempEntry{
+				Index:  tool.Index,
+				Actual: &tool.Entry.Actual,
+				Target: &tool.Entry.Target,
+			})
 		}
 		current.NozzleTemps = nozzleTemps
 	}
@@ -571,7 +550,22 @@ func (p *Printer) SkipObject(ctx context.Context) error {
 	return nil
 }
 
-// CameraURLs returns the camera stream URL for this printer.
-func (p *Printer) CameraURLs() []string {
-	return buildCameraURLs(p.cfg)
+// CameraStreams returns the available camera/display streams for this printer.
+// The camera endpoint is /camera on the printer's HTTP port.
+// Moonraker-based firmware also commonly exposes the webcam at /webcam/?action=stream
+// or on port 8080. Users can add additional cameras via CameraDef in config.
+func (p *Printer) CameraStreams() []printers.CameraStream {
+	if p.cfg.Host == "" {
+		return nil
+	}
+	port := p.cfg.Port
+	if port == 0 {
+		port = 80
+	}
+	base := fmt.Sprintf("http://%s:%d", p.cfg.Host, port)
+	return []printers.CameraStream{
+		{URL: base + "/camera", Type: "internal", Label: "Camera"},
+		{URL: base + "/webcam/?action=stream", Type: "internal", Label: "Camera"},
+		{URL: base + "/touchscreen", Type: "touchscreen", Label: "Touchscreen"},
+	}
 }

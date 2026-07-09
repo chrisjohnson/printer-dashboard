@@ -11,6 +11,21 @@ func float64Ptr(v float64) *float64 { return &v }
 func intPtr(v int) *int             { return &v }
 func stringPtr(v string) *string    { return &v }
 
+// tempPair is a helper for constructing temperatureReport test data.
+type tempPair struct {
+	key   string
+	entry *temperatureEntry
+}
+
+// makeTempReport creates a temperatureReport from key-entry pairs.
+func makeTempReport(pairs ...tempPair) *temperatureReport {
+	tr := &temperatureReport{Entries: make(map[string]*temperatureEntry, len(pairs))}
+	for _, p := range pairs {
+		tr.Entries[p.key] = p.entry
+	}
+	return tr
+}
+
 // ---------------------------------------------------------------------------
 // parseAPIReport tests
 // ---------------------------------------------------------------------------
@@ -42,13 +57,13 @@ func TestParseAPIReport(t *testing.T) {
 				}
 			}`,
 			want: &apiPrinterResponse{
-				Temperature: &temperatureReport{
-					Bed:   &temperatureEntry{Actual: 24.0, Target: 0.0, Offset: 0},
-					Tool0: &temperatureEntry{Actual: 47.0, Target: 0.0, Offset: 0},
-					Tool1: &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0},
-					Tool2: &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0},
-					Tool3: &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0},
-				},
+				Temperature: makeTempReport(
+					tempPair{"bed", &temperatureEntry{Actual: 24.0, Target: 0.0, Offset: 0}},
+					tempPair{"tool0", &temperatureEntry{Actual: 47.0, Target: 0.0, Offset: 0}},
+					tempPair{"tool1", &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0}},
+					tempPair{"tool2", &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0}},
+					tempPair{"tool3", &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0}},
+				),
 				State: &stateReport{
 					Text: "Operational",
 					Flags: &stateFlags{
@@ -88,10 +103,10 @@ func TestParseAPIReport(t *testing.T) {
 				}
 			}`,
 			want: &apiPrinterResponse{
-				Temperature: &temperatureReport{
-					Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0, Offset: 0},
-					Tool0: &temperatureEntry{Actual: 210.0, Target: 220.0, Offset: 0},
-				},
+				Temperature: makeTempReport(
+					tempPair{"bed", &temperatureEntry{Actual: 55.0, Target: 60.0, Offset: 0}},
+					tempPair{"tool0", &temperatureEntry{Actual: 210.0, Target: 220.0, Offset: 0}},
+				),
 				State: &stateReport{
 					Text:  "Printing",
 					Flags: &stateFlags{Printing: true},
@@ -112,13 +127,13 @@ func TestParseAPIReport(t *testing.T) {
 				"state": {"text": "Operational"}
 			}`,
 			want: &apiPrinterResponse{
-				Temperature: &temperatureReport{
-					Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0, Offset: 0},
-					Tool0: nil,
-					Tool1: nil,
-					Tool2: &temperatureEntry{Actual: 30.0, Target: 0.0, Offset: 0},
-					Tool3: nil,
-				},
+				Temperature: makeTempReport(
+					tempPair{"bed", &temperatureEntry{Actual: 55.0, Target: 60.0, Offset: 0}},
+					tempPair{"tool0", nil},
+					tempPair{"tool1", nil},
+					tempPair{"tool2", &temperatureEntry{Actual: 30.0, Target: 0.0, Offset: 0}},
+					tempPair{"tool3", nil},
+				),
 				State: &stateReport{Text: "Operational"},
 			},
 			wantErr: false,
@@ -359,11 +374,19 @@ func compareAPIResponse(t *testing.T, want, got *apiPrinterResponse) {
 		return
 	}
 	if want.Temperature != nil && got.Temperature != nil {
-		compareTemperatureEntry(t, "bed", want.Temperature.Bed, got.Temperature.Bed)
-		compareTemperatureEntry(t, "tool0", want.Temperature.Tool0, got.Temperature.Tool0)
-		compareTemperatureEntry(t, "tool1", want.Temperature.Tool1, got.Temperature.Tool1)
-		compareTemperatureEntry(t, "tool2", want.Temperature.Tool2, got.Temperature.Tool2)
-		compareTemperatureEntry(t, "tool3", want.Temperature.Tool3, got.Temperature.Tool3)
+		// Compare entry counts.
+		if len(want.Temperature.Entries) != len(got.Temperature.Entries) {
+			t.Errorf("Temperature.Entries length = %d; want %d", len(got.Temperature.Entries), len(want.Temperature.Entries))
+		}
+		// Compare each expected entry.
+		for key, wantEntry := range want.Temperature.Entries {
+			gotEntry, ok := got.Temperature.Entries[key]
+			if !ok {
+				t.Errorf("Temperature.Entries[%q] missing", key)
+				continue
+			}
+			compareTemperatureEntry(t, key, wantEntry, gotEntry)
+		}
 	}
 }
 

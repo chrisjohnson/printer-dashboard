@@ -157,20 +157,26 @@ func TestClient_InitialStatus(t *testing.T) {
 // Camera URL tests
 // ---------------------------------------------------------------------------
 
-func TestClient_CameraURLs(t *testing.T) {
+func TestClient_CameraStreams(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	urls := c.CameraURLs()
-	if len(urls) != 1 {
-		t.Fatalf("CameraURLs() returned %d URLs; want 1", len(urls))
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
 	}
 	expected := "http://10.0.0.1:6000/?token=1234"
-	if urls[0] != expected {
-		t.Errorf("CameraURLs()[0] = %q; want %q", urls[0], expected)
+	if streams[0].URL != expected {
+		t.Errorf("CameraStreams()[0].URL = %q; want %q", streams[0].URL, expected)
+	}
+	if streams[0].Type != "internal" {
+		t.Errorf("CameraStreams()[0].Type = %q; want %q", streams[0].Type, "internal")
+	}
+	if streams[0].Label != "Camera" {
+		t.Errorf("CameraStreams()[0].Label = %q; want %q", streams[0].Label, "Camera")
 	}
 }
 
-func TestClient_CameraURLs_NoHost(t *testing.T) {
+func TestClient_CameraStreams_NoHost(t *testing.T) {
 	cfg := config.PrinterDef{
 		ID:         "test-id-no-cam",
 		Name:       "No Camera",
@@ -181,13 +187,13 @@ func TestClient_CameraURLs_NoHost(t *testing.T) {
 	}
 	c := New(cfg, nil)
 
-	urls := c.CameraURLs()
-	if len(urls) != 0 {
-		t.Errorf("CameraURLs() returned %d URLs; want 0", len(urls))
+	streams := c.CameraStreams()
+	if len(streams) != 0 {
+		t.Errorf("CameraStreams() returned %d streams; want 0", len(streams))
 	}
 }
 
-func TestClient_CameraURLs_NoAccessCode(t *testing.T) {
+func TestClient_CameraStreams_NoAccessCode(t *testing.T) {
 	cfg := config.PrinterDef{
 		ID:     "test-id-no-ac",
 		Name:   "No Access Code",
@@ -198,9 +204,62 @@ func TestClient_CameraURLs_NoAccessCode(t *testing.T) {
 	}
 	c := New(cfg, nil)
 
-	urls := c.CameraURLs()
-	if len(urls) != 0 {
-		t.Errorf("CameraURLs() returned %d URLs; want 0", len(urls))
+	streams := c.CameraStreams()
+	if len(streams) != 0 {
+		t.Errorf("CameraStreams() returned %d streams; want 0", len(streams))
+	}
+}
+
+func TestHandleReport_CapturesIPCamURL(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Report with camera data (no print section).
+	payload := []byte(`{
+		"camera": {
+			"ipcam_url": "rtsp://camera.example.com/stream"
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
+	}
+	if streams[0].URL != "rtsp://camera.example.com/stream" {
+		t.Errorf("CameraStreams()[0].URL = %q; want %q", streams[0].URL, "rtsp://camera.example.com/stream")
+	}
+	if streams[0].Type != "internal" {
+		t.Errorf("CameraStreams()[0].Type = %q; want %q", streams[0].Type, "internal")
+	}
+	if streams[0].Label != "Camera" {
+		t.Errorf("CameraStreams()[0].Label = %q; want %q", streams[0].Label, "Camera")
+	}
+
+	// IPCamURL should take precedence over host/access code based URL.
+	// Set up a client with host+access code, send camera report, verify IPCamURL wins.
+	c2 := New(config.PrinterDef{
+		ID:         "test-id-pref",
+		Name:       "Test Pref",
+		Type:       "bambu",
+		Serial:     "SERIAL004",
+		Host:       "10.0.0.1",
+		AccessCode: "1234",
+	}, nil)
+
+	payload2 := []byte(`{
+		"camera": {
+			"ipcam_url": "rtsp://preferred-stream/feed"
+		}
+	}`)
+	c2.handleReport(nil, newMockMessage(payload2))
+
+	streams2 := c2.CameraStreams()
+	if len(streams2) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams2))
+	}
+	if streams2[0].URL != "rtsp://preferred-stream/feed" {
+		t.Errorf("CameraStreams()[0].URL = %q; want %q (IPCamURL should take precedence)", streams2[0].URL, "rtsp://preferred-stream/feed")
 	}
 }
 
@@ -243,20 +302,20 @@ func TestHandleReport_FullStatusUpdate(t *testing.T) {
 	if s.RemainingTime != 1800 {
 		t.Errorf("RemainingTime = %d; want 1800", s.RemainingTime)
 	}
-	if s.BedTemp != 55.5 {
-		t.Errorf("BedTemp = %f; want 55.5", s.BedTemp)
+	if s.BedTemp == nil || *s.BedTemp != 55.5 {
+		t.Errorf("BedTemp = %v; want 55.5", s.BedTemp)
 	}
-	if s.BedTargetTemp != 60.0 {
-		t.Errorf("BedTargetTemp = %f; want 60.0", s.BedTargetTemp)
+	if s.BedTargetTemp == nil || *s.BedTargetTemp != 60.0 {
+		t.Errorf("BedTargetTemp = %v; want 60.0", s.BedTargetTemp)
 	}
-	if s.NozzleTemp != 210.0 {
-		t.Errorf("NozzleTemp = %f; want 210.0", s.NozzleTemp)
+	if s.NozzleTemp == nil || *s.NozzleTemp != 210.0 {
+		t.Errorf("NozzleTemp = %v; want 210.0", s.NozzleTemp)
 	}
-	if s.NozzleTargetTemp != 220.0 {
-		t.Errorf("NozzleTargetTemp = %f; want 220.0", s.NozzleTargetTemp)
+	if s.NozzleTargetTemp == nil || *s.NozzleTargetTemp != 220.0 {
+		t.Errorf("NozzleTargetTemp = %v; want 220.0", s.NozzleTargetTemp)
 	}
-	if s.ChamberTemp != 30.0 {
-		t.Errorf("ChamberTemp = %f; want 30.0", s.ChamberTemp)
+	if s.ChamberTemp == nil || *s.ChamberTemp != 30.0 {
+		t.Errorf("ChamberTemp = %v; want 30.0", s.ChamberTemp)
 	}
 	if s.CurrentLayer != 15 {
 		t.Errorf("CurrentLayer = %d; want 15", s.CurrentLayer)
@@ -277,8 +336,8 @@ func TestHandleReport_NilBedTemper(t *testing.T) {
 
 	// Set initial temperature values.
 	c.mu.Lock()
-	c.status.BedTemp = 55.0
-	c.status.NozzleTemp = 200.0
+	c.status.BedTemp = float64Ptr(55.0)
+	c.status.NozzleTemp = float64Ptr(200.0)
 	c.mu.Unlock()
 
 	// Send a report that omits bed_temper and nozzle_temper
@@ -302,15 +361,15 @@ func TestHandleReport_NilBedTemper(t *testing.T) {
 	s := c.Status()
 
 	// Previous values should be preserved.
-	if s.BedTemp != 55.0 {
-		t.Errorf("BedTemp = %f; want 55.0 (should preserve previous value)", s.BedTemp)
+	if s.BedTemp == nil || *s.BedTemp != 55.0 {
+		t.Errorf("BedTemp = %v; want 55.0 (should preserve previous value)", s.BedTemp)
 	}
-	if s.NozzleTemp != 200.0 {
-		t.Errorf("NozzleTemp = %f; want 200.0 (should preserve previous value)", s.NozzleTemp)
+	if s.NozzleTemp == nil || *s.NozzleTemp != 200.0 {
+		t.Errorf("NozzleTemp = %v; want 200.0 (should preserve previous value)", s.NozzleTemp)
 	}
 	// Other fields should still update.
-	if s.BedTargetTemp != 60.0 {
-		t.Errorf("BedTargetTemp = %f; want 60.0", s.BedTargetTemp)
+	if s.BedTargetTemp == nil || *s.BedTargetTemp != 60.0 {
+		t.Errorf("BedTargetTemp = %v; want 60.0", s.BedTargetTemp)
 	}
 	if s.State != "printing" {
 		t.Errorf("State = %q; want %q", s.State, "printing")
@@ -338,8 +397,8 @@ func TestHandleReport_ChamberTempFallback(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
-	if s.ChamberTemp != 28.5 {
-		t.Errorf("ChamberTemp = %f; want 28.5 (from info.temp fallback)", s.ChamberTemp)
+	if s.ChamberTemp == nil || *s.ChamberTemp != 28.5 {
+		t.Errorf("ChamberTemp = %v; want 28.5 (from info.temp fallback)", s.ChamberTemp)
 	}
 }
 
@@ -365,8 +424,8 @@ func TestHandleReport_ChamberTempDirectPreferred(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
-	if s.ChamberTemp != 30.0 {
-		t.Errorf("ChamberTemp = %f; want 30.0 (chamber_temper should take priority)", s.ChamberTemp)
+	if s.ChamberTemp == nil || *s.ChamberTemp != 30.0 {
+		t.Errorf("ChamberTemp = %v; want 30.0 (chamber_temper should take priority)", s.ChamberTemp)
 	}
 }
 
@@ -375,7 +434,7 @@ func TestHandleReport_ChamberTempPreservedWhenMissing(t *testing.T) {
 
 	// Set initial chamber temp.
 	c.mu.Lock()
-	c.status.ChamberTemp = 25.0
+	c.status.ChamberTemp = float64Ptr(25.0)
 	c.mu.Unlock()
 
 	// Report with neither chamber_temper nor info.temp.
@@ -392,8 +451,8 @@ func TestHandleReport_ChamberTempPreservedWhenMissing(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
-	if s.ChamberTemp != 25.0 {
-		t.Errorf("ChamberTemp = %f; want 25.0 (should preserve previous value)", s.ChamberTemp)
+	if s.ChamberTemp == nil || *s.ChamberTemp != 25.0 {
+		t.Errorf("ChamberTemp = %v; want 25.0 (should preserve previous value)", s.ChamberTemp)
 	}
 }
 
@@ -814,17 +873,17 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 	if s2.TotalLayers != 100 {
 		t.Errorf("Step 2: TotalLayers = %d; want 100", s2.TotalLayers)
 	}
-	if s2.BedTemp != 55.0 {
-		t.Errorf("Step 2: BedTemp = %f; want 55.0", s2.BedTemp)
+	if s2.BedTemp == nil || *s2.BedTemp != 55.0 {
+		t.Errorf("Step 2: BedTemp = %v; want 55.0", s2.BedTemp)
 	}
-	if s2.NozzleTemp != 210.0 {
-		t.Errorf("Step 2: NozzleTemp = %f; want 210.0", s2.NozzleTemp)
+	if s2.NozzleTemp == nil || *s2.NozzleTemp != 210.0 {
+		t.Errorf("Step 2: NozzleTemp = %v; want 210.0", s2.NozzleTemp)
 	}
-	if s2.BedTargetTemp != 60.0 {
-		t.Errorf("Step 2: BedTargetTemp = %f; want 60.0", s2.BedTargetTemp)
+	if s2.BedTargetTemp == nil || *s2.BedTargetTemp != 60.0 {
+		t.Errorf("Step 2: BedTargetTemp = %v; want 60.0", s2.BedTargetTemp)
 	}
-	if s2.NozzleTargetTemp != 220.0 {
-		t.Errorf("Step 2: NozzleTargetTemp = %f; want 220.0", s2.NozzleTargetTemp)
+	if s2.NozzleTargetTemp == nil || *s2.NozzleTargetTemp != 220.0 {
+		t.Errorf("Step 2: NozzleTargetTemp = %v; want 220.0", s2.NozzleTargetTemp)
 	}
 
 	// Step 3: PAUSE (minimal report — no progress/temp updates)
@@ -879,8 +938,8 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 	if s4.TotalLayers != 100 {
 		t.Errorf("Step 4: TotalLayers = %d; want 100 (preserved)", s4.TotalLayers)
 	}
-	if s4.BedTemp != 55.0 {
-		t.Errorf("Step 4: BedTemp = %f; want 55.0 (preserved)", s4.BedTemp)
+	if s4.BedTemp == nil || *s4.BedTemp != 55.0 {
+		t.Errorf("Step 4: BedTemp = %v; want 55.0 (preserved)", s4.BedTemp)
 	}
 
 	// Step 5: SUCCESS (job complete)

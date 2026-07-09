@@ -2,6 +2,13 @@ package printers
 
 import "context"
 
+// CameraStream represents a camera or display stream for a printer.
+type CameraStream struct {
+	URL   string `json:"url"`
+	Type  string `json:"type"`  // "internal", "external", or "touchscreen"
+	Label string `json:"label"` // Human-readable label e.g. "Camera", "Front Camera", "Touchscreen"
+}
+
 // PrinterStatus represents the current state of a printer.
 type PrinterStatus struct {
 	ID               string           `json:"id"`
@@ -12,22 +19,23 @@ type PrinterStatus struct {
 	Progress         float64          `json:"progress"`
 	RemainingTime    int              `json:"remaining_time"` // seconds
 	CurrentFile      string           `json:"current_file"`
-	BedTemp          float64          `json:"bed_temp"`
-	BedTargetTemp    float64          `json:"bed_target_temp"`
-	NozzleTemp       float64          `json:"nozzle_temp"`
-	NozzleTargetTemp float64          `json:"nozzle_target_temp"`
-	ChamberTemp      float64          `json:"chamber_temp"`
+	BedTemp          *float64         `json:"bed_temp"`
+	BedTargetTemp    *float64         `json:"bed_target_temp"`
+	NozzleTemp       *float64         `json:"nozzle_temp"`
+	NozzleTargetTemp *float64         `json:"nozzle_target_temp"`
+	ChamberTemp      *float64         `json:"chamber_temp"`
 	CurrentLayer     int              `json:"current_layer"`
 	TotalLayers      int              `json:"total_layers"`
 	ErrorMsg         string           `json:"error_msg,omitempty"`
 	NozzleTemps      []NozzleTempEntry `json:"nozzle_temps,omitempty"`
+	CameraStreams    []CameraStream    `json:"camera_streams,omitempty"`
 }
 
 // NozzleTempEntry captures one toolhead's temperature data.
 type NozzleTempEntry struct {
-	Index  int     `json:"index"`
-	Actual float64 `json:"actual"`
-	Target float64 `json:"target"`
+	Index  int      `json:"index"`
+	Actual *float64 `json:"actual"`
+	Target *float64 `json:"target"`
 }
 
 // Printer defines the interface that all printer drivers must implement.
@@ -57,6 +65,6 @@ type Printer interface {
 	// SkipObject skips the current object being printed and moves to the next.
 	SkipObject(ctx context.Context) error
 
-	// CameraURL returns the URL(s) for the printer's camera feed(s).
-	CameraURLs() []string
+	// CameraStreams returns the available camera/display streams for this printer.
+	CameraStreams() []CameraStream
 }

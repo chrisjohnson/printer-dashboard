@@ -502,14 +502,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     /* Temperature row — compact on mobile, expanded on desktop */
     .temps {
-      display: flex; flex-wrap: wrap; gap: 4px 14px;
+      display: flex; flex-direction: column; gap: 2px;
       font-size: 0.78rem; color: #aaa;
       padding: 4px 0;
     }
-    .temps .label { color: #666; }
+    .temps .label { color: #666; display: flex; align-items: center; gap: 3px; }
     .temps .val { color: #ddd; font-variant-numeric: tabular-nums; }
     .temps .target { color: #888; }
-    .temp-row { display: flex; gap: 4px; align-items: center; }
+    .temp-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 1px 0; }
+    .temp-icon { width: 14px; text-align: center; font-size: 0.7rem; line-height: 1; }
+    .temp-values { display: flex; gap: 6px; }
 
     /* File name — only on desktop */
     .filename { display: none; font-size: 0.75rem; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -517,6 +519,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     /* Controls — always visible but less buttons on mobile */
     .controls { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
     .controls button {
+      flex: 1; min-width: 0;
       background: #333; color: #fff; border: 1px solid #555;
       padding: 4px 10px; border-radius: 5px; cursor: pointer;
       font-size: 0.75rem; transition: background 0.15s;
@@ -542,7 +545,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     @media (min-width: 768px) {
       body { padding: 24px; }
       h1 { font-size: 1.5rem; }
-      .printers { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 16px; }
+      .printers { grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 16px; }
       .card { padding: 16px; gap: 8px; }
       .card-header h2 { font-size: 1.1rem; }
       .temps { font-size: 0.85rem; gap: 6px 20px; }
@@ -552,9 +555,53 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       .progress-bar { height: 8px; }
     }
 
+    /* Camera section */
+    .camera-section {
+      display: flex; gap: 8px; margin: 6px 0;
+      max-height: 240px; overflow: hidden;
+    }
+    .camera-slot {
+      flex: 1; position: relative; min-width: 0;
+      background: #0a0a0a; border-radius: 6px; overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .camera-slot img {
+      width: 100%; height: 180px; object-fit: cover;
+      display: block; background: #000;
+    }
+    .camera-nav {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 4px 6px; background: #1a1a1a;
+    }
+    .camera-nav button {
+      background: none; border: 1px solid #444; color: #ccc;
+      border-radius: 4px; cursor: pointer; padding: 1px 10px;
+      font-size: 1rem; line-height: 1.4; transition: background 0.15s;
+    }
+    .camera-nav button:hover { background: #333; }
+    .camera-nav .cam-label { font-size: 0.7rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .camera-placeholder {
+      display: flex; align-items: center; justify-content: center;
+      width: 100%; min-height: 80px;
+      background: #1a1a1a; border-radius: 6px;
+      color: #555; font-size: 0.75rem; font-style: italic;
+      padding: 16px;
+    }
+    .cam-error {
+      display: none; align-items: center; justify-content: center;
+      width: 100%; height: 180px;
+      background: #1a1a1a; border-radius: 6px;
+      color: #c0392b; font-size: 0.8rem;
+    }
+    @media (min-width: 768px) {
+      .cam-error { height: 240px; }
+      .camera-section { max-height: 320px; }
+      .camera-slot img { height: 240px; }
+    }
+
     /* ─── Wide desktop (>=1200px) ─── */
     @media (min-width: 1200px) {
-      .printers { grid-template-columns: repeat(auto-fill, minmax(480px, 1fr)); }
+      .printers { grid-template-columns: repeat(auto-fill, minmax(600px, 1fr)); }
       .card { padding: 20px; }
       .temps { font-size: 0.9rem; gap: 8px 28px; }
     }
@@ -604,6 +651,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       count.textContent = list.length + ' printer' + (list.length !== 1 ? 's' : '');
       // Replace the card's outerHTML with a freshly rendered one
       card.outerHTML = renderCard(p);
+      // Adjust camera slot visibility based on card width
+      const newCard = document.getElementById('printer-' + p.id);
+      if (newCard) {
+        adjustCameraSlots(newCard);
+      }
     }
 
     function loadPrinters() {
@@ -623,6 +675,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             window._printerCache[p.id] = p;
           });
           container.innerHTML = list.map(renderCard).join('');
+          // Adjust camera slot visibility for all cards
+          list.forEach(function(p) {
+            const cardEl = document.getElementById('printer-' + p.id);
+            if (cardEl) adjustCameraSlots(cardEl);
+          });
         })
         .catch(() => {
           document.getElementById('printer-list').innerHTML = '<p style="color:#c0392b;padding:20px;">Error loading printers.</p>';
@@ -635,12 +692,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const progress = (p.progress * 100).toFixed(1);
       const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
 
-      // Temperatures
-      const bed = p.bed_temp.toFixed(1);
-      const bedT = p.bed_target_temp.toFixed(1);
-      const nozzle = p.nozzle_temp.toFixed(1);
-      const nozzleT = p.nozzle_target_temp.toFixed(1);
-      const chamber = p.chamber_temp > 0 ? '<span class="temp-row"><span class="label">CH:</span><span class="val">' + p.chamber_temp.toFixed(1) + '°C</span></span>' : '';
+      // Temperatures — null-safe with '---' fallback
+      const bed = p.bed_temp !== null ? p.bed_temp.toFixed(1) : '?';
+      const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '?';
+      const nozzle = p.nozzle_temp !== null ? p.nozzle_temp.toFixed(1) : '?';
+      const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '?';
+      const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
 
       // Online indicator
       const onlineDot = p.online ? '<span class="card-online yes">●</span>' : '<span class="card-online">○ Offline</span>';
@@ -664,19 +721,71 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<div class="progress-bar"><div class="fill" style="width:' + progress + '%"></div></div>' +
           '<div class="progress-text"><span>' + progress + '%</span><span>' + timeStr + '</span></div>' +
         '</div>' +
+        // Camera section — above temps, with placeholder when no streams
+        (function() {
+          const streams = p.camera_streams || [];
+          if (streams.length === 0) {
+            // Placeholder with reason based on printer type
+            let reason = 'No camera feeds available.';
+            if (p.type === 'bambu') {
+              reason = 'Camera: add LAN IP and access code in printer settings.';
+            } else if (p.type === 'snapmaker') {
+              reason = 'Touchscreen: set printer host in config.';
+            }
+            return '<div class="camera-section" id="cam-section-' + p.id + '"><div class="camera-placeholder">' + reason + '</div></div>';
+          }
+          // Initialize slot indices
+          if (!window._cameraSlots) window._cameraSlots = {};
+          if (!window._cameraSlots[p.id]) window._cameraSlots[p.id] = [0, Math.min(1, streams.length - 1)];
+          let html = '';
+          const numSlots = 2; // always render 2; visibility set after mount
+          for (let i = 0; i < numSlots; i++) {
+            const idx = window._cameraSlots[p.id][i] % streams.length;
+            const stream = streams[idx];
+            const label = escapeHtml(stream.label);
+            const url = escapeHtml(stream.url);
+            html += '<div class="camera-slot" id="cam-' + p.id + '-' + i + '">';
+            html += '<img src="' + url + '" alt="' + label + '" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">';
+            html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
+            html += '<div class="camera-nav">';
+            html += '<button class="cam-prev" onclick="cameraFlip(\'' + p.id + '\',' + i + ',-1)">‹</button>';
+            html += '<span class="cam-label">' + label + '</span>';
+            html += '<button class="cam-next" onclick="cameraFlip(\'' + p.id + '\',' + i + ',1)">›</button>';
+            html += '</div></div>';
+          }
+          return '<div class="camera-section" id="cam-section-' + p.id + '">' + html + '</div>';
+        })() +
         '<div class="temps">' +
-          '<span class="temp-row"><span class="label">BED:</span><span class="val">' + bed + '°C</span> <span class="target">→' + bedT + '°C</span></span>' +
-          '<span class="temp-row"><span class="label">NOZ:</span><span class="val">' + nozzle + '°C</span> <span class="target">→' + nozzleT + '°C</span></span>' +
+        // Bed row
+          '<span class="temp-row">' +
+            '<span class="label"><span class="temp-icon">🔥</span>BED:</span>' +
+            '<span class="temp-values"><span class="val">' + bed + '°C</span><span class="target">→' + bedT + '°C</span></span>' +
+          '</span>' +
+        // Primary nozzle (tool0)
+          '<span class="temp-row">' +
+            '<span class="label"><span class="temp-icon">▾</span>NOZ1:</span>' +
+            '<span class="temp-values"><span class="val">' + nozzle + '°C</span><span class="target">→' + nozzleT + '°C</span></span>' +
+          '</span>' +
+        // Extra nozzles (tool1+)
           (p.nozzle_temps || []).filter(function(nt) { return nt.index > 0; }).map(function(nt) {
-            return '<span class="temp-row"><span class="label">T' + nt.index + ':</span><span class="val">' + nt.actual.toFixed(1) + '°C</span> <span class="target">→' + nt.target.toFixed(1) + '°C</span></span>';
+            const actualStr = nt.actual !== null ? nt.actual.toFixed(1) : '?';
+            const targetStr = nt.target !== null ? nt.target.toFixed(1) : '?';
+            return '<span class="temp-row">' +
+              '<span class="label"><span class="temp-icon">▾</span>NOZ' + (nt.index + 1) + ':</span>' +
+              '<span class="temp-values"><span class="val">' + actualStr + '°C</span><span class="target">→' + targetStr + '°C</span></span>' +
+            '</span>';
           }).join('') +
-          chamber +
+          // Chamber
+          '<span class="temp-row">' +
+            '<span class="label"><span class="temp-icon">◻</span>CHAMBER:</span>' +
+            '<span class="temp-values"><span class="val">' + chamberVal + '°C</span></span>' +
+          '</span>' +
         '</div>' +
         fileHtml +
         layerHtml +
         errorHtml +
         '<div class="controls">' +
-          '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>⏸</button>' +
+          '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>⏸ Pause</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>▶ Resume</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>⏹ Cancel</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>⏭ Skip</button>' +
@@ -700,6 +809,29 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .then(r => r.json())
         .then(d => { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
         .catch(() => alert('Network error'));
+    }
+
+    window._cameraSlots = window._cameraSlots || {};
+
+    function cameraFlip(printerId, slotIdx, dir) {
+      const p = window._printerCache[printerId];
+      if (!p) return;
+      const streams = p.camera_streams || [];
+      if (streams.length === 0) return;
+      if (!window._cameraSlots[printerId]) window._cameraSlots[printerId] = [0, Math.min(1, streams.length - 1)];
+      window._cameraSlots[printerId][slotIdx] = (window._cameraSlots[printerId][slotIdx] + dir + streams.length) % streams.length;
+      updateCard(p);
+    }
+
+    function adjustCameraSlots(cardEl) {
+      const streams = window._printerCache[cardEl.id.replace('printer-', '')]?.camera_streams || [];
+      if (streams.length === 0) return;
+      const slots = cardEl.querySelectorAll('.camera-slot');
+      const cardWidth = cardEl.offsetWidth;
+      // Show only 1 slot when card < 600px wide
+      for (let i = 0; i < slots.length; i++) {
+        slots[i].style.display = (cardWidth >= 600 || i === 0) ? '' : 'none';
+      }
     }
 
     function connectWebSocket() {

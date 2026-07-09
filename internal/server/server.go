@@ -251,9 +251,10 @@ func (s *Server) startStatusForwarder(ctx context.Context, printerID string, sta
 				if !ok {
 					return
 				}
+				enriched := s.enrichStatusWithCameras(pid, status)
 				msg := map[string]any{
 					"type":    "printer_update",
-					"printer": status,
+					"printer": enriched,
 				}
 				data, err := json.Marshal(msg)
 				if err != nil {
@@ -362,6 +363,59 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// enrichStatusWithCameras merges the printer driver's camera streams with
+// externally-configured cameras from CameraDef configs.
+// Ordering: driver internal → config external → driver external/touchscreen.
+// The caller must NOT hold s.mu (this method acquires it as needed).
+func (s *Server) enrichStatusWithCameras(printerID string, status printers.PrinterStatus) printers.PrinterStatus {
+	s.mu.RLock()
+	p, ok := s.printers[printerID]
+	s.mu.RUnlock()
+	if !ok {
+		return status
+	}
+
+	return s.enrichWithStreams(p.CameraStreams(), printerID, status)
+}
+
+// enrichWithStreams is a helper that merges camera streams into a status.
+// It does not acquire any locks — the caller is responsible for ensuring
+// the config data is safe to read.
+func (s *Server) enrichWithStreams(driverStreams []printers.CameraStream, printerID string, status printers.PrinterStatus) printers.PrinterStatus {
+	// External cameras from config
+	var configStreams []printers.CameraStream
+	for _, cam := range s.cfg.Cameras {
+		if cam.PrinterID == printerID {
+			configStreams = append(configStreams, printers.CameraStream{
+				URL:   cam.URL,
+				Type:  "external",
+				Label: cam.Name,
+			})
+		}
+	}
+
+	if len(driverStreams) == 0 && len(configStreams) == 0 {
+		return status
+	}
+
+	// Merge: internal drivers → config externals → remaining drivers
+	var merged []printers.CameraStream
+	for _, s := range driverStreams {
+		if s.Type == "internal" {
+			merged = append(merged, s)
+		}
+	}
+	merged = append(merged, configStreams...)
+	for _, s := range driverStreams {
+		if s.Type != "internal" {
+			merged = append(merged, s)
+		}
+	}
+
+	status.CameraStreams = merged
+	return status
+}
+
 // writeError is a helper to write a JSON error response.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
@@ -414,8 +468,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	printerList := make([]printers.PrinterStatus, 0, len(s.printers))
-	for _, p := range s.printers {
-		printerList = append(printerList, p.Status())
+	for id, p := range s.printers {
+		printerList = append(printerList, s.enrichWithStreams(p.CameraStreams(), id, p.Status()))
 	}
 	s.mu.RUnlock()
 
@@ -434,7 +488,7 @@ func (s *Server) handleGetPrinter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
 		return
 	}
-	writeJSON(w, 200, p.Status())
+	writeJSON(w, 200, s.enrichStatusWithCameras(id, p.Status()))
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {

@@ -60,11 +60,11 @@ func TestNewPrinter(t *testing.T) {
 // Camera URL tests
 // ---------------------------------------------------------------------------
 
-func TestCameraURLs(t *testing.T) {
+func TestCameraStreams(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  config.PrinterDef
-		want []string
+		want []printers.CameraStream
 	}{
 		{
 			name: "with host and port",
@@ -72,7 +72,11 @@ func TestCameraURLs(t *testing.T) {
 				Host: "192.168.1.100",
 				Port: 8080,
 			},
-			want: []string{"http://192.168.1.100:8080/camera"},
+			want: []printers.CameraStream{
+				{URL: "http://192.168.1.100:8080/camera", Type: "internal", Label: "Camera"},
+				{URL: "http://192.168.1.100:8080/webcam/?action=stream", Type: "internal", Label: "Camera"},
+				{URL: "http://192.168.1.100:8080/touchscreen", Type: "touchscreen", Label: "Touchscreen"},
+			},
 		},
 		{
 			name: "with host only (default port 80)",
@@ -80,7 +84,11 @@ func TestCameraURLs(t *testing.T) {
 				Host: "10.0.0.50",
 				Port: 0,
 			},
-			want: []string{"http://10.0.0.50:80/camera"},
+			want: []printers.CameraStream{
+				{URL: "http://10.0.0.50:80/camera", Type: "internal", Label: "Camera"},
+				{URL: "http://10.0.0.50:80/webcam/?action=stream", Type: "internal", Label: "Camera"},
+				{URL: "http://10.0.0.50:80/touchscreen", Type: "touchscreen", Label: "Touchscreen"},
+			},
 		},
 		{
 			name: "no host",
@@ -94,17 +102,23 @@ func TestCameraURLs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := New(tt.cfg)
-			got := p.CameraURLs()
+			got := p.CameraStreams()
 
 			if len(got) == 0 && len(tt.want) == 0 {
 				return
 			}
 			if len(got) != len(tt.want) {
-				t.Fatalf("CameraURLs = %v; want %v", got, tt.want)
+				t.Fatalf("CameraStreams = %+v; want %+v", got, tt.want)
 			}
 			for i := range got {
-				if got[i] != tt.want[i] {
-					t.Errorf("CameraURLs[%d] = %q; want %q", i, got[i], tt.want[i])
+				if got[i].URL != tt.want[i].URL {
+					t.Errorf("CameraStreams[%d].URL = %q; want %q", i, got[i].URL, tt.want[i].URL)
+				}
+				if got[i].Type != tt.want[i].Type {
+					t.Errorf("CameraStreams[%d].Type = %q; want %q", i, got[i].Type, tt.want[i].Type)
+				}
+				if got[i].Label != tt.want[i].Label {
+					t.Errorf("CameraStreams[%d].Label = %q; want %q", i, got[i].Label, tt.want[i].Label)
 				}
 			}
 		})
@@ -396,13 +410,13 @@ func TestHandleStatusReport_FullUpdate(t *testing.T) {
 				Printing: true,
 			},
 		},
-		Temperature: &temperatureReport{
-			Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0},
-			Tool0: &temperatureEntry{Actual: 210.0, Target: 220.0},
-			Tool1: &temperatureEntry{Actual: 30.0, Target: 0.0},
-			Tool2: &temperatureEntry{Actual: 30.0, Target: 0.0},
-			Tool3: &temperatureEntry{Actual: 30.0, Target: 0.0},
-		},
+		Temperature: makeTempReport(
+			tempPair{"bed", &temperatureEntry{Actual: 55.0, Target: 60.0}},
+			tempPair{"tool0", &temperatureEntry{Actual: 210.0, Target: 220.0}},
+			tempPair{"tool1", &temperatureEntry{Actual: 30.0, Target: 0.0}},
+			tempPair{"tool2", &temperatureEntry{Actual: 30.0, Target: 0.0}},
+			tempPair{"tool3", &temperatureEntry{Actual: 30.0, Target: 0.0}},
+		),
 	}
 
 	p.handleStatusReport(report)
@@ -411,17 +425,17 @@ func TestHandleStatusReport_FullUpdate(t *testing.T) {
 	if s.State != "printing" {
 		t.Errorf("State = %q; want %q", s.State, "printing")
 	}
-	if s.BedTemp != 55.0 {
-		t.Errorf("BedTemp = %f; want 55.0", s.BedTemp)
+	if s.BedTemp == nil || *s.BedTemp != 55.0 {
+		t.Errorf("BedTemp = %v; want 55.0", s.BedTemp)
 	}
-	if s.NozzleTemp != 210.0 {
-		t.Errorf("NozzleTemp = %f; want 210.0", s.NozzleTemp)
+	if s.NozzleTemp == nil || *s.NozzleTemp != 210.0 {
+		t.Errorf("NozzleTemp = %v; want 210.0", s.NozzleTemp)
 	}
-	if s.BedTargetTemp != 60.0 {
-		t.Errorf("BedTargetTemp = %f; want 60.0", s.BedTargetTemp)
+	if s.BedTargetTemp == nil || *s.BedTargetTemp != 60.0 {
+		t.Errorf("BedTargetTemp = %v; want 60.0", s.BedTargetTemp)
 	}
-	if s.NozzleTargetTemp != 220.0 {
-		t.Errorf("NozzleTargetTemp = %f; want 220.0", s.NozzleTargetTemp)
+	if s.NozzleTargetTemp == nil || *s.NozzleTargetTemp != 220.0 {
+		t.Errorf("NozzleTargetTemp = %v; want 220.0", s.NozzleTargetTemp)
 	}
 	if !s.Online {
 		t.Error("Online = false; want true")
@@ -430,10 +444,10 @@ func TestHandleStatusReport_FullUpdate(t *testing.T) {
 	if len(s.NozzleTemps) != 4 {
 		t.Errorf("len(NozzleTemps) = %d; want 4", len(s.NozzleTemps))
 	} else {
-		if s.NozzleTemps[0].Index != 0 || s.NozzleTemps[0].Actual != 210.0 {
+		if s.NozzleTemps[0].Index != 0 || s.NozzleTemps[0].Actual == nil || *s.NozzleTemps[0].Actual != 210.0 {
 			t.Errorf("NozzleTemps[0] = %+v; want {Index:0 Actual:210 Target:220}", s.NozzleTemps[0])
 		}
-		if s.NozzleTemps[1].Index != 1 || s.NozzleTemps[1].Actual != 30.0 {
+		if s.NozzleTemps[1].Index != 1 || s.NozzleTemps[1].Actual == nil || *s.NozzleTemps[1].Actual != 30.0 {
 			t.Errorf("NozzleTemps[1] = %+v; want {Index:1 Actual:30 Target:0}", s.NozzleTemps[1])
 		}
 	}
@@ -450,10 +464,10 @@ func TestHandleStatusReport_PartialUpdate(t *testing.T) {
 				Printing: true,
 			},
 		},
-		Temperature: &temperatureReport{
-			Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0},
-			Tool0: &temperatureEntry{Actual: 210.0, Target: 220.0},
-		},
+		Temperature: makeTempReport(
+			tempPair{"bed", &temperatureEntry{Actual: 55.0, Target: 60.0}},
+			tempPair{"tool0", &temperatureEntry{Actual: 210.0, Target: 220.0}},
+		),
 	}
 	p.handleStatusReport(full)
 
@@ -476,14 +490,14 @@ func TestHandleStatusReport_PartialUpdate(t *testing.T) {
 
 	// Temperature fields from the first update should be preserved
 	// (the second report has no Temperature section).
-	if s.BedTemp != 55.0 {
-		t.Errorf("BedTemp = %f; want 55.0 (preserved)", s.BedTemp)
+	if s.BedTemp == nil || *s.BedTemp != 55.0 {
+		t.Errorf("BedTemp = %v; want 55.0 (preserved)", s.BedTemp)
 	}
-	if s.NozzleTemp != 210.0 {
-		t.Errorf("NozzleTemp = %f; want 210.0 (preserved)", s.NozzleTemp)
+	if s.NozzleTemp == nil || *s.NozzleTemp != 210.0 {
+		t.Errorf("NozzleTemp = %v; want 210.0 (preserved)", s.NozzleTemp)
 	}
-	if s.NozzleTargetTemp != 220.0 {
-		t.Errorf("NozzleTargetTemp = %f; want 220.0 (preserved)", s.NozzleTargetTemp)
+	if s.NozzleTargetTemp == nil || *s.NozzleTargetTemp != 220.0 {
+		t.Errorf("NozzleTargetTemp = %v; want 220.0 (preserved)", s.NozzleTargetTemp)
 	}
 }
 
@@ -909,17 +923,17 @@ func TestConnect_WebSocketMessage(t *testing.T) {
 	if s.State != "printing" {
 		t.Errorf("after WS: State = %q; want %q", s.State, "printing")
 	}
-	if s.BedTemp != 55.0 {
-		t.Errorf("after WS: BedTemp = %f; want 55.0", s.BedTemp)
+	if s.BedTemp == nil || *s.BedTemp != 55.0 {
+		t.Errorf("after WS: BedTemp = %v; want 55.0", s.BedTemp)
 	}
-	if s.NozzleTemp != 210.0 {
-		t.Errorf("after WS: NozzleTemp = %f; want 210.0", s.NozzleTemp)
+	if s.NozzleTemp == nil || *s.NozzleTemp != 210.0 {
+		t.Errorf("after WS: NozzleTemp = %v; want 210.0", s.NozzleTemp)
 	}
-	if s.BedTargetTemp != 60.0 {
-		t.Errorf("after WS: BedTargetTemp = %f; want 60.0", s.BedTargetTemp)
+	if s.BedTargetTemp == nil || *s.BedTargetTemp != 60.0 {
+		t.Errorf("after WS: BedTargetTemp = %v; want 60.0", s.BedTargetTemp)
 	}
-	if s.NozzleTargetTemp != 220.0 {
-		t.Errorf("after WS: NozzleTargetTemp = %f; want 220.0", s.NozzleTargetTemp)
+	if s.NozzleTargetTemp == nil || *s.NozzleTargetTemp != 220.0 {
+		t.Errorf("after WS: NozzleTargetTemp = %v; want 220.0", s.NozzleTargetTemp)
 	}
 	if !s.Online {
 		t.Error("after WS: Online = false; want true")
@@ -982,14 +996,14 @@ func TestConnect_WebSocketPartialUpdate(t *testing.T) {
 	}
 
 	// Preserved fields from first update (no Temperature in second message).
-	if s.BedTemp != 55.0 {
-		t.Errorf("after partial: BedTemp = %f; want 55.0 (preserved)", s.BedTemp)
+	if s.BedTemp == nil || *s.BedTemp != 55.0 {
+		t.Errorf("after partial: BedTemp = %v; want 55.0 (preserved)", s.BedTemp)
 	}
-	if s.NozzleTemp != 210.0 {
-		t.Errorf("after partial: NozzleTemp = %f; want 210.0 (preserved)", s.NozzleTemp)
+	if s.NozzleTemp == nil || *s.NozzleTemp != 210.0 {
+		t.Errorf("after partial: NozzleTemp = %v; want 210.0 (preserved)", s.NozzleTemp)
 	}
-	if s.NozzleTargetTemp != 220.0 {
-		t.Errorf("after partial: NozzleTargetTemp = %f; want 220.0 (preserved)", s.NozzleTargetTemp)
+	if s.NozzleTargetTemp == nil || *s.NozzleTargetTemp != 220.0 {
+		t.Errorf("after partial: NozzleTargetTemp = %v; want 220.0 (preserved)", s.NozzleTargetTemp)
 	}
 
 	if err := stopConnect(mock, cancel, errCh); err != context.Canceled {

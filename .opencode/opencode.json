@@ -4,5 +4,14 @@
   "instructions": [
     "/Users/chrisjohnson/.config/opencode/AGENTS.md",
     "AGENTS.md"
-  ]
+  ],
+
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp"],
+      "enabled": true,
+      "env": {}
+    }
+  }
 }

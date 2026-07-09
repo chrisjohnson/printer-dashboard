@@ -1,6 +1,11 @@
 package snapmaker
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // --- Types for GET /api/printer ---
 
@@ -10,12 +15,72 @@ type temperatureEntry struct {
 	Offset int     `json:"offset"`
 }
 
+// temperatureReport captures all temperature entries from /api/printer.
+// The JSON object has dynamic keys ("bed", "tool0", "tool1", ...) so we
+// parse them into a map and provide helper methods for access.
 type temperatureReport struct {
-	Bed   *temperatureEntry `json:"bed,omitempty"`
-	Tool0 *temperatureEntry `json:"tool0,omitempty"`
-	Tool1 *temperatureEntry `json:"tool1,omitempty"`
-	Tool2 *temperatureEntry `json:"tool2,omitempty"`
-	Tool3 *temperatureEntry `json:"tool3,omitempty"`
+	Entries map[string]*temperatureEntry `json:"-"` // populated by UnmarshalJSON
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling to capture all temperature
+// entries dynamically, handling any number of toolheads.
+func (t *temperatureReport) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.Entries = make(map[string]*temperatureEntry, len(raw))
+	for key, val := range raw {
+		// Explicitly handle JSON null — store nil entry.
+		if string(val) == "null" {
+			t.Entries[key] = nil
+			continue
+		}
+		var entry temperatureEntry
+		if err := json.Unmarshal(val, &entry); err != nil {
+			continue // skip malformed entries
+		}
+		t.Entries[key] = &entry
+	}
+	return nil
+}
+
+// BedEntry returns the bed temperature entry, or nil if not present.
+func (t *temperatureReport) BedEntry() *temperatureEntry {
+	if t == nil {
+		return nil
+	}
+	return t.Entries["bed"]
+}
+
+// toolEntry pairs a tool index with its temperature entry.
+type toolEntry struct {
+	Index int
+	Entry *temperatureEntry
+}
+
+// ToolEntries returns all tool temperature entries sorted by tool index.
+// Keys like "tool0", "tool1", "tool2" are parsed and sorted numerically.
+// Handles any number of toolheads dynamically.
+func (t *temperatureReport) ToolEntries() []toolEntry {
+	if t == nil {
+		return nil
+	}
+	var tools []toolEntry
+	for key, entry := range t.Entries {
+		if !strings.HasPrefix(key, "tool") {
+			continue
+		}
+		idx := 0
+		if _, err := fmt.Sscanf(key, "tool%d", &idx); err != nil {
+			continue
+		}
+		tools = append(tools, toolEntry{Index: idx, Entry: entry})
+	}
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Index < tools[j].Index
+	})
+	return tools
 }
 
 type stateFlags struct {
