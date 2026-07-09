@@ -389,18 +389,20 @@ func TestConnect_BlocksUntilCancelled(t *testing.T) {
 func TestHandleStatusReport_FullUpdate(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 
-	report := &paxxStatus{
-		Status:        "running",
-		Progress:      float64Ptr(0.5),
-		File:          stringPtr("model.gcode"),
-		BedTemp:       float64Ptr(55.0),
-		BedTarget:     float64Ptr(60.0),
-		NozzleTemp:    float64Ptr(210.0),
-		NozzleTarget:  float64Ptr(220.0),
-		ChamberTemp:   float64Ptr(30.0),
-		RemainingTime: intPtr(1800),
-		CurrentLayer:  intPtr(5),
-		TotalLayers:   intPtr(100),
+	report := &apiPrinterResponse{
+		State: &stateReport{
+			Text: "Printing",
+			Flags: &stateFlags{
+				Printing: true,
+			},
+		},
+		Temperature: &temperatureReport{
+			Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0},
+			Tool0: &temperatureEntry{Actual: 210.0, Target: 220.0},
+			Tool1: &temperatureEntry{Actual: 30.0, Target: 0.0},
+			Tool2: &temperatureEntry{Actual: 30.0, Target: 0.0},
+			Tool3: &temperatureEntry{Actual: 30.0, Target: 0.0},
+		},
 	}
 
 	p.handleStatusReport(report)
@@ -408,12 +410,6 @@ func TestHandleStatusReport_FullUpdate(t *testing.T) {
 
 	if s.State != "printing" {
 		t.Errorf("State = %q; want %q", s.State, "printing")
-	}
-	if s.Progress != 0.5 {
-		t.Errorf("Progress = %f; want 0.5", s.Progress)
-	}
-	if s.CurrentFile != "model.gcode" {
-		t.Errorf("CurrentFile = %q; want %q", s.CurrentFile, "model.gcode")
 	}
 	if s.BedTemp != 55.0 {
 		t.Errorf("BedTemp = %f; want 55.0", s.BedTemp)
@@ -427,42 +423,48 @@ func TestHandleStatusReport_FullUpdate(t *testing.T) {
 	if s.NozzleTargetTemp != 220.0 {
 		t.Errorf("NozzleTargetTemp = %f; want 220.0", s.NozzleTargetTemp)
 	}
-	if s.ChamberTemp != 30.0 {
-		t.Errorf("ChamberTemp = %f; want 30.0", s.ChamberTemp)
-	}
-	if s.RemainingTime != 1800 {
-		t.Errorf("RemainingTime = %d; want 1800", s.RemainingTime)
-	}
-	if s.CurrentLayer != 5 {
-		t.Errorf("CurrentLayer = %d; want 5", s.CurrentLayer)
-	}
-	if s.TotalLayers != 100 {
-		t.Errorf("TotalLayers = %d; want 100", s.TotalLayers)
-	}
 	if !s.Online {
 		t.Error("Online = false; want true")
+	}
+	// Tool0 → NozzleTemp, all tools → NozzleTemps
+	if len(s.NozzleTemps) != 4 {
+		t.Errorf("len(NozzleTemps) = %d; want 4", len(s.NozzleTemps))
+	} else {
+		if s.NozzleTemps[0].Index != 0 || s.NozzleTemps[0].Actual != 210.0 {
+			t.Errorf("NozzleTemps[0] = %+v; want {Index:0 Actual:210 Target:220}", s.NozzleTemps[0])
+		}
+		if s.NozzleTemps[1].Index != 1 || s.NozzleTemps[1].Actual != 30.0 {
+			t.Errorf("NozzleTemps[1] = %+v; want {Index:1 Actual:30 Target:0}", s.NozzleTemps[1])
+		}
 	}
 }
 
 func TestHandleStatusReport_PartialUpdate(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 
-	// First: full update.
-	full := &paxxStatus{
-		Status:       "running",
-		Progress:     float64Ptr(0.5),
-		File:         stringPtr("model.gcode"),
-		BedTemp:      float64Ptr(55.0),
-		NozzleTemp:   float64Ptr(210.0),
-		CurrentLayer: intPtr(5),
-		TotalLayers:  intPtr(100),
+	// First: full update with state + temps.
+	full := &apiPrinterResponse{
+		State: &stateReport{
+			Text: "Printing",
+			Flags: &stateFlags{
+				Printing: true,
+			},
+		},
+		Temperature: &temperatureReport{
+			Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0},
+			Tool0: &temperatureEntry{Actual: 210.0, Target: 220.0},
+		},
 	}
 	p.handleStatusReport(full)
 
-	// Second: partial update — only state and progress change.
-	partial := &paxxStatus{
-		Status:   "running",
-		Progress: float64Ptr(0.75),
+	// Second: partial update — only state changes (no temperature section).
+	partial := &apiPrinterResponse{
+		State: &stateReport{
+			Text: "Printing",
+			Flags: &stateFlags{
+				Printing: true,
+			},
+		},
 	}
 	p.handleStatusReport(partial)
 	s := p.Status()
@@ -471,43 +473,137 @@ func TestHandleStatusReport_PartialUpdate(t *testing.T) {
 	if s.State != "printing" {
 		t.Errorf("State = %q; want %q", s.State, "printing")
 	}
-	if s.Progress != 0.75 {
-		t.Errorf("Progress = %f; want 0.75", s.Progress)
-	}
 
-	// Fields from the first update should be preserved.
-	if s.CurrentFile != "model.gcode" {
-		t.Errorf("CurrentFile = %q; want %q (preserved)", s.CurrentFile, "model.gcode")
-	}
+	// Temperature fields from the first update should be preserved
+	// (the second report has no Temperature section).
 	if s.BedTemp != 55.0 {
 		t.Errorf("BedTemp = %f; want 55.0 (preserved)", s.BedTemp)
 	}
 	if s.NozzleTemp != 210.0 {
 		t.Errorf("NozzleTemp = %f; want 210.0 (preserved)", s.NozzleTemp)
 	}
-	if s.CurrentLayer != 5 {
-		t.Errorf("CurrentLayer = %d; want 5 (preserved)", s.CurrentLayer)
-	}
-	if s.TotalLayers != 100 {
-		t.Errorf("TotalLayers = %d; want 100 (preserved)", s.TotalLayers)
+	if s.NozzleTargetTemp != 220.0 {
+		t.Errorf("NozzleTargetTemp = %f; want 220.0 (preserved)", s.NozzleTargetTemp)
 	}
 }
 
 func TestHandleStatusReport_ErrorState(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 
-	report := &paxxStatus{
-		Status: "error",
-		Error:  stringPtr("Heater timeout"),
+	// Test 1: error via flags
+	report := &apiPrinterResponse{
+		State: &stateReport{
+			Text: "Operational",
+			Flags: &stateFlags{
+				Error: true,
+			},
+		},
 	}
 	p.handleStatusReport(report)
 	s := p.Status()
 
 	if s.State != "error" {
-		t.Errorf("State = %q; want %q", s.State, "error")
+		t.Errorf("State = %q; want %q (error via flags)", s.State, "error")
 	}
-	if s.ErrorMsg != "Heater timeout" {
-		t.Errorf("ErrorMsg = %q; want %q", s.ErrorMsg, "Heater timeout")
+
+	// Test 2: error via text
+	p2 := New(config.PrinterDef{ID: "test2", Name: "Test2"})
+	report2 := &apiPrinterResponse{
+		State: &stateReport{
+			Text: "Error",
+		},
+	}
+	p2.handleStatusReport(report2)
+	s2 := p2.Status()
+
+	if s2.State != "error" {
+		t.Errorf("State = %q; want %q (error via text)", s2.State, "error")
+	}
+}
+
+func TestHandleQueryReport_FullUpdate(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	report := &moonrakerQueryResponse{}
+	report.Result.Status = &queryStatus{
+		PrintStats: &printStatsReport{
+			Filename:      "model.gcode",
+			PrintDuration: 100.0,
+			State:         "printing",
+			Info: &printStatsInfo{
+				CurrentLayer: 42,
+				TotalLayer:   65,
+			},
+		},
+		VirtualSDCard: &virtualSDCardReport{
+			Progress: 0.5,
+		},
+	}
+
+	p.handleQueryReport(report)
+	s := p.Status()
+
+	if s.CurrentFile != "model.gcode" {
+		t.Errorf("CurrentFile = %q; want %q", s.CurrentFile, "model.gcode")
+	}
+	if s.CurrentLayer != 42 {
+		t.Errorf("CurrentLayer = %d; want 42", s.CurrentLayer)
+	}
+	if s.TotalLayers != 65 {
+		t.Errorf("TotalLayers = %d; want 65", s.TotalLayers)
+	}
+	if s.Progress != 0.5 {
+		t.Errorf("Progress = %f; want 0.5", s.Progress)
+	}
+}
+
+func TestHandleQueryReport_PreservesExistingState(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	// Set some initial status state.
+	p.setStatus(printers.PrinterStatus{
+		ID:     "test",
+		Name:   "Test",
+		Type:   "snapmaker",
+		Online: true,
+		State:  "printing",
+	})
+
+	report := &moonrakerQueryResponse{}
+	report.Result.Status = &queryStatus{
+		PrintStats: &printStatsReport{
+			Filename: "newfile.gcode",
+		},
+		VirtualSDCard: &virtualSDCardReport{
+			Progress: 0.75,
+		},
+	}
+
+	p.handleQueryReport(report)
+	s := p.Status()
+
+	// Query data should be set.
+	if s.CurrentFile != "newfile.gcode" {
+		t.Errorf("CurrentFile = %q; want %q", s.CurrentFile, "newfile.gcode")
+	}
+	if s.Progress != 0.75 {
+		t.Errorf("Progress = %f; want 0.75", s.Progress)
+	}
+	// State should be preserved from initial setStatus.
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q (preserved)", s.State, "printing")
+	}
+}
+
+func TestHandleQueryReport_NilReport(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{ID: "test", Name: "Test", Online: true, State: "idle"})
+
+	// Must not panic.
+	p.handleQueryReport(nil)
+	s := p.Status()
+	if s.State != "idle" {
+		t.Errorf("State = %q; want %q", s.State, "idle")
 	}
 }
 
@@ -522,7 +618,7 @@ func TestFetchStatus_Success(t *testing.T) {
 			t.Errorf("path = %q; want %q", r.URL.Path, "/api/printer")
 		}
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"status":"idle","progress":0}`)
+		fmt.Fprint(w, `{"state":{"text":"Operational","flags":{"operational":true,"ready":true}}}`)
 	}))
 	defer ts.Close()
 
@@ -534,8 +630,11 @@ func TestFetchStatus_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchStatus() returned error: %v", err)
 	}
-	if status.Status != "idle" {
-		t.Errorf("Status = %q; want %q", status.Status, "idle")
+	if status.State == nil {
+		t.Fatal("State is nil")
+	}
+	if status.State.Text != "Operational" {
+		t.Errorf("State.Text = %q; want %q", status.State.Text, "Operational")
 	}
 }
 
@@ -556,6 +655,41 @@ func TestFetchStatus_HTTPError(t *testing.T) {
 	}
 }
 
+func TestFetchQueryStatus_Success(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/printer/objects/query" {
+			t.Errorf("path = %q; want %q", r.URL.Path, "/printer/objects/query")
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"result":{"status":{"print_stats":{"filename":"model.gcode","print_duration":100.0,"state":"printing","info":{"current_layer":5,"total_layer":100}},"virtual_sdcard":{"progress":0.5}}}}`)
+	}))
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	report, err := p.fetchQueryStatus(context.Background())
+	if err != nil {
+		t.Fatalf("fetchQueryStatus() returned error: %v", err)
+	}
+	if report.Result.Status == nil {
+		t.Fatal("Result.Status is nil")
+	}
+	if report.Result.Status.PrintStats == nil {
+		t.Fatal("PrintStats is nil")
+	}
+	if report.Result.Status.PrintStats.Filename != "model.gcode" {
+		t.Errorf("Filename = %q; want %q", report.Result.Status.PrintStats.Filename, "model.gcode")
+	}
+	if report.Result.Status.VirtualSDCard == nil {
+		t.Fatal("VirtualSDCard is nil")
+	}
+	if report.Result.Status.VirtualSDCard.Progress != 0.5 {
+		t.Errorf("Progress = %f; want 0.5", report.Result.Status.VirtualSDCard.Progress)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Connect lifecycle tests (with mock REST + WebSocket server)
 // ---------------------------------------------------------------------------
@@ -571,9 +705,10 @@ type mockPaxx struct {
 }
 
 // mockSnapmakerServer creates an httptest.Server that acts as a Snapmaker
-// U1 with Paxx firmware. It serves:
-//   - GET /api/printer → returns the current status JSON
-//   - WebSocket /ws → pushes status JSON messages
+// U1 with Moonraker-style API. It serves:
+//   - GET /api/printer → returns Moonraker-style status JSON
+//   - GET /printer/objects/query → returns Moonraker query JSON
+//   - WebSocket /websocket → pushes status JSON messages
 func mockSnapmakerServer(t *testing.T) *mockPaxx {
 	t.Helper()
 
@@ -588,12 +723,37 @@ func mockSnapmakerServer(t *testing.T) *mockPaxx {
 	mux.HandleFunc("/api/printer", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		json.NewEncoder(w).Encode(map[string]any{
-			"status":   "idle",
-			"progress": 0,
+			"state": map[string]any{
+				"text": "Operational",
+				"flags": map[string]any{
+					"operational": true, "paused": false, "printing": false,
+					"cancelling": false, "pausing": false, "error": false,
+					"ready": true, "closedOrError": false,
+				},
+			},
 		})
 	})
 
-	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/printer/objects/query", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{
+				"status": map[string]any{
+					"print_stats": map[string]any{
+						"filename":       "",
+						"print_duration": 0,
+						"state":          "",
+						"message":        "",
+					},
+					"virtual_sdcard": map[string]any{
+						"progress": 0,
+					},
+				},
+			},
+		})
+	})
+
+	mux.HandleFunc("/websocket", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			t.Logf("ws upgrade: %v", err)
@@ -728,15 +888,18 @@ func TestConnect_WebSocketMessage(t *testing.T) {
 		t.Fatalf("timed out waiting for WebSocket connection: %v", err)
 	}
 
-	// Send a status update via WebSocket.
+	// Send a status update via WebSocket (apiPrinterResponse format).
 	mock.sendWS(t, map[string]any{
-		"status":        "running",
-		"progress":      0.5,
-		"file":          "model.gcode",
-		"bed_temp":      55.0,
-		"nozzle_temp":   210.0,
-		"current_layer": 5,
-		"total_layers":  100,
+		"temperature": map[string]any{
+			"bed":   map[string]any{"actual": 55.0, "offset": 0, "target": 60.0},
+			"tool0": map[string]any{"actual": 210.0, "offset": 0, "target": 220.0},
+		},
+		"state": map[string]any{
+			"text": "Printing",
+			"flags": map[string]any{
+				"printing": true,
+			},
+		},
 	})
 
 	// Give Connect time to process the message.
@@ -746,20 +909,20 @@ func TestConnect_WebSocketMessage(t *testing.T) {
 	if s.State != "printing" {
 		t.Errorf("after WS: State = %q; want %q", s.State, "printing")
 	}
-	if s.Progress != 0.5 {
-		t.Errorf("after WS: Progress = %f; want 0.5", s.Progress)
-	}
-	if s.CurrentFile != "model.gcode" {
-		t.Errorf("after WS: CurrentFile = %q; want %q", s.CurrentFile, "model.gcode")
-	}
 	if s.BedTemp != 55.0 {
 		t.Errorf("after WS: BedTemp = %f; want 55.0", s.BedTemp)
 	}
-	if s.CurrentLayer != 5 {
-		t.Errorf("after WS: CurrentLayer = %d; want 5", s.CurrentLayer)
+	if s.NozzleTemp != 210.0 {
+		t.Errorf("after WS: NozzleTemp = %f; want 210.0", s.NozzleTemp)
 	}
-	if s.TotalLayers != 100 {
-		t.Errorf("after WS: TotalLayers = %d; want 100", s.TotalLayers)
+	if s.BedTargetTemp != 60.0 {
+		t.Errorf("after WS: BedTargetTemp = %f; want 60.0", s.BedTargetTemp)
+	}
+	if s.NozzleTargetTemp != 220.0 {
+		t.Errorf("after WS: NozzleTargetTemp = %f; want 220.0", s.NozzleTargetTemp)
+	}
+	if !s.Online {
+		t.Error("after WS: Online = false; want true")
 	}
 
 	if err := stopConnect(mock, cancel, errCh); err != context.Canceled {
@@ -785,45 +948,48 @@ func TestConnect_WebSocketPartialUpdate(t *testing.T) {
 
 	// First message: full update.
 	mock.sendWS(t, map[string]any{
-		"status":        "running",
-		"progress":      0.5,
-		"file":          "model.gcode",
-		"bed_temp":      55.0,
-		"nozzle_temp":   210.0,
-		"current_layer": 5,
-		"total_layers":  100,
+		"temperature": map[string]any{
+			"bed":   map[string]any{"actual": 55.0, "offset": 0, "target": 60.0},
+			"tool0": map[string]any{"actual": 210.0, "offset": 0, "target": 220.0},
+		},
+		"state": map[string]any{
+			"text": "Printing",
+			"flags": map[string]any{
+				"printing": true,
+			},
+		},
 	})
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Second message: partial update (only progress and layer change).
+	// Second message: partial update (state only).
 	mock.sendWS(t, map[string]any{
-		"status":        "running",
-		"progress":      0.75,
-		"current_layer": 42,
+		"state": map[string]any{
+			"text": "Printing",
+			"flags": map[string]any{
+				"printing": true,
+			},
+		},
 	})
 
 	time.Sleep(50 * time.Millisecond)
 
 	s := p.Status()
 
-	// Updated fields.
-	if s.Progress != 0.75 {
-		t.Errorf("after partial: Progress = %f; want 0.75", s.Progress)
-	}
-	if s.CurrentLayer != 42 {
-		t.Errorf("after partial: CurrentLayer = %d; want 42", s.CurrentLayer)
+	// State updated.
+	if s.State != "printing" {
+		t.Errorf("after partial: State = %q; want %q", s.State, "printing")
 	}
 
-	// Preserved fields.
-	if s.CurrentFile != "model.gcode" {
-		t.Errorf("after partial: CurrentFile = %q; want %q (preserved)", s.CurrentFile, "model.gcode")
-	}
+	// Preserved fields from first update (no Temperature in second message).
 	if s.BedTemp != 55.0 {
 		t.Errorf("after partial: BedTemp = %f; want 55.0 (preserved)", s.BedTemp)
 	}
-	if s.TotalLayers != 100 {
-		t.Errorf("after partial: TotalLayers = %d; want 100 (preserved)", s.TotalLayers)
+	if s.NozzleTemp != 210.0 {
+		t.Errorf("after partial: NozzleTemp = %f; want 210.0 (preserved)", s.NozzleTemp)
+	}
+	if s.NozzleTargetTemp != 220.0 {
+		t.Errorf("after partial: NozzleTargetTemp = %f; want 220.0 (preserved)", s.NozzleTargetTemp)
 	}
 
 	if err := stopConnect(mock, cancel, errCh); err != context.Canceled {

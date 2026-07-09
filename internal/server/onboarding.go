@@ -667,6 +667,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '<div class="temps">' +
           '<span class="temp-row"><span class="label">BED:</span><span class="val">' + bed + '°C</span> <span class="target">→' + bedT + '°C</span></span>' +
           '<span class="temp-row"><span class="label">NOZ:</span><span class="val">' + nozzle + '°C</span> <span class="target">→' + nozzleT + '°C</span></span>' +
+          (p.nozzle_temps || []).filter(function(nt) { return nt.index > 0; }).map(function(nt) {
+            return '<span class="temp-row"><span class="label">T' + nt.index + ':</span><span class="val">' + nt.actual.toFixed(1) + '°C</span> <span class="target">→' + nt.target.toFixed(1) + '°C</span></span>';
+          }).join('') +
           chamber +
         '</div>' +
         fileHtml +

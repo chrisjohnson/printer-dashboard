@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -54,7 +55,7 @@ type Printer struct {
 // wsMsg carries a parsed status report or an error from the WebSocket
 // goroutine to the main Connect() loop.
 type wsMsg struct {
-	status *paxxStatus
+	status *apiPrinterResponse
 	err    error
 }
 
@@ -176,6 +177,14 @@ func (p *Printer) Connect(ctx context.Context) error {
 			}
 			p.handleStatusReport(status)
 
+			// Also fetch progress data from Moonraker query.
+			query, qErr := p.fetchQueryStatus(ctx)
+			if qErr == nil {
+				p.handleQueryReport(query)
+			} else {
+				log.Printf("query poll failed (non-fatal): %v", qErr)
+			}
+
 		case <-wsRetryTicker.C:
 			// Attempt to re-establish the WebSocket.
 			wsWG.Add(1)
@@ -272,9 +281,10 @@ func (p *Printer) wsConnect(ctx context.Context, wsCh chan<- wsMsg) {
 			return
 		}
 
-		status, err := parseReport(message)
+		status, err := parseAPIReport(message)
 		if err != nil {
-			// Malformed message — log and skip (keep connection alive).
+			// Malformed message — skip (keep connection alive).
+			// WS may send JSON-RPC format; REST polling handles fallback.
 			continue
 		}
 
@@ -300,14 +310,14 @@ func (p *Printer) wsURL() string {
 	base := p.baseURL()
 	// Convert http:// → ws://
 	if len(base) > 4 && base[:4] == "http" {
-		return "ws" + base[4:] + "/ws"
+		return "ws" + base[4:] + "/websocket"
 	}
-	return base + "/ws"
+	return base + "/websocket"
 }
 
 // fetchStatus performs a GET /api/printer to retrieve the current printer
 // status and returns the parsed report.
-func (p *Printer) fetchStatus(ctx context.Context) (*paxxStatus, error) {
+func (p *Printer) fetchStatus(ctx context.Context) (*apiPrinterResponse, error) {
 	req, err := p.buildRequest(http.MethodGet, "/api/printer", nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
@@ -330,64 +340,112 @@ func (p *Printer) fetchStatus(ctx context.Context) (*paxxStatus, error) {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
 
-	status, err := parseReport(body)
+	status, err := parseAPIReport(body)
 	if err != nil {
 		return nil, fmt.Errorf("parsing response: %w", err)
 	}
 	return status, nil
 }
 
-// handleStatusReport merges a paxxStatus report into the cached
-// PrinterStatus, preserving previous values for fields that are absent
-// from the report (nil pointer fields).
-func (p *Printer) handleStatusReport(s *paxxStatus) {
+// fetchQueryStatus performs a GET /printer/objects/query to retrieve
+// Moonraker-style print progress data (file, layers, progress).
+// This is a secondary data source — failure is non-fatal.
+func (p *Printer) fetchQueryStatus(ctx context.Context) (*moonrakerQueryResponse, error) {
+	req, err := p.buildRequest(http.MethodGet, "/printer/objects/query?print_stats&virtual_sdcard", nil)
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	req = req.WithContext(ctx)
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response: %w", err)
+	}
+
+	report, err := parseQueryReport(body)
+	if err != nil {
+		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	return report, nil
+}
+
+// handleStatusReport merges an apiPrinterResponse report into the cached
+// PrinterStatus, updating state and temperatures.
+func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
+	current := p.Status()
+	current.Online = true
+
+	// State
+	if s.State != nil {
+		current.State = mapMoonrakerState(s.State.Text, s.State.Flags)
+	}
+
+	// Temperatures — nil-check each sensor
+	if s.Temperature != nil {
+		if s.Temperature.Bed != nil {
+			current.BedTemp = s.Temperature.Bed.Actual
+			current.BedTargetTemp = s.Temperature.Bed.Target
+		}
+		var nozzleTemps []printers.NozzleTempEntry
+		tools := []struct {
+			entry **temperatureEntry
+			index int
+		}{
+			{&s.Temperature.Tool0, 0},
+			{&s.Temperature.Tool1, 1},
+			{&s.Temperature.Tool2, 2},
+			{&s.Temperature.Tool3, 3},
+		}
+		for _, tool := range tools {
+			if *tool.entry != nil {
+				if tool.index == 0 {
+					current.NozzleTemp = (*tool.entry).Actual
+					current.NozzleTargetTemp = (*tool.entry).Target
+				}
+				nozzleTemps = append(nozzleTemps, printers.NozzleTempEntry{
+					Index:  tool.index,
+					Actual: (*tool.entry).Actual,
+					Target: (*tool.entry).Target,
+				})
+			}
+		}
+		current.NozzleTemps = nozzleTemps
+	}
+
+	p.setStatus(current)
+}
+
+// handleQueryReport merges Moonraker query data (file, layers, progress)
+// into the cached PrinterStatus. This is a secondary data source so it
+// only updates specific fields and preserves the rest.
+func (p *Printer) handleQueryReport(q *moonrakerQueryResponse) {
+	if q == nil || q.Result.Status == nil {
+		return
+	}
 	current := p.Status()
 
-	current.Online = true
-	current.State = mapState(s.Status)
-
-	// Pointer fields — only update when present in the report.
-	if s.Progress != nil {
-		current.Progress = *s.Progress
-	}
-	if s.File != nil {
-		current.CurrentFile = *s.File
-	}
-
-	// Error state: only update ErrorMsg when the report includes an error.
-	if s.Status == "error" || s.Status == "failed" {
-		current.State = "error"
-		if s.Error != nil {
-			current.ErrorMsg = *s.Error
+	if ps := q.Result.Status.PrintStats; ps != nil {
+		if ps.Filename != "" {
+			current.CurrentFile = ps.Filename
+		}
+		if ps.Info != nil {
+			current.CurrentLayer = ps.Info.CurrentLayer
+			current.TotalLayers = ps.Info.TotalLayer
 		}
 	}
-
-	if s.BedTemp != nil {
-		current.BedTemp = *s.BedTemp
-	}
-	if s.BedTarget != nil {
-		current.BedTargetTemp = *s.BedTarget
-	}
-	if s.NozzleTemp != nil {
-		current.NozzleTemp = *s.NozzleTemp
-	}
-	if s.NozzleTarget != nil {
-		current.NozzleTargetTemp = *s.NozzleTarget
-	}
-	if s.ChamberTemp != nil {
-		current.ChamberTemp = *s.ChamberTemp
-	}
-	if s.PrintDuration != nil {
-		// Not directly mapped to PrinterStatus — could use for eta calculation later.
-	}
-	if s.RemainingTime != nil {
-		current.RemainingTime = *s.RemainingTime
-	}
-	if s.CurrentLayer != nil {
-		current.CurrentLayer = *s.CurrentLayer
-	}
-	if s.TotalLayers != nil {
-		current.TotalLayers = *s.TotalLayers
+	if vsd := q.Result.Status.VirtualSDCard; vsd != nil {
+		current.Progress = vsd.Progress
 	}
 
 	p.setStatus(current)

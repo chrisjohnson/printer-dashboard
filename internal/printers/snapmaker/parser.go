@@ -2,60 +2,117 @@ package snapmaker
 
 import "encoding/json"
 
-// paxxStatus is the JSON report structure pushed by Snapmaker U1 printers
-// running Paxx firmware. Fields are sent via WebSocket push or returned from
-// the REST API (GET /api/printer, GET /api/print).
-//
-// Pointer fields (Progress, File, BedTemp, etc.) are optional — they may be
-// absent in partial reports. nil means the field was not present in the JSON.
-type paxxStatus struct {
-	Status string `json:"status"` // "idle", "running", "paused", etc.
+// --- Types for GET /api/printer ---
 
-	// These fields use pointers so partial JSON reports can be detected.
-	// A nil pointer means the field was absent from the JSON message.
-	Progress *float64 `json:"progress,omitempty"` // 0.0 to 1.0
-	File     *string  `json:"file,omitempty"`     // current print file
-
-	// Temperatures
-	BedTemp      *float64 `json:"bed_temp,omitempty"`
-	BedTarget    *float64 `json:"bed_target_temp,omitempty"`
-	NozzleTemp   *float64 `json:"nozzle_temp,omitempty"`
-	NozzleTarget *float64 `json:"nozzle_target_temp,omitempty"`
-	ChamberTemp  *float64 `json:"chamber_temp,omitempty"`
-
-	// Print job
-	PrintDuration *int `json:"print_duration,omitempty"` // seconds elapsed
-	RemainingTime *int `json:"remaining_time,omitempty"` // seconds remaining
-	CurrentLayer  *int `json:"current_layer,omitempty"`
-	TotalLayers   *int `json:"total_layers,omitempty"`
-
-	// Errors
-	Error *string `json:"error,omitempty"` // error message if status is "error"
+type temperatureEntry struct {
+	Actual float64 `json:"actual"`
+	Target float64 `json:"target"`
+	Offset int     `json:"offset"`
 }
 
-// parseReport unmarshals a raw Paxx JSON report into a paxxStatus struct.
-func parseReport(data []byte) (*paxxStatus, error) {
-	var s paxxStatus
-	if err := json.Unmarshal(data, &s); err != nil {
+type temperatureReport struct {
+	Bed   *temperatureEntry `json:"bed,omitempty"`
+	Tool0 *temperatureEntry `json:"tool0,omitempty"`
+	Tool1 *temperatureEntry `json:"tool1,omitempty"`
+	Tool2 *temperatureEntry `json:"tool2,omitempty"`
+	Tool3 *temperatureEntry `json:"tool3,omitempty"`
+}
+
+type stateFlags struct {
+	Operational   bool `json:"operational"`
+	Paused        bool `json:"paused"`
+	Printing      bool `json:"printing"`
+	Cancelling    bool `json:"cancelling"`
+	Pausing       bool `json:"pausing"`
+	Error         bool `json:"error"`
+	Ready         bool `json:"ready"`
+	ClosedOrError bool `json:"closedOrError"`
+}
+
+type stateReport struct {
+	Text  string      `json:"text"`
+	Flags *stateFlags `json:"flags,omitempty"`
+}
+
+type apiPrinterResponse struct {
+	Temperature *temperatureReport `json:"temperature,omitempty"`
+	State       *stateReport       `json:"state,omitempty"`
+}
+
+// --- Types for GET /printer/objects/query ---
+
+type printStatsInfo struct {
+	CurrentLayer int `json:"current_layer"`
+	TotalLayer   int `json:"total_layer"`
+}
+
+type printStatsReport struct {
+	Filename      string          `json:"filename"`
+	PrintDuration float64         `json:"print_duration"`
+	State         string          `json:"state"`
+	Message       string          `json:"message"`
+	Info          *printStatsInfo `json:"info,omitempty"`
+}
+
+type virtualSDCardReport struct {
+	Progress float64 `json:"progress"`
+}
+
+type queryStatus struct {
+	PrintStats    *printStatsReport    `json:"print_stats,omitempty"`
+	VirtualSDCard *virtualSDCardReport `json:"virtual_sdcard,omitempty"`
+}
+
+type moonrakerQueryResponse struct {
+	Result struct {
+		Status *queryStatus `json:"status"`
+	} `json:"result"`
+}
+
+// --- Functions ---
+
+// parseAPIReport parses a response from GET /api/printer.
+func parseAPIReport(data []byte) (*apiPrinterResponse, error) {
+	var r apiPrinterResponse
+	if err := json.Unmarshal(data, &r); err != nil {
 		return nil, err
 	}
-	return &s, nil
+	return &r, nil
 }
 
-// mapState converts a Paxx status string into the canonical printer state
-// used by PrinterStatus.State.
-func mapState(paxxState string) string {
-	switch paxxState {
-	case "running", "printing":
-		return "printing"
-	case "paused":
-		return "paused"
-	case "error", "failed":
-		return "error"
-	case "complete", "finished", "success":
-		return "complete"
-	case "idle", "":
+// parseQueryReport parses a response from GET /printer/objects/query.
+func parseQueryReport(data []byte) (*moonrakerQueryResponse, error) {
+	var r moonrakerQueryResponse
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// mapMoonrakerState converts Moonraker state.text + flags into canonical state.
+func mapMoonrakerState(stateText string, flags *stateFlags) string {
+	// Priority order: flags first (more reliable), then text.
+	if flags != nil {
+		switch {
+		case flags.Printing:
+			return "printing"
+		case flags.Paused:
+			return "paused"
+		case flags.Error:
+			return "error"
+		}
+	}
+	switch stateText {
+	case "Operational":
 		return "idle"
+	case "Printing":
+		return "printing"
+	case "Paused":
+		return "paused"
+	case "Error":
+		return "error"
+	case "Complete", "Cancelled":
+		return "complete"
 	default:
 		return "unknown"
 	}

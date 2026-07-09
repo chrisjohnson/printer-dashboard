@@ -12,97 +12,114 @@ func intPtr(v int) *int             { return &v }
 func stringPtr(v string) *string    { return &v }
 
 // ---------------------------------------------------------------------------
-// parseReport tests
+// parseAPIReport tests
 // ---------------------------------------------------------------------------
 
-func TestParseReport(t *testing.T) {
+func TestParseAPIReport(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    *paxxStatus
+		want    *apiPrinterResponse
 		wantErr bool
 	}{
 		{
-			name: "full valid report",
+			name: "full status with all temps + state",
 			input: `{
-				"status": "running",
-				"progress": 0.75,
-				"file": "benchy.gcode",
-				"bed_temp": 55.5,
-				"bed_target_temp": 60.0,
-				"nozzle_temp": 210.0,
-				"nozzle_target_temp": 220.0,
-				"chamber_temp": 30.0,
-				"print_duration": 1800,
-				"remaining_time": 1200,
-				"current_layer": 42,
-				"total_layers": 100,
-				"error": ""
+				"temperature": {
+					"bed": {"actual": 24.0, "offset": 0, "target": 0.0},
+					"tool0": {"actual": 47.0, "offset": 0, "target": 0.0},
+					"tool1": {"actual": 26.0, "offset": 0, "target": 0.0},
+					"tool2": {"actual": 26.0, "offset": 0, "target": 0.0},
+					"tool3": {"actual": 26.0, "offset": 0, "target": 0.0}
+				},
+				"state": {
+					"text": "Operational",
+					"flags": {
+						"operational": true, "paused": false, "printing": false,
+						"cancelling": false, "pausing": false, "error": false,
+						"ready": true, "closedOrError": false
+					}
+				}
 			}`,
-			want: &paxxStatus{
-				Status:        "running",
-				Progress:      float64Ptr(0.75),
-				File:          stringPtr("benchy.gcode"),
-				BedTemp:       float64Ptr(55.5),
-				BedTarget:     float64Ptr(60.0),
-				NozzleTemp:    float64Ptr(210.0),
-				NozzleTarget:  float64Ptr(220.0),
-				ChamberTemp:   float64Ptr(30.0),
-				PrintDuration: intPtr(1800),
-				RemainingTime: intPtr(1200),
-				CurrentLayer:  intPtr(42),
-				TotalLayers:   intPtr(100),
-				Error:         stringPtr(""),
+			want: &apiPrinterResponse{
+				Temperature: &temperatureReport{
+					Bed:   &temperatureEntry{Actual: 24.0, Target: 0.0, Offset: 0},
+					Tool0: &temperatureEntry{Actual: 47.0, Target: 0.0, Offset: 0},
+					Tool1: &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0},
+					Tool2: &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0},
+					Tool3: &temperatureEntry{Actual: 26.0, Target: 0.0, Offset: 0},
+				},
+				State: &stateReport{
+					Text: "Operational",
+					Flags: &stateFlags{
+						Operational: true,
+						Ready:       true,
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
-			name: "minimal report",
+			name: "minimal status (state only)",
 			input: `{
-				"status": "idle"
+				"state": {
+					"text": "Operational",
+					"flags": {"ready": true}
+				}
 			}`,
-			want: &paxxStatus{
-				Status: "idle",
+			want: &apiPrinterResponse{
+				State: &stateReport{
+					Text:  "Operational",
+					Flags: &stateFlags{Ready: true},
+				},
 			},
 			wantErr: false,
 		},
 		{
-			name: "null and missing pointer fields",
+			name: "partial temps (bed + tool0 only)",
 			input: `{
-				"status": "idle",
-				"bed_temp": null,
-				"nozzle_temp": null
+				"temperature": {
+					"bed": {"actual": 55.0, "offset": 0, "target": 60.0},
+					"tool0": {"actual": 210.0, "offset": 0, "target": 220.0}
+				},
+				"state": {
+					"text": "Printing",
+					"flags": {"printing": true}
+				}
 			}`,
-			want: &paxxStatus{
-				Status:     "idle",
-				BedTemp:    nil,
-				NozzleTemp: nil,
+			want: &apiPrinterResponse{
+				Temperature: &temperatureReport{
+					Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0, Offset: 0},
+					Tool0: &temperatureEntry{Actual: 210.0, Target: 220.0, Offset: 0},
+				},
+				State: &stateReport{
+					Text:  "Printing",
+					Flags: &stateFlags{Printing: true},
+				},
 			},
 			wantErr: false,
 		},
 		{
-			name: "error state with message",
+			name: "null temps",
 			input: `{
-				"status": "error",
-				"error": "Heater timeout"
+				"temperature": {
+					"bed": {"actual": 55.0, "offset": 0, "target": 60.0},
+					"tool0": null,
+					"tool1": null,
+					"tool2": {"actual": 30.0, "offset": 0, "target": 0.0},
+					"tool3": null
+				},
+				"state": {"text": "Operational"}
 			}`,
-			want: &paxxStatus{
-				Status: "error",
-				Error:  stringPtr("Heater timeout"),
-			},
-			wantErr: false,
-		},
-		{
-			name: "printing with progress zero",
-			input: `{
-				"status": "running",
-				"progress": 0,
-				"file": "model.gcode"
-			}`,
-			want: &paxxStatus{
-				Status:   "running",
-				Progress: float64Ptr(0),
-				File:     stringPtr("model.gcode"),
+			want: &apiPrinterResponse{
+				Temperature: &temperatureReport{
+					Bed:   &temperatureEntry{Actual: 55.0, Target: 60.0, Offset: 0},
+					Tool0: nil,
+					Tool1: nil,
+					Tool2: &temperatureEntry{Actual: 30.0, Target: 0.0, Offset: 0},
+					Tool3: nil,
+				},
+				State: &stateReport{Text: "Operational"},
 			},
 			wantErr: false,
 		},
@@ -116,7 +133,7 @@ func TestParseReport(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseReport([]byte(tt.input))
+			got, err := parseAPIReport([]byte(tt.input))
 
 			if tt.wantErr {
 				if err == nil {
@@ -130,46 +147,168 @@ func TestParseReport(t *testing.T) {
 
 			if tt.want == nil {
 				if got != nil {
-					t.Fatal("expected nil report")
+					t.Fatal("expected nil response")
 				}
 				return
 			}
 			if got == nil {
-				t.Fatal("expected non-nil report")
+				t.Fatal("expected non-nil response")
 			}
 
-			comparePaxxStatus(t, tt.want, got)
+			compareAPIResponse(t, tt.want, got)
 		})
 	}
 }
 
 // ---------------------------------------------------------------------------
-// mapState tests
+// parseQueryReport tests
 // ---------------------------------------------------------------------------
 
-func TestMapState(t *testing.T) {
+func TestParseQueryReport(t *testing.T) {
 	tests := []struct {
-		input string
-		want  string
+		name    string
+		input   string
+		want    *moonrakerQueryResponse
+		wantErr bool
 	}{
-		{input: "idle", want: "idle"},
-		{input: "running", want: "printing"},
-		{input: "printing", want: "printing"},
-		{input: "paused", want: "paused"},
-		{input: "error", want: "error"},
-		{input: "failed", want: "error"},
-		{input: "complete", want: "complete"},
-		{input: "finished", want: "complete"},
-		{input: "success", want: "complete"},
-		{input: "", want: "idle"},
-		{input: "SOMETHING_ELSE", want: "unknown"},
+		{
+			name: "full query with print_stats + virtual_sdcard",
+			input: `{
+				"result": {
+					"eventtime": 12345678,
+					"status": {
+						"print_stats": {
+							"filename": "test.gcode",
+							"total_duration": 28185.7,
+							"print_duration": 28125.6,
+							"filament_used": 88827.7,
+							"state": "printing",
+							"info": {"total_layer": 65, "current_layer": 42}
+						},
+						"virtual_sdcard": {"progress": 0.5}
+					}
+				}
+			}`,
+			want: &moonrakerQueryResponse{
+				Result: struct {
+					Status *queryStatus `json:"status"`
+				}{
+					Status: &queryStatus{
+						PrintStats: &printStatsReport{
+							Filename:      "test.gcode",
+							PrintDuration: 28125.6,
+							State:         "printing",
+							Info: &printStatsInfo{
+								CurrentLayer: 42,
+								TotalLayer:   65,
+							},
+						},
+						VirtualSDCard: &virtualSDCardReport{
+							Progress: 0.5,
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "query with no layers (no info)",
+			input: `{
+				"result": {
+					"status": {
+						"print_stats": {
+							"filename": "simple.gcode",
+							"print_duration": 100.0,
+							"state": "printing"
+						},
+						"virtual_sdcard": {"progress": 0.25}
+					}
+				}
+			}`,
+			want: &moonrakerQueryResponse{
+				Result: struct {
+					Status *queryStatus `json:"status"`
+				}{
+					Status: &queryStatus{
+						PrintStats: &printStatsReport{
+							Filename:      "simple.gcode",
+							PrintDuration: 100.0,
+							State:         "printing",
+						},
+						VirtualSDCard: &virtualSDCardReport{
+							Progress: 0.25,
+						},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "malformed JSON",
+			input:   `{bad`,
+			want:    nil,
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := mapState(tt.input)
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseQueryReport([]byte(tt.input))
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error but got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if tt.want == nil {
+				if got != nil {
+					t.Fatal("expected nil response")
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("expected non-nil response")
+			}
+
+			compareQueryResponse(t, tt.want, got)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// mapMoonrakerState tests
+// ---------------------------------------------------------------------------
+
+func TestMapMoonrakerState(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		flags *stateFlags
+		want  string
+	}{
+		{name: "operational idle", text: "Operational", flags: &stateFlags{Operational: true, Ready: true}, want: "idle"},
+		{name: "printing via text", text: "Printing", flags: &stateFlags{Printing: true}, want: "printing"},
+		{name: "paused via text", text: "Paused", flags: &stateFlags{Paused: true}, want: "paused"},
+		{name: "error via text", text: "Error", want: "error"},
+		{name: "error via flags", text: "Operational", flags: &stateFlags{Error: true}, want: "error"},
+		{name: "flags override text", text: "Operational", flags: &stateFlags{Printing: true}, want: "printing"},
+		{name: "complete", text: "Complete", want: "complete"},
+		{name: "cancelled", text: "Cancelled", want: "complete"},
+		{name: "no flags", text: "Operational", want: "idle"},
+		{name: "nil flags", text: "Operational", flags: nil, want: "idle"},
+		{name: "unknown state text", text: "SomethingBizarre", want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mapMoonrakerState(tt.text, tt.flags)
 			if got != tt.want {
-				t.Errorf("mapState(%q) = %q; want %q", tt.input, got, tt.want)
+				t.Errorf("mapMoonrakerState(%q, %+v) = %q; want %q", tt.text, tt.flags, got, tt.want)
 			}
 		})
 	}
@@ -179,98 +318,190 @@ func TestMapState(t *testing.T) {
 // helpers
 // ---------------------------------------------------------------------------
 
-func comparePaxxStatus(t *testing.T, want, got *paxxStatus) {
+func compareAPIResponse(t *testing.T, want, got *apiPrinterResponse) {
 	t.Helper()
 
 	if want == nil && got == nil {
 		return
 	}
 	if want == nil {
-		t.Fatal("expected nil paxxStatus")
+		t.Fatal("expected nil apiPrinterResponse")
 		return
 	}
 	if got == nil {
-		t.Fatal("expected non-nil paxxStatus")
+		t.Fatal("expected non-nil apiPrinterResponse")
 		return
 	}
 
-	// String fields.
-	if got.Status != want.Status {
-		t.Errorf("Status = %q; want %q", got.Status, want.Status)
+	// Compare State
+	if want.State == nil && got.State != nil {
+		t.Error("State = non-nil; want nil")
+		return
+	}
+	if want.State != nil && got.State == nil {
+		t.Error("State = nil; want non-nil")
+		return
+	}
+	if want.State != nil && got.State != nil {
+		if got.State.Text != want.State.Text {
+			t.Errorf("State.Text = %q; want %q", got.State.Text, want.State.Text)
+		}
+		compareStateFlags(t, want.State.Flags, got.State.Flags)
 	}
 
-	// Pointer fields (Progress, File, Error).
-	compareFloat64Ptr(t, "Progress", want.Progress, got.Progress)
-	compareStringPtr(t, "File", want.File, got.File)
-	compareStringPtr(t, "Error", want.Error, got.Error)
-
-	// Float64 pointer fields.
-	compareFloat64Ptr(t, "BedTemp", want.BedTemp, got.BedTemp)
-	compareFloat64Ptr(t, "BedTarget", want.BedTarget, got.BedTarget)
-	compareFloat64Ptr(t, "NozzleTemp", want.NozzleTemp, got.NozzleTemp)
-	compareFloat64Ptr(t, "NozzleTarget", want.NozzleTarget, got.NozzleTarget)
-	compareFloat64Ptr(t, "ChamberTemp", want.ChamberTemp, got.ChamberTemp)
-
-	// Int pointer fields.
-	compareIntPtr(t, "PrintDuration", want.PrintDuration, got.PrintDuration)
-	compareIntPtr(t, "RemainingTime", want.RemainingTime, got.RemainingTime)
-	compareIntPtr(t, "CurrentLayer", want.CurrentLayer, got.CurrentLayer)
-	compareIntPtr(t, "TotalLayers", want.TotalLayers, got.TotalLayers)
+	// Compare Temperature
+	if want.Temperature == nil && got.Temperature != nil {
+		t.Error("Temperature = non-nil; want nil")
+		return
+	}
+	if want.Temperature != nil && got.Temperature == nil {
+		t.Error("Temperature = nil; want non-nil")
+		return
+	}
+	if want.Temperature != nil && got.Temperature != nil {
+		compareTemperatureEntry(t, "bed", want.Temperature.Bed, got.Temperature.Bed)
+		compareTemperatureEntry(t, "tool0", want.Temperature.Tool0, got.Temperature.Tool0)
+		compareTemperatureEntry(t, "tool1", want.Temperature.Tool1, got.Temperature.Tool1)
+		compareTemperatureEntry(t, "tool2", want.Temperature.Tool2, got.Temperature.Tool2)
+		compareTemperatureEntry(t, "tool3", want.Temperature.Tool3, got.Temperature.Tool3)
+	}
 }
 
-func compareIntPtr(t *testing.T, name string, want, got *int) {
+func compareStateFlags(t *testing.T, want, got *stateFlags) {
 	t.Helper()
 
 	if want == nil && got == nil {
 		return
 	}
 	if want == nil {
-		t.Errorf("%s = %d; want nil", name, *got)
+		t.Errorf("Flags = %+v; want nil", *got)
 		return
 	}
 	if got == nil {
-		t.Errorf("%s = nil; want %d", name, *want)
+		t.Errorf("Flags = nil; want %+v", *want)
 		return
 	}
 	if *got != *want {
-		t.Errorf("%s = %d; want %d", name, *got, *want)
+		t.Errorf("Flags = %+v; want %+v", *got, *want)
 	}
 }
 
-func compareStringPtr(t *testing.T, name string, want, got *string) {
+func compareTemperatureEntry(t *testing.T, name string, want, got *temperatureEntry) {
 	t.Helper()
 
 	if want == nil && got == nil {
 		return
 	}
 	if want == nil {
-		t.Errorf("%s = %q; want nil", name, *got)
+		t.Errorf("%s = %+v; want nil", name, *got)
 		return
 	}
 	if got == nil {
-		t.Errorf("%s = nil; want %q", name, *want)
+		t.Errorf("%s = nil; want %+v", name, *want)
 		return
 	}
-	if *got != *want {
-		t.Errorf("%s = %q; want %q", name, *got, *want)
+	if math.Abs(got.Actual-want.Actual) > epsilon {
+		t.Errorf("%s.Actual = %f; want %f", name, got.Actual, want.Actual)
+	}
+	if math.Abs(got.Target-want.Target) > epsilon {
+		t.Errorf("%s.Target = %f; want %f", name, got.Target, want.Target)
+	}
+	if got.Offset != want.Offset {
+		t.Errorf("%s.Offset = %d; want %d", name, got.Offset, want.Offset)
 	}
 }
 
-func compareFloat64Ptr(t *testing.T, name string, want, got *float64) {
+func compareQueryResponse(t *testing.T, want, got *moonrakerQueryResponse) {
 	t.Helper()
 
 	if want == nil && got == nil {
 		return
 	}
 	if want == nil {
-		t.Errorf("%s = %f; want nil", name, *got)
+		t.Fatal("expected nil moonrakerQueryResponse")
 		return
 	}
 	if got == nil {
-		t.Errorf("%s = nil; want %f", name, *want)
+		t.Fatal("expected non-nil moonrakerQueryResponse")
 		return
 	}
-	if math.Abs(*got-*want) > epsilon {
-		t.Errorf("%s = %f; want %f", name, *got, *want)
+
+	// Compare Result.Status
+	if want.Result.Status == nil && got.Result.Status != nil {
+		t.Error("Result.Status = non-nil; want nil")
+		return
+	}
+	if want.Result.Status != nil && got.Result.Status == nil {
+		t.Error("Result.Status = nil; want non-nil")
+		return
+	}
+	if want.Result.Status != nil && got.Result.Status != nil {
+		comparePrintStats(t, want.Result.Status.PrintStats, got.Result.Status.PrintStats)
+		compareVirtualSDCard(t, want.Result.Status.VirtualSDCard, got.Result.Status.VirtualSDCard)
+	}
+}
+
+func comparePrintStats(t *testing.T, want, got *printStatsReport) {
+	t.Helper()
+
+	if want == nil && got == nil {
+		return
+	}
+	if want == nil {
+		t.Errorf("PrintStats = %+v; want nil", *got)
+		return
+	}
+	if got == nil {
+		t.Errorf("PrintStats = nil; want %+v", *want)
+		return
+	}
+	if got.Filename != want.Filename {
+		t.Errorf("PrintStats.Filename = %q; want %q", got.Filename, want.Filename)
+	}
+	if math.Abs(got.PrintDuration-want.PrintDuration) > epsilon {
+		t.Errorf("PrintStats.PrintDuration = %f; want %f", got.PrintDuration, want.PrintDuration)
+	}
+	if got.State != want.State {
+		t.Errorf("PrintStats.State = %q; want %q", got.State, want.State)
+	}
+	if got.Message != want.Message {
+		t.Errorf("PrintStats.Message = %q; want %q", got.Message, want.Message)
+	}
+
+	// Compare Info
+	if want.Info == nil && got.Info != nil {
+		t.Error("PrintStats.Info = non-nil; want nil")
+		return
+	}
+	if want.Info != nil && got.Info == nil {
+		t.Error("PrintStats.Info = nil; want non-nil")
+		return
+	}
+	if want.Info != nil && got.Info != nil {
+		if got.Info.CurrentLayer != want.Info.CurrentLayer {
+			t.Errorf("PrintStats.Info.CurrentLayer = %d; want %d", got.Info.CurrentLayer, want.Info.CurrentLayer)
+		}
+		if got.Info.TotalLayer != want.Info.TotalLayer {
+			t.Errorf("PrintStats.Info.TotalLayer = %d; want %d", got.Info.TotalLayer, want.Info.TotalLayer)
+		}
+	}
+}
+
+func compareVirtualSDCard(t *testing.T, want, got *virtualSDCardReport) {
+	t.Helper()
+
+	if want == nil && got == nil {
+		return
+	}
+	if want == nil {
+		t.Errorf("VirtualSDCard = %+v; want nil", *got)
+		return
+	}
+	if got == nil {
+		t.Errorf("VirtualSDCard = nil; want %+v", *want)
+		return
+	}
+	if math.Abs(got.Progress-want.Progress) > epsilon {
+		t.Errorf("VirtualSDCard.Progress = %f; want %f", got.Progress, want.Progress)
 	}
 }

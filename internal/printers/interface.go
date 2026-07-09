@@ -4,22 +4,30 @@ import "context"
 
 // PrinterStatus represents the current state of a printer.
 type PrinterStatus struct {
-	ID               string  `json:"id"`
-	Name             string  `json:"name"`
-	Type             string  `json:"type"` // "bambu" or "snapmaker"
-	Online           bool    `json:"online"`
-	State            string  `json:"state"` // "idle", "printing", "paused", "error", "complete"
-	Progress         float64 `json:"progress"`
-	RemainingTime    int     `json:"remaining_time"` // seconds
-	CurrentFile      string  `json:"current_file"`
-	BedTemp          float64 `json:"bed_temp"`
-	BedTargetTemp    float64 `json:"bed_target_temp"`
-	NozzleTemp       float64 `json:"nozzle_temp"`
-	NozzleTargetTemp float64 `json:"nozzle_target_temp"`
-	ChamberTemp      float64 `json:"chamber_temp"`
-	CurrentLayer     int     `json:"current_layer"`
-	TotalLayers      int     `json:"total_layers"`
-	ErrorMsg         string  `json:"error_msg,omitempty"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	Type             string           `json:"type"` // "bambu" or "snapmaker"
+	Online           bool             `json:"online"`
+	State            string           `json:"state"` // "idle", "printing", "paused", "error", "complete"
+	Progress         float64          `json:"progress"`
+	RemainingTime    int              `json:"remaining_time"` // seconds
+	CurrentFile      string           `json:"current_file"`
+	BedTemp          float64          `json:"bed_temp"`
+	BedTargetTemp    float64          `json:"bed_target_temp"`
+	NozzleTemp       float64          `json:"nozzle_temp"`
+	NozzleTargetTemp float64          `json:"nozzle_target_temp"`
+	ChamberTemp      float64          `json:"chamber_temp"`
+	CurrentLayer     int              `json:"current_layer"`
+	TotalLayers      int              `json:"total_layers"`
+	ErrorMsg         string           `json:"error_msg,omitempty"`
+	NozzleTemps      []NozzleTempEntry `json:"nozzle_temps,omitempty"`
+}
+
+// NozzleTempEntry captures one toolhead's temperature data.
+type NozzleTempEntry struct {
+	Index  int     `json:"index"`
+	Actual float64 `json:"actual"`
+	Target float64 `json:"target"`
 }
 
 // Printer defines the interface that all printer drivers must implement.
