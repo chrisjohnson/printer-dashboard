@@ -846,3 +846,85 @@ func TestHandleSkip(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard and onboarding template tests
+// ---------------------------------------------------------------------------
+
+func TestHandleIndex_ZeroPrinters(t *testing.T) {
+	s := newTestServer(nil)
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := mustReadBody(t, resp)
+	if !strings.Contains(body, "+ Add Your First Printer") {
+		t.Error("expected zero-state template to contain '+ Add Your First Printer' button")
+	}
+	if !strings.Contains(body, `href="/onboarding"`) {
+		t.Error("expected zero-state template to have link to /onboarding")
+	}
+	if strings.Contains(body, "+ Add Printer") {
+		t.Error("zero-state template should NOT contain dashboard '+ Add Printer' button")
+	}
+}
+
+func TestHandleIndex_WithPrinter(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{
+		"p1": &MockPrinter{
+			id:   "p1",
+			name: "Test Printer",
+			stat: printers.PrinterStatus{
+				ID:   "p1",
+				Name: "Test Printer",
+			},
+		},
+	})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := mustReadBody(t, resp)
+	if !strings.Contains(body, "+ Add Printer") {
+		t.Error("expected dashboard template to contain '+ Add Printer' button")
+	}
+	if !strings.Contains(body, `href="/onboarding"`) {
+		t.Error("expected dashboard template to have link to /onboarding")
+	}
+	if strings.Contains(body, "+ Add Your First Printer") {
+		t.Error("dashboard template should NOT contain zero-state '+ Add Your First Printer' button")
+	}
+}
+
+func TestHandleOnboardingStart_AddPrinterButton(t *testing.T) {
+	s := newTestServer(nil)
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/onboarding")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+
+	body := mustReadBody(t, resp)
+	if !strings.Contains(body, "+ Add Printer") {
+		t.Error("expected onboarding start page to contain '+ Add Printer' heading")
+	}
+	if !strings.Contains(body, `href="/onboarding/bambu"`) {
+		t.Error("expected onboarding start page to have link to Bambu cloud option")
+	}
+}

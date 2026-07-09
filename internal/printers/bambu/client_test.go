@@ -703,6 +703,224 @@ func TestHandleReport_ParseError(t *testing.T) {
 	}
 }
 
+func TestHandleReport_BootSequenceFlicker(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// P1S boot sequence: empty → SUCCESS → IDLE
+	// Step 1: first heartbeat, no meaningful gcode_state
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "",
+			"gcode_file": "",
+			"mc_percent": 0
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+
+	if s1.State != "idle" {
+		t.Errorf("After empty gcode_state: State = %q; want %q", s1.State, "idle")
+	}
+	if !s1.Online {
+		t.Error("After empty gcode_state: Online = false; want true")
+	}
+
+	// Step 2: previous print's SUCCESS stored in NVRAM
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"gcode_file": "",
+			"mc_percent": 100
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "complete" {
+		t.Errorf("After SUCCESS: State = %q; want %q", s2.State, "complete")
+	}
+	if s2.ErrorMsg != "" {
+		t.Errorf("After SUCCESS: ErrorMsg = %q; want empty", s2.ErrorMsg)
+	}
+
+	// Step 3: device finishes booting, reports IDLE
+	payload3 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE",
+			"gcode_file": "",
+			"mc_percent": 0
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload3))
+	s3 := c.Status()
+
+	if s3.State != "idle" {
+		t.Errorf("After IDLE: State = %q; want %q", s3.State, "idle")
+	}
+	if s3.ErrorMsg != "" {
+		t.Errorf("After IDLE: ErrorMsg = %q; want empty", s3.ErrorMsg)
+	}
+}
+
+func TestHandleReport_FullPrintLifecycle(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Step 1: IDLE
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+
+	if s1.State != "idle" {
+		t.Errorf("Step 1: State = %q; want %q", s1.State, "idle")
+	}
+
+	// Step 2: RUNNING with full details
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "benchy.gcode",
+			"mc_percent": 10,
+			"mc_remaining_time": 3600,
+			"layer_num": 1,
+			"total_layer_num": 100,
+			"bed_temper": 55,
+			"nozzle_temper": 210,
+			"bed_target_temper": 60,
+			"nozzle_target_temper": 220
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "printing" {
+		t.Errorf("Step 2: State = %q; want %q", s2.State, "printing")
+	}
+	if s2.Progress != 0.10 {
+		t.Errorf("Step 2: Progress = %f; want 0.10", s2.Progress)
+	}
+	if s2.RemainingTime != 3600 {
+		t.Errorf("Step 2: RemainingTime = %d; want 3600", s2.RemainingTime)
+	}
+	if s2.CurrentFile != "benchy.gcode" {
+		t.Errorf("Step 2: CurrentFile = %q; want %q", s2.CurrentFile, "benchy.gcode")
+	}
+	if s2.CurrentLayer != 1 {
+		t.Errorf("Step 2: CurrentLayer = %d; want 1", s2.CurrentLayer)
+	}
+	if s2.TotalLayers != 100 {
+		t.Errorf("Step 2: TotalLayers = %d; want 100", s2.TotalLayers)
+	}
+	if s2.BedTemp != 55.0 {
+		t.Errorf("Step 2: BedTemp = %f; want 55.0", s2.BedTemp)
+	}
+	if s2.NozzleTemp != 210.0 {
+		t.Errorf("Step 2: NozzleTemp = %f; want 210.0", s2.NozzleTemp)
+	}
+	if s2.BedTargetTemp != 60.0 {
+		t.Errorf("Step 2: BedTargetTemp = %f; want 60.0", s2.BedTargetTemp)
+	}
+	if s2.NozzleTargetTemp != 220.0 {
+		t.Errorf("Step 2: NozzleTargetTemp = %f; want 220.0", s2.NozzleTargetTemp)
+	}
+
+	// Step 3: PAUSE (minimal report — no progress/temp updates)
+	payload3 := []byte(`{
+		"print": {
+			"gcode_state": "PAUSE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload3))
+	s3 := c.Status()
+
+	if s3.State != "paused" {
+		t.Errorf("Step 3: State = %q; want %q", s3.State, "paused")
+	}
+	// Progress should be preserved from step 2
+	if s3.Progress != 0.10 {
+		t.Errorf("Step 3: Progress = %f; want 0.10 (preserved from step 2)", s3.Progress)
+	}
+	// CurrentFile should be preserved
+	if s3.CurrentFile != "benchy.gcode" {
+		t.Errorf("Step 3: CurrentFile = %q; want %q (preserved from step 2)", s3.CurrentFile, "benchy.gcode")
+	}
+
+	// Step 4: RUNNING again (progress updated)
+	payload4 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"mc_percent": 60,
+			"mc_remaining_time": 1400,
+			"layer_num": 42
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload4))
+	s4 := c.Status()
+
+	if s4.State != "printing" {
+		t.Errorf("Step 4: State = %q; want %q", s4.State, "printing")
+	}
+	if s4.Progress != 0.60 {
+		t.Errorf("Step 4: Progress = %f; want 0.60", s4.Progress)
+	}
+	if s4.RemainingTime != 1400 {
+		t.Errorf("Step 4: RemainingTime = %d; want 1400", s4.RemainingTime)
+	}
+	if s4.CurrentLayer != 42 {
+		t.Errorf("Step 4: CurrentLayer = %d; want 42", s4.CurrentLayer)
+	}
+	// Fields not sent in this report should be preserved
+	if s4.CurrentFile != "benchy.gcode" {
+		t.Errorf("Step 4: CurrentFile = %q; want %q (preserved)", s4.CurrentFile, "benchy.gcode")
+	}
+	if s4.TotalLayers != 100 {
+		t.Errorf("Step 4: TotalLayers = %d; want 100 (preserved)", s4.TotalLayers)
+	}
+	if s4.BedTemp != 55.0 {
+		t.Errorf("Step 4: BedTemp = %f; want 55.0 (preserved)", s4.BedTemp)
+	}
+
+	// Step 5: SUCCESS (job complete)
+	payload5 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"mc_percent": 100,
+			"mc_remaining_time": 0
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload5))
+	s5 := c.Status()
+
+	if s5.State != "complete" {
+		t.Errorf("Step 5: State = %q; want %q", s5.State, "complete")
+	}
+	if s5.Progress != 1.0 {
+		t.Errorf("Step 5: Progress = %f; want 1.0", s5.Progress)
+	}
+	if s5.RemainingTime != 0 {
+		t.Errorf("Step 5: RemainingTime = %d; want 0", s5.RemainingTime)
+	}
+
+	// Step 6: IDLE (back to idle after completion)
+	payload6 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload6))
+	s6 := c.Status()
+
+	if s6.State != "idle" {
+		t.Errorf("Step 6: State = %q; want %q", s6.State, "idle")
+	}
+	if s6.ErrorMsg != "" {
+		t.Errorf("Step 6: ErrorMsg = %q; want empty", s6.ErrorMsg)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // publishCommand tests
 // ---------------------------------------------------------------------------

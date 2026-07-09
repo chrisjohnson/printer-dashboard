@@ -16,6 +16,7 @@ import (
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers/bambu"
+	"github.com/chrisjohnson/printer-dashboard/internal/printers/snapmaker"
 	"github.com/chrisjohnson/printer-dashboard/internal/ws"
 	"github.com/gorilla/websocket"
 )
@@ -165,8 +166,8 @@ func (s *Server) initPrinters() {
 				bp.StatusCh = make(chan printers.PrinterStatus, 16)
 			}
 			p = bp
-		// case "snapmaker":
-		// 	p = snapmaker.New(pdef)
+		case "snapmaker":
+			p = snapmaker.New(pdef)
 		default:
 			log.Printf("WARNING: printer %q has unsupported type %q — skipping", pdef.Name, pdef.Type)
 			continue
