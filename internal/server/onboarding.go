@@ -334,7 +334,7 @@ func (s *Server) handleOnboardingSnapmakerSave(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	port := 8080 // default when not specified
+	port := 80 // default when not specified
 	if portStr != "" {
 		p, err := strconv.Atoi(portStr)
 		if err != nil || p < 1 || p > 65535 {
@@ -1238,8 +1238,8 @@ const snapmakerFormTemplate = `<!DOCTYPE html>
       <div class="hint">The local network address of your Snapmaker U1.</div>
 
       <label for="port">Port</label>
-      <input type="number" id="port" name="port" placeholder="e.g. 8080" value="8080">
-      <div class="hint">The port the Paxx API listens on (default: 8080).</div>
+      <input type="number" id="port" name="port" placeholder="e.g. 80" value="80">
+      <div class="hint">The port the printer API listens on (default: 80).</div>
 
       <label for="access_code">Access Code (optional)</label>
       <input type="text" id="access_code" name="access_code" placeholder="API key if required">

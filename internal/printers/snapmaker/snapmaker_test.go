@@ -75,12 +75,12 @@ func TestCameraURLs(t *testing.T) {
 			want: []string{"http://192.168.1.100:8080/camera"},
 		},
 		{
-			name: "with host only (default port 8080)",
+			name: "with host only (default port 80)",
 			cfg: config.PrinterDef{
 				Host: "10.0.0.50",
 				Port: 0,
 			},
-			want: []string{"http://10.0.0.50:8080/camera"},
+			want: []string{"http://10.0.0.50:80/camera"},
 		},
 		{
 			name: "no host",

@@ -81,7 +81,7 @@ func buildCameraURLs(cfg config.PrinterDef) []string {
 	}
 	port := cfg.Port
 	if port == 0 {
-		port = 8080
+		port = 80
 	}
 	return []string{fmt.Sprintf("http://%s:%d/camera", cfg.Host, port)}
 }
@@ -432,7 +432,7 @@ func (p *Printer) baseURL() string {
 	}
 	port := p.cfg.Port
 	if port == 0 {
-		port = 8080
+		port = 80
 	}
 	return fmt.Sprintf("http://%s:%d", p.cfg.Host, port)
 }
