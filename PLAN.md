@@ -258,7 +258,7 @@ printer-dashboard/
 - [x] Snapmaker Paxx client: parser (17 tests)
 - [x] Snapmaker Paxx client: commands (12 tests)
 - [x] Snapmaker Paxx client: Connect lifecycle (8 tests)
-- [ ] Snapmaker UX: server integration (StatusCh forwarding, error display)
+- [x] Snapmaker UX: server integration (StatusCh forwarding, error display)
 - [ ] Snapmaker camera stream proxy
 
 ### Phase 4 — Notifications & Polish

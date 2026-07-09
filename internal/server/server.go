@@ -167,7 +167,14 @@ func (s *Server) initPrinters() {
 			}
 			p = bp
 		case "snapmaker":
-			p = snapmaker.New(pdef)
+			sp := snapmaker.New(pdef)
+			if s.wsHub != nil {
+				// Set up a buffered channel for real-time status updates.
+				// The broadcast goroutine is started in connectAllPrinters
+				// so it can be cancelled with the printer context on reload.
+				sp.StatusCh = make(chan printers.PrinterStatus, 16)
+			}
+			p = sp
 		default:
 			log.Printf("WARNING: printer %q has unsupported type %q — skipping", pdef.Name, pdef.Type)
 			continue
@@ -207,36 +214,18 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 // connectAllPrinters launches all registered printer connection goroutines
-// and, for Bambu printers with a StatusCh, forwarding goroutines that
-// broadcast status updates to all connected WebSocket clients.
+// and, for printers with a StatusCh, forwarding goroutines that broadcast
+// status updates to all connected WebSocket clients.
 func (s *Server) connectAllPrinters(ctx context.Context) {
 	for id, p := range s.printers {
-		// Start a status forwarding goroutine for Bambu printers with StatusCh.
-		if bp, ok := p.(*bambu.Client); ok && bp.StatusCh != nil && s.wsHub != nil {
-			printerID := id
-			go func(client *bambu.Client, pid string) {
-				log.Printf("[ws] starting status forwarder for printer %s", pid)
-				defer log.Printf("[ws] stopped status forwarder for printer %s", pid)
-				for {
-					select {
-					case status, ok := <-client.StatusCh:
-						if !ok {
-							return
-						}
-						msg := map[string]any{
-							"type":    "printer_update",
-							"printer": status,
-						}
-						data, err := json.Marshal(msg)
-						if err != nil {
-							continue
-						}
-						s.wsHub.Broadcast(data)
-					case <-ctx.Done():
-						return
-					}
-				}
-			}(bp, printerID)
+		// Start status forwarding for printers with a StatusCh.
+		if s.wsHub != nil {
+			if bp, ok := p.(*bambu.Client); ok && bp.StatusCh != nil {
+				s.startStatusForwarder(ctx, id, bp.StatusCh)
+			}
+			if sp, ok := p.(*snapmaker.Printer); ok && sp.StatusCh != nil {
+				s.startStatusForwarder(ctx, id, sp.StatusCh)
+			}
 		}
 
 		// Start the printer connection goroutine (blocks until ctx cancelled).
@@ -247,6 +236,35 @@ func (s *Server) connectAllPrinters(ctx context.Context) {
 			}
 		}(p)
 	}
+}
+
+// startStatusForwarder reads from statusCh and broadcasts every received
+// status to all WebSocket clients. It exits when ctx is cancelled or the
+// channel is closed.
+func (s *Server) startStatusForwarder(ctx context.Context, printerID string, statusCh chan printers.PrinterStatus) {
+	go func(pid string, ch chan printers.PrinterStatus) {
+		log.Printf("[ws] starting status forwarder for printer %s", pid)
+		defer log.Printf("[ws] stopped status forwarder for printer %s", pid)
+		for {
+			select {
+			case status, ok := <-ch:
+				if !ok {
+					return
+				}
+				msg := map[string]any{
+					"type":    "printer_update",
+					"printer": status,
+				}
+				data, err := json.Marshal(msg)
+				if err != nil {
+					continue
+				}
+				s.wsHub.Broadcast(data)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}(printerID, statusCh)
 }
 
 // reloadConfig re-reads config.yaml, re-initializes Bambu cloud + printers.

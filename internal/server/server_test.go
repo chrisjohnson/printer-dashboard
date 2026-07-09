@@ -16,6 +16,7 @@ import (
 
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
+	"github.com/chrisjohnson/printer-dashboard/internal/printers/snapmaker"
 	"github.com/chrisjohnson/printer-dashboard/internal/ws"
 )
 
@@ -926,5 +927,152 @@ func TestHandleOnboardingStart_AddPrinterButton(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/onboarding/bambu"`) {
 		t.Error("expected onboarding start page to have link to Bambu cloud option")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Snapmaker WebSocket broadcast integration
+// ---------------------------------------------------------------------------
+
+func TestSnapmakerStatusForwarding(t *testing.T) {
+	s := newTestServer(nil)
+	t.Cleanup(func() { s.wsHub.Stop() })
+
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	// Connect a WebSocket client
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws: %v", err)
+	}
+	defer conn.Close()
+	waitForHubLen(t, s.wsHub, 1)
+
+	// Create a real snapmaker printer with StatusCh wired up
+	p := snapmaker.New(config.PrinterDef{ID: "sm-1", Name: "Snap U1"})
+	p.StatusCh = make(chan printers.PrinterStatus, 4)
+
+	// Start the status forwarder directly (same helper used by connectAllPrinters)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.startStatusForwarder(ctx, "sm-1", p.StatusCh)
+
+	// Give the forwarder goroutine a moment to start
+	time.Sleep(10 * time.Millisecond)
+
+	// Send a status update via StatusCh (exercises the forwarding path)
+	p.StatusCh <- printers.PrinterStatus{
+		ID:     "sm-1",
+		Name:   "Snap U1",
+		Type:   "snapmaker",
+		Online: true,
+		State:  "printing",
+	}
+
+	// Read the broadcast message
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msgBytes, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws message: %v", err)
+	}
+
+	var msg map[string]any
+	if err := json.Unmarshal(msgBytes, &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if msg["type"] != "printer_update" {
+		t.Errorf("type = %v; want printer_update", msg["type"])
+	}
+
+	printer, ok := msg["printer"].(map[string]any)
+	if !ok {
+		t.Fatal("printer field not a map")
+	}
+	if printer["id"] != "sm-1" {
+		t.Errorf("printer.id = %v; want sm-1", printer["id"])
+	}
+	if printer["name"] != "Snap U1" {
+		t.Errorf("printer.name = %v; want Snap U1", printer["name"])
+	}
+	if printer["state"] != "printing" {
+		t.Errorf("printer.state = %v; want printing", printer["state"])
+	}
+	if printer["online"] != true {
+		t.Errorf("printer.online = %v; want true", printer["online"])
+	}
+}
+
+func TestSnapmakerStatusForwarding_ErrorMsg(t *testing.T) {
+	s := newTestServer(nil)
+	t.Cleanup(func() { s.wsHub.Stop() })
+
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	// Connect a WebSocket client
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial ws: %v", err)
+	}
+	defer conn.Close()
+	waitForHubLen(t, s.wsHub, 1)
+
+	p := snapmaker.New(config.PrinterDef{ID: "sm-err", Name: "Error U1"})
+	p.StatusCh = make(chan printers.PrinterStatus, 4)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.startStatusForwarder(ctx, "sm-err", p.StatusCh)
+
+	time.Sleep(10 * time.Millisecond)
+
+	// Send an error status via StatusCh
+	p.StatusCh <- printers.PrinterStatus{
+		ID:       "sm-err",
+		Name:     "Error U1",
+		Type:     "snapmaker",
+		Online:   false,
+		State:    "error",
+		ErrorMsg: "dial tcp 192.168.1.100:8080: connect: connection refused",
+	}
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msgBytes, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ws message: %v", err)
+	}
+
+	var msg map[string]any
+	if err := json.Unmarshal(msgBytes, &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	printer, ok := msg["printer"].(map[string]any)
+	if !ok {
+		t.Fatal("printer field not a map")
+	}
+	if printer["error_msg"] != "dial tcp 192.168.1.100:8080: connect: connection refused" {
+		t.Errorf("error_msg = %v; want dial error message", printer["error_msg"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard template — error banner rendering
+// ---------------------------------------------------------------------------
+
+func TestDashboardTemplate_ErrorBanner(t *testing.T) {
+	// Verify the template constant contains error_msg rendering logic
+	if !strings.Contains(indexDashboardTemplate, "error_msg") {
+		t.Error("indexDashboardTemplate should reference error_msg in renderCard")
+	}
+	if !strings.Contains(indexDashboardTemplate, "error-banner") {
+		t.Error("indexDashboardTemplate should define .error-banner CSS class")
+	}
+	if !strings.Contains(indexDashboardTemplate, "errorHtml") {
+		t.Error("indexDashboardTemplate should define errorHtml in renderCard")
 	}
 }

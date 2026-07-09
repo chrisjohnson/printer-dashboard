@@ -487,6 +487,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .card-online { font-size: 0.7rem; color: #444; margin-left: auto; }
     .card-online.yes { color: #2d7d46; }
 
+    .error-banner {
+      background: #7f1d1d; color: #fecaca;
+      padding: 6px 10px; border-radius: 6px;
+      font-size: 0.8rem; line-height: 1.3;
+      word-break: break-word;
+    }
+
     /* Progress bar — always visible */
     .progress-section { margin: 2px 0; }
     .progress-bar { background: #2a2a2a; height: 6px; border-radius: 3px; overflow: hidden; }
@@ -644,6 +651,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // Layer info (desktop only)
       const layerHtml = (p.total_layers > 0) ? '<div class="layer-info">Layer ' + p.current_layer + ' / ' + p.total_layers + '</div>' : '';
 
+      // Error banner — shown when state is "error" and error_msg is non-empty
+      const errorHtml = (st === 'error' && p.error_msg) ? '<div class="error-banner">' + escapeHtml(p.error_msg) + '</div>' : '';
+
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
           '<h2>' + escapeHtml(p.name) + '</h2>' +
@@ -661,6 +671,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '</div>' +
         fileHtml +
         layerHtml +
+        errorHtml +
         '<div class="controls">' +
           '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>⏸</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>▶ Resume</button>' +

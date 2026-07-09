@@ -30,7 +30,7 @@ Issues discovered during testing that need fixing.
 - [ ] **P1S gcode file not shown** — `printStatus` only parses `"gcode_file"` but P1S likely sends the file path under `"subtask_name"` instead. Need field audit + fallback in `handleReport`.
 - [ ] **CurrentFile not cleared on idle** — When a print finishes, `CurrentFile` retains the last filename because `handleReport` only *sets* it, never clears it. After `SUCCESS→IDLE` transition, state shows "idle" but old filename persists.
 - [ ] **COMPLETE state is purely transient** — `SUCCESS`/`FINISH` maps to `"complete"` but the next `IDLE` report immediately overwrites it. No hysteresis — user never sees "complete" in the UI unless they catch it mid-report-cycle.
-- [ ] **Snapmaker U1 ErrorMsg not shown** — When `Connect()` fails (unreachable printer), `ErrorMsg` is populated with the dial error but the UI template never renders it — user just sees "error" with no explanation.
+- [x] **Snapmaker U1 ErrorMsg not shown** — Fixed: `ErrorMsg` now renders as a red error banner in the dashboard card when state is "error".
 
 ---
 
@@ -45,7 +45,6 @@ Scoped, prioritised, ready to pick up.
 - [ ] **Authentication** [must have tests] — Login page, session management.
 - [ ] **Job completion notifications** [must have tests] — Detect and notify when a print finishes.
 - [ ] **Error & failure notifications** [must have tests] — Detect and alert on printer errors.
-- [ ] **Snapmaker U1 error visibility** — Include `ErrorMsg` in the UI template so users see why the U1 is showing "error" (wrong IP, wrong port, wrong access code, etc.).
 - [ ] **Dockerfile + Docker Compose** [must have tests] — Multi-stage build and `docker compose up` for full stack.
 - [ ] **Retry MQTT connect on failure** [must have tests] — Bambu client should retry initial connection in a loop.
 - [ ] **Graceful printer disconnect on shutdown** [must have tests] — Ensure printers disconnect cleanly when server stops.
@@ -61,7 +60,7 @@ Work related to test infrastructure and coverage.
 
 ## 🏗 In Progress
 
-- [ ] **Snapmaker UX — server integration** — Wire `StatusCh` forwarding for snapmaker printers in `connectAllPrinters` (currently Bambu-only). Show error messages in UI. Handle unreachable printer gracefully.
+> *Nothing currently in progress.*
 
 ---
 
@@ -101,6 +100,7 @@ Work related to test infrastructure and coverage.
 - [x] **Snapmaker Paxx client: commands** — Pause, Resume, Cancel, SkipObject via `POST /api/print/{action}` with access-code auth (header + query param). HTTP error handling (500/401/unreachable). 12 tests.
 - [x] **Snapmaker Paxx client: Connect lifecycle** — Initial REST fetch, WebSocket dial with ping/pong, WS message read loop with status merge, REST polling fallback with 3s interval, WS retry at 15s. `handleStatusReport` with nil-guard value preservation. 8 new tests (handleStatusReport, fetchStatus, Connect with WS messages, partial update preservation).
 - [x] **Snapmaker Paxx client: partial report fix** — `Progress`, `File`, `Error` changed from value to pointer types so absent JSON fields don't overwrite cached values (matches existing pattern for temp/layer fields).
+- [x] **Snapmaker UX — server integration** — `StatusCh` wired to WebSocket hub in `initPrinters()` and `connectAllPrinters()` for Snapmaker printers (same pattern as Bambu). Extracted `startStatusForwarder` helper to avoid duplication. Error messages now rendered in UI as red `.error-banner`. 3 new tests: Snapmaker WS forwarding, error_msg forwarding, template banner presence.
 
 ---
 
@@ -121,4 +121,4 @@ Work related to test infrastructure and coverage.
 
 ---
 
-*Last updated: 2026-07-11* (session 3: Snapmaker Connect lifecycle + partial report fix + bug fixes)
+*Last updated: 2026-07-08* (session 4: Snapmaker server integration — StatusCh → wsHub forwarding + ErrorMsg UI)
