@@ -35,6 +35,51 @@ Update **KANBAN.md** if:
 - A test is added → update the test count in **Done** items
 - Session summary changes → update `*Last updated*` date
 
+## Build & Deployment (Docker)
+
+**The project must be built using Docker.** This ensures the Docker image is always up to date and the running container can be restarted quickly after changes.
+
+### Build & restart workflow
+
+After any code change, rebuild the image and restart the container:
+
+```bash
+docker build -t printer-dashboard .
+docker restart printer-dashboard
+```
+
+### First-time run
+
+```bash
+docker build -t printer-dashboard .
+
+docker run -d \
+  --name printer-dashboard \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+  -v "$HOME/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  printer-dashboard
+```
+
+### Common commands
+
+| Action | Command |
+|--------|---------|
+| View logs | `docker logs printer-dashboard` |
+| Follow logs | `docker logs -f printer-dashboard` |
+| Restart | `docker restart printer-dashboard` |
+| Stop | `docker stop printer-dashboard` |
+| Start | `docker start printer-dashboard` |
+| Remove | `docker rm -f printer-dashboard` |
+| Interactive shell | `docker exec -it printer-dashboard sh` |
+
+### Architecture
+
+See `KANBAN.md` → **Running** section for the full command reference.
+
+---
+
 ### End-of-session checklist
 
 Before the session concludes, verify:
@@ -44,4 +89,5 @@ Before the session concludes, verify:
 3. All `todowrite` items still `in_progress` or `pending` appear in **In Progress** or **To Do**
 4. Any newly discovered bugs appear in **Known Bugs**
 5. **PLAN.md** phased delivery checkboxes match reality
-6. `go build ./...` and `go test ./... -race -count=1` still pass
+6. `docker build -t printer-dashboard .` succeeds
+7. `go test ./... -race -count=1` still passes
