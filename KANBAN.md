@@ -115,6 +115,36 @@ Work related to test infrastructure and coverage.
 - [x] **Snapmaker Paxx client: partial report fix** — `Progress`, `File`, `Error` changed from value to pointer types so absent JSON fields don't overwrite cached values (matches existing pattern for temp/layer fields).
 - [x] **Snapmaker UX — server integration** — `StatusCh` wired to WebSocket hub in `initPrinters()` and `connectAllPrinters()` for Snapmaker printers (same pattern as Bambu). Extracted `startStatusForwarder` helper to avoid duplication. Error messages now rendered in UI as red `.error-banner`. 3 new tests: Snapmaker WS forwarding, error_msg forwarding, template banner presence.
 - [x] **Touchscreen rendered as `<img>` instead of `<iframe>`** — Touchscreen PNG snapshots now render as `<img>` with `width: 100%` and natural aspect ratio, filling the card width. Added 3-second auto-refresh with cache-busting for live feel. Removed unused iframe CSS.
+- [x] **Dockerfile + .dockerignore** — Multi-stage Docker build (golang:1.26-alpine → alpine:latest). Static binary, non-root user, ~20 MB image. Run command documented below.
+
+---
+
+## 📋 Running
+
+Standard commands to run the dashboard in Docker:
+
+```bash
+# Build the image (after any code changes)
+docker build -t printer-dashboard .
+
+# Run the container (replace $(pwd) with your project root if needed)
+docker run -d \
+  --name printer-dashboard \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+  -v "$HOME/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  printer-dashboard
+
+# View logs
+docker logs printer-dashboard
+
+# Stop
+docker stop printer-dashboard
+
+# Remove and start fresh
+docker rm -f printer-dashboard && docker run -d --name printer-dashboard ...(flags above)
+```
 
 ---
 
@@ -135,4 +165,4 @@ Work related to test infrastructure and coverage.
 
 ---
 
-*Last updated: 2026-07-11* (session 5: Touchscreen width-fix — rendered as `<img>`, auto-refresh, KANBAN/PLAN updated with new backlog items)
+*Last updated: 2026-07-10* (session 6: Docker build & container — multi-stage Dockerfile, .dockerignore, port mapping run, run commands documented)
