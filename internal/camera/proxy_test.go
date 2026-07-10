@@ -40,7 +40,7 @@ func TestHandler(t *testing.T) {
 	}
 
 	t.Run("errors", func(t *testing.T) {
-		handler := Handler()
+		handler := Handler(nil)
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?"+tt.query, nil)
@@ -72,7 +72,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("unreachable upstream", func(t *testing.T) {
 		// Port 1 is almost certainly not listening, so the dial will fail.
-		handler := Handler()
+		handler := Handler(nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?url=http://127.0.0.1:1/nonexistent", nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -105,7 +105,7 @@ func TestHandler(t *testing.T) {
 		}))
 		defer upstream.Close()
 
-		handler := Handler()
+		handler := Handler(nil)
 		proxyURL := "/api/camera/proxy?url=" + url.QueryEscape(upstream.URL)
 		req := httptest.NewRequest(http.MethodGet, proxyURL, nil)
 		w := httptest.NewRecorder()
@@ -138,7 +138,7 @@ func TestHandler(t *testing.T) {
 		}))
 		defer upstream.Close()
 
-		handler := Handler()
+		handler := Handler(nil)
 		proxyURL := "/api/camera/proxy?url=" + url.QueryEscape(upstream.URL)
 		req := httptest.NewRequest(http.MethodGet, proxyURL, nil)
 		w := httptest.NewRecorder()

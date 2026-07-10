@@ -164,7 +164,7 @@ func TestClient_CameraStreams(t *testing.T) {
 	if len(streams) != 1 {
 		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
 	}
-	expected := "http://10.0.0.1:6000/?token=1234"
+	expected := "bambus://10.0.0.1:6000?token=1234"
 	if streams[0].URL != expected {
 		t.Errorf("CameraStreams()[0].URL = %q; want %q", streams[0].URL, expected)
 	}

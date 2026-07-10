@@ -33,6 +33,7 @@ type Server struct {
 	bambuCloud *bambu.BambuCloudClient // cached for onboarding/reload
 	configPath string                   // path to config.yaml for saving
 	printersCtx context.CancelFunc      // cancel for printer connection goroutines
+	cameraMgr  *camera.CameraManager    // persistent Bambu camera connections
 
 	// Onboarding provisional state (single-user, set during wizard)
 	onboardingMu        sync.Mutex
@@ -61,12 +62,25 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 		},
 	}
 
+	// Initialize persistent camera connection manager.
+	s.cameraMgr = camera.NewCameraManager(context.Background())
+
 	// Initialize WebSocket hub for real-time status updates
 	s.wsHub = ws.NewHub()
 	go s.wsHub.Run()
 
 	s.initBambuCloud()
 	s.initPrinters()
+
+	// Pre-connect Bambu cameras eagerly on startup so frames are already
+	// buffered before the first browser page load. This eliminates the
+	// broken-image flash when the dashboard initially renders.
+	for _, pdef := range cfg.Printers {
+		if pdef.Type == "bambu" && pdef.Host != "" && pdef.AccessCode != "" {
+			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
+		}
+	}
+
 	s.registerRoutes()
 	return s, nil
 }
@@ -209,7 +223,11 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Println("Shutting down...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return s.http.Shutdown(shutdownCtx)
+		err := s.http.Shutdown(shutdownCtx)
+		if s.cameraMgr != nil {
+			s.cameraMgr.Stop()
+		}
+		return err
 	case err := <-errCh:
 		return err
 	}
@@ -335,7 +353,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/skip", s.handleSkipObject)
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
-	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler())
+	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr))
+	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandler(s.cameraMgr))
 }
 
 // renderTemplate is a helper that executes a Go template and writes to the response.
@@ -419,7 +438,9 @@ func (s *Server) enrichWithStreams(driverStreams []printers.CameraStream, printe
 
 	// Rewrite camera URLs to go through our same-origin proxy.
 	for i := range merged {
-		merged[i].URL = proxyCameraURL(merged[i].URL)
+		if merged[i].Type != "touchscreen" {
+			merged[i].URL = proxyCameraURL(merged[i].URL)
+		}
 	}
 
 	status.CameraStreams = merged

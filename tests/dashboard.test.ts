@@ -54,12 +54,13 @@ test.describe('Dashboard', () => {
     for (const p of snapmakerPrinters) {
       expect(p.camera_streams).toBeDefined();
       expect(p.camera_streams.length).toBeGreaterThanOrEqual(1);
-      // Touchscreen streams should now also be proxied (like internal streams)
+      // Touchscreen streams are NOT proxied — they are raw printer URLs
       const touchscreen = p.camera_streams.find(
         (c: any) => c.type === 'touchscreen',
       );
       if (touchscreen) {
-        expect(touchscreen.url).toContain('/api/camera/proxy');
+        expect(touchscreen.url).toContain('/screen/snapshot');
+        expect(touchscreen.url).not.toContain('/api/camera/proxy');
       }
       // Internal streams should be proxied
       const internal = p.camera_streams.find(

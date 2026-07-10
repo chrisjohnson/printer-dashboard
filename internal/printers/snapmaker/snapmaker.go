@@ -553,7 +553,7 @@ func (p *Printer) SkipObject(ctx context.Context) error {
 
 // CameraStreams returns the available camera/display streams for this printer.
 // The U1 has a built-in webcam at /webcam/stream.mjpg on the printer's HTTP port
-// and a touchscreen polling-based snapshot viewer at /screen/.
+// and a touchscreen snapshot endpoint at /screen/snapshot.
 // Users can add additional cameras via CameraDef in config.
 func (p *Printer) CameraStreams() []printers.CameraStream {
 	if p.cfg.Host == "" {
@@ -578,9 +578,9 @@ func (p *Printer) CameraStreams() []printers.CameraStream {
 	}
 
 	return []printers.CameraStream{
-		// The U1 runs Fluidd (Klipper web UI) on port 80. The touchscreen is a
-		// polling-based snapshot viewer at /screen/ (HTML+JS polling /screen/snapshot
-		// at ~10 fps). The snapshot endpoint returns a PNG of the touchscreen display.
+		// The U1 runs Fluidd (Klipper web UI) on port 80. The touchscreen
+		// snapshot endpoint at /screen/snapshot returns a PNG image.
+		// The interactive page is at /screen/ and is linked from the dashboard.
 		{URL: withAuth("/webcam/stream.mjpg"), Type: "internal", Label: "Camera"},
 		{URL: withAuth("/screen/snapshot"), Type: "touchscreen", Label: "Touchscreen"},
 	}

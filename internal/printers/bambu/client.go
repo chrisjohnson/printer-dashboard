@@ -85,7 +85,7 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 	if c.camIPCamURL != "" {
 		internalURL = c.camIPCamURL
 	} else if c.cfg.Host != "" && c.cfg.AccessCode != "" {
-		internalURL = fmt.Sprintf("http://%s:6000/?token=%s", c.cfg.Host, c.cfg.AccessCode)
+		internalURL = fmt.Sprintf("bambus://%s:6000?token=%s", c.cfg.Host, c.cfg.AccessCode)
 	}
 
 	if internalURL == "" {

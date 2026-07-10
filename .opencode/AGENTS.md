@@ -39,14 +39,27 @@ Update **KANBAN.md** if:
 
 **The project must be built using Docker.** This ensures the Docker image is always up to date and the running container can be restarted quickly after changes.
 
-### Build & restart workflow
+### Auto-restart rule
 
-After any code change, rebuild the image and restart the container:
+After **any** code change (i.e., whenever the orchestrator delegates to the **coder** sub-agent and the **VERIFY** step succeeds), the orchestrator **must** automatically rebuild and restart the container before moving to **REPORT**:
 
 ```bash
 docker build -t printer-dashboard .
-docker restart printer-dashboard
+docker rm -f printer-dashboard
+docker run -d \
+  --name printer-dashboard \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+  -v "$HOME/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  printer-dashboard
 ```
+
+**IMPORTANT:** `docker restart` reuses the old image. You must `docker rm -f` and `docker run` to pick up the newly-built image. The run flags (ports, volumes, restart policy) must match the first-time setup exactly.
+
+This is not optional — the container must be restarted immediately so the user's running instance reflects the new code without manual intervention.
+
+If the Docker build or container replacement fails, the orchestrator should report the failure to the user and continue (do not block the session).
 
 ### First-time run
 

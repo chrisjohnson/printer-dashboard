@@ -564,6 +564,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       flex: 1; position: relative; min-width: 0; min-height: 300px;
       background: #0a0a0a; border-radius: 6px; overflow: hidden;
       display: flex; flex-direction: column;
+      visibility: hidden;
     }
     .camera-slot img {
       width: 100%; aspect-ratio: 3/2; object-fit: contain;
@@ -571,9 +572,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .camera-slot img.touchscreen-img {
       width: 100%; object-fit: contain;
-      display: block; background: #000; flex-shrink: 0;
-      /* Deliberately NO aspect-ratio — let the image's natural dimensions
-         determine the height so it fills the width naturally. */
+      display: block; background: #000;
     }
     .camera-nav {
       display: flex; align-items: center; justify-content: space-between;
@@ -775,7 +774,19 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             window._printerCache[p.id] = p;
           });
           container.innerHTML = list.map(renderCard).join('');
-          // Cameras render inside each card — no separate setup needed
+          // Start periodic refresh for camera frames. The browser keeps the
+          // old frame visible while the new one loads, so no flicker.
+          // Skip errored images (display:none) to avoid aborting pending
+          // requests that may still succeed on timeout/retry.
+          if (!window._camInterval) {
+            window._camInterval = setInterval(function() {
+              document.querySelectorAll('.camera-slot img[data-frame-url]').forEach(function(img) {
+                if (img.style.display !== 'none') {
+                  img.src = img.getAttribute('data-frame-url') + '&_t=' + Date.now();
+                }
+              });
+            }, 2000);
+          }
         })
         .catch(() => {
           document.getElementById('printer-list').innerHTML = '<p style="color:#c0392b;padding:20px;">Error loading printers.</p>';
@@ -835,13 +846,34 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           const idx = window._cameraSlots[p.id] % streams.length;
           const stream = streams[idx];
           const label = escapeHtml(stream.label);
-          const url = escapeHtml(stream.url);
+          const rawUrl = stream.url;
+          const interactiveUrl = escapeHtml(rawUrl.replace('/screen/snapshot', '/screen/'));
+          const snapshotUrl = escapeHtml(rawUrl);
           const isTouchscreen = stream.type === 'touchscreen';
           let html = '<div class="camera-slot" id="cam-' + p.id + '-0" data-type="' + escapeHtml(stream.type) + '">';
           if (isTouchscreen) {
-            html += '<img src="' + url + '&_t=' + Date.now() + '" class="touchscreen-img" alt="' + label + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">';
+            // Touchscreen: use frame endpoint (buffered) to avoid progressive
+            // rendering. Link opens the raw interactive screen in a new tab.
+            var rawCameraUrl = rawUrl;
+            var m = rawUrl.match(/[?&]url=([^&]+)/);
+            if (m) rawCameraUrl = decodeURIComponent(m[1]);
+            var frameUrl = '/api/camera/frame?url=' + encodeURIComponent(rawCameraUrl);
+            html += '<a href="' + interactiveUrl + '" target="_blank" rel="noopener" title="Open touchscreen in new tab">';
+            html += '<img src="' + frameUrl + '&_t=' + Date.now() + '" class="touchscreen-img" alt="' + label + '" loading="lazy" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\'" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';this.style.display=\'none\';">';
+            html += '</a>';
           } else {
-            html += '<img src="' + url + '" alt="' + label + '" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">';
+            // Single frame with periodic refresh: no MJPEG streaming.
+            // /api/camera/frame returns a single complete JPEG (or placeholder)
+            // which the browser fully decodes before firing onload, so there
+            // is never a blank/flash rendering frame. The setInterval refreshes
+            // the src every 2s with a cache-busting param; the browser keeps
+            // the old frame visible until the new one is decoded.
+            // rawUrl is the proxied URL; extract the raw camera URL from it.
+            var rawCameraUrl = rawUrl;
+            var m = rawUrl.match(/[?&]url=([^&]+)/);
+            if (m) rawCameraUrl = decodeURIComponent(m[1]);
+            var frameUrl = '/api/camera/frame?url=' + encodeURIComponent(rawCameraUrl);
+            html += '<img id="cam-' + p.id + '" src="' + frameUrl + '&_t=' + Date.now() + '" alt="' + label + '" style="display:block;width:100%;object-fit:contain;background:#000;" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\'" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" data-frame-url="' + escapeHtml(frameUrl) + '">';
           }
           html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
           html += '<div class="camera-nav">';
@@ -951,12 +983,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     // Touchscreen image refresh — poll every 3 seconds for live feel
     setInterval(function() {
-      document.querySelectorAll('img.touchscreen-img').forEach(function(img) {
-        if (img.style.display !== 'none') {
-          var base = img.src.replace(/&_t=\d+/g, '');
-          img.src = base + '&_t=' + Date.now();
-        }
-      });
+        document.querySelectorAll('.camera-slot img.touchscreen-img').forEach(function(img) {
+            var src = img.src;
+            src = src.replace(/([?&])_t=\d+/, '$1_t=' + Date.now());
+            if (src.indexOf('_t=') === -1) {
+                src += (src.indexOf('?') === -1 ? '?' : '&') + '_t=' + Date.now();
+            }
+            img.src = src;
+        });
     }, 3000);
   </script>
 </body>

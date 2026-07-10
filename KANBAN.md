@@ -22,7 +22,7 @@ Ideas / feature requests that haven't been scoped yet.
 - [ ] **Dark mode** — Theme toggle for the UI.
 - [ ] **Light controls** — Per-printer light on/off/toggle controls.
 - [ ] **P1S cloud camera** — Access P1S camera stream without LAN mode (via cloud API/proxy).
-- [ ] **H2S cloud camera stream** — Research how to access H2S camera stream from Bambu Cloud (WebRTC/TUTK).
+- [ ] **H2S camera reverse-engineering** — Reverse-engineer the H2S camera stream on port 6000 (likely different protocol from P1S, maybe HTTP-based or RTSP). Determine if it works without LAN mode.
 - [ ] **H2S status icon hysteresis** — H2S is flipping between idle and complete; needs more attention on state transitions.
 - [ ] **Control pad section** — UI for bed/printhead movements, homing, etc.
 - [ ] **Filament loaded status** — Show which filament is loaded in each tool.
@@ -33,6 +33,7 @@ Ideas / feature requests that haven't been scoped yet.
 - [ ] **Chamber target temp for H2S** — Display target chamber temperature (H2S has chamber heater).
 - [ ] **P1S chamber temp investigation** — Determine if P1S has a chamber temp sensor (shows 5°C — is this real?).
 - [ ] **Longer temperature labels** — Use "Heatbed Temp", "Nozzle 1 Temp", "Nozzle 2 Temp", "Chamber Temp" instead of short codes.
+- [ ] **Bambu Camera Plugin research** — Research Bambu's official camera plugin/API for post-lockdown firmware camera access. Determine if we can use it for future-proof camera connectivity when pre-lockdown firmwares are no longer viable.
 
 ---
 
@@ -73,7 +74,8 @@ Work related to test infrastructure and coverage.
 
 ## 🏗 In Progress
 
-> *Nothing currently in progress.*
+- [ ] **H2S camera reverse-engineering** — Investigate H2S camera protocol, determine if HTTP-based or different binary protocol.
+- [ ] **Bambu Camera Plugin research** — Research official Bambu plugin/API for post-lockdown camera connectivity.
 
 ---
 
@@ -116,6 +118,10 @@ Work related to test infrastructure and coverage.
 - [x] **Snapmaker UX — server integration** — `StatusCh` wired to WebSocket hub in `initPrinters()` and `connectAllPrinters()` for Snapmaker printers (same pattern as Bambu). Extracted `startStatusForwarder` helper to avoid duplication. Error messages now rendered in UI as red `.error-banner`. 3 new tests: Snapmaker WS forwarding, error_msg forwarding, template banner presence.
 - [x] **Touchscreen rendered as `<img>` instead of `<iframe>`** — Touchscreen PNG snapshots now render as `<img>` with `width: 100%` and natural aspect ratio, filling the card width. Added 3-second auto-refresh with cache-busting for live feel. Removed unused iframe CSS.
 - [x] **Dockerfile + .dockerignore** — Multi-stage Docker build (golang:1.26-alpine → alpine:latest). Static binary, non-root user, ~20 MB image. Run command documented below.
+- [x] **Touchscreen interactivity restored** — Touchscreen snapshot rendered as clickable `<img>` that opens interactive page in new tab. Proper `?`/`&` cache-buster separator for URLs with/without query params. `onerror` handler for graceful failure.
+- [x] **P1S camera enabled (config)** — Added `host: 192.168.1.15` to P1S printer config. Camera stream at `bambus://{ip}:6000?token={access_code}` now proxied through dashboard and visible in P1S card.
+- [x] **P1S camera: binary TLS protocol driver** — Reverse-engineered the P1S camera protocol (raw TLS socket, 80-byte binary auth packet, MJPEG frame streaming). Created `BambuStreamReader` in `internal/camera/bambu_stream.go`. Uses `bambus://` URL scheme for dispatching through the proxy.
+- [x] **P1S camera: persistent connection + frame buffer** — `CameraManager` maintains one background TLS connection per camera. `FrameBuffer` stores latest frame and notifies waiters. Instant frame delivery (~1ms time-to-first-frame). Handles reconnection with exponential backoff.
 
 ---
 
@@ -165,4 +171,4 @@ docker rm -f printer-dashboard && docker run -d --name printer-dashboard ...(fla
 
 ---
 
-*Last updated: 2026-07-10* (session 6: Docker build & container — multi-stage Dockerfile, .dockerignore, port mapping run, run commands documented)
+*Last updated: 2026-07-10* (session 8: P1S camera binary TLS protocol reverse-engineered and implemented; persistent connection with frame buffer for instant streaming; H2S camera & Bambu Plugin research tasks added to backlog)

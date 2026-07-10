@@ -150,13 +150,17 @@ The `bambu-login` CLI tool provides step-by-step instructions for this process.
 ```
 
 **Camera:**
-- **Local access** (same LAN): MJPEG stream at `http://{printer_ip}:6000/?token={access_code}`
-  - The access code is available from the printer screen even without LAN mode
-  - Also still frame at `http://{printer_ip}:6000/?action=snapshot`
+- **Local access** (same LAN): Binary TLS protocol on port 6000
+  - **Protocol:** Raw TLS socket (NOT HTTP). Connect to `{ip}:6000` via TLS, send 80-byte binary auth packet (username `bblp` + access code), receive continuous MJPEG frames.
+  - **URL format (internal):** `bambus://{ip}:6000?token={access_code}`
+  - **Auth:** Binary packet: 16-byte header (magic values `0x40`, `0x3000`) + 32-byte username (`bblp` padded) + 32-byte access code (padded)
+  - **Response:** 16-byte frame header (payload size LE) + JPEG data
+  - The access code is shown on the printer display (Settings > Network). Works without LAN mode on pre-lockdown firmware.
+  - **Limitation:** ~1 FPS, single concurrent connection.
 - **Remote access**: Uses TUTK P2P protocol (proprietary SDK, used by Bambu Studio/Handy)
   - Cloud API provides TTCode credentials for TUTK via `POST /v1/iot-service/api/user/ttcode`
   - Not implementable without TUTK SDK — users should use Bambu Handy app for remote camera
-- **Future**: Bambu may add WebRTC-based cloud streaming (fields already present in API but null)
+- **Future**: Bambu may add WebRTC-based cloud streaming (fields already present in API but null). Also investigating Bambu's official camera plugin for post-lockdown compatibility.
 
 ### 4.2 Snapmaker U1 (Paxx Firmware)
 
@@ -343,4 +347,4 @@ One specific concern identified during development is **UI flickering** caused b
 
 ---
 
-*Last updated: 2026-07-11*
+*Last updated: 2026-07-09* (P1S camera protocol discovered: binary TLS on port 6000, not HTTP. Plan updated with correct protocol details.)
