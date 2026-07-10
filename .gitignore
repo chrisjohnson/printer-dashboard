@@ -32,3 +32,6 @@ dist/
 node_modules/
 playwright-report/
 test-results/
+
+# Playwright MCP
+.playwright-mcp/
