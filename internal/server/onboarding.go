@@ -558,20 +558,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     /* Camera section */
     .camera-section {
       display: flex; gap: 8px; margin: 6px 0;
-      max-height: 240px; overflow: hidden;
+      overflow: hidden; align-items: stretch;
     }
     .camera-slot {
-      flex: 1; position: relative; min-width: 0;
+      flex: 1; position: relative; min-width: 0; min-height: 300px;
       background: #0a0a0a; border-radius: 6px; overflow: hidden;
       display: flex; flex-direction: column;
     }
     .camera-slot img {
-      width: 100%; height: 180px; object-fit: cover;
-      display: block; background: #000;
+      width: 100%; aspect-ratio: 3/2; object-fit: contain;
+      display: block; background: #000; flex-shrink: 0;
+    }
+    .camera-slot img.touchscreen-img {
+      width: 100%; object-fit: contain;
+      display: block; background: #000; flex-shrink: 0;
+      /* Deliberately NO aspect-ratio — let the image's natural dimensions
+         determine the height so it fills the width naturally. */
     }
     .camera-nav {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 4px 6px; background: #1a1a1a;
+      padding: 4px 6px; background: #1a1a1a; flex-shrink: 0;
     }
     .camera-nav button {
       background: none; border: 1px solid #444; color: #ccc;
@@ -589,16 +595,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .cam-error {
       display: none; align-items: center; justify-content: center;
-      width: 100%; height: 180px;
+      width: 100%; aspect-ratio: 3/2;
       background: #1a1a1a; border-radius: 6px;
       color: #c0392b; font-size: 0.8rem;
     }
-    @media (min-width: 768px) {
-      .cam-error { height: 240px; }
-      .camera-section { max-height: 320px; }
-      .camera-slot img { height: 240px; }
-    }
-
     /* ─── Wide desktop (>=1200px) ─── */
     @media (min-width: 1200px) {
       .printers { grid-template-columns: repeat(auto-fill, minmax(600px, 1fr)); }
@@ -637,25 +637,125 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return merged;
     }
 
-    function updateCard(p) {
-      const container = document.getElementById('printer-list');
+    function updateCard(p, rebuildCameras) {
       const card = document.getElementById('printer-' + p.id);
-      if (!card) {
-        // New printer appeared — rebuild entire list
-        loadPrinters();
+      if (!card) { loadPrinters(); return; }
+
+      // Update printer count in header
+      const list = Object.keys(window._printerCache);
+      document.getElementById('printer-count').textContent =
+        list.length + ' printer' + (list.length !== 1 ? 's' : '');
+
+      if (rebuildCameras) {
+        // Full rebuild — replace entire card, camera section included
+        card.outerHTML = renderCard(p);
+        const newCard = document.getElementById('printer-' + p.id);
+        if (newCard) {
+          // Camera slot is rendered inside the card — no further setup needed
+        }
         return;
       }
-      // Update printer count
-      const count = document.getElementById('printer-count');
-      const list = Object.keys(window._printerCache);
-      count.textContent = list.length + ' printer' + (list.length !== 1 ? 's' : '');
-      // Replace the card's outerHTML with a freshly rendered one
-      card.outerHTML = renderCard(p);
-      // Adjust camera slot visibility based on card width
-      const newCard = document.getElementById('printer-' + p.id);
-      if (newCard) {
-        adjustCameraSlots(newCard);
+
+      // ── Normal update: only update non-camera parts of the card ──
+      const st = p.state || 'unknown';
+      const stCls = p.online ? st : 'offline';
+      const progress = (p.progress * 100).toFixed(1);
+      const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
+
+      // 1. State tag
+      const tag = card.querySelector('.tag');
+      if (tag) { tag.className = 'tag ' + stCls; tag.textContent = st; }
+
+      // 2. Online indicator
+      const onlineEl = card.querySelector('.card-online');
+      if (onlineEl) {
+        if (p.online) { onlineEl.className = 'card-online yes'; onlineEl.textContent = '\u25cf'; }
+        else { onlineEl.className = 'card-online'; onlineEl.textContent = '\u25cb Offline'; }
       }
+
+      // 3. Progress bar fill
+      const fill = card.querySelector('.progress-bar .fill');
+      if (fill) fill.style.width = progress + '%';
+
+      // 4. Progress text (percent + time)
+      const pt = card.querySelector('.progress-text');
+      if (pt) pt.innerHTML = '<span>' + progress + '%</span><span>' + timeStr + '</span>';
+
+      // 5. Temperatures — update each temp-row in place
+      const temps = card.querySelector('.temps');
+      if (temps) {
+        const bed = p.bed_temp !== null ? p.bed_temp.toFixed(1) : '?';
+        const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '?';
+        const nozzle = p.nozzle_temp !== null ? p.nozzle_temp.toFixed(1) : '?';
+        const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '?';
+        const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
+
+        const rows = temps.querySelectorAll('.temp-row');
+        // Row 0: bed
+        if (rows[0]) {
+          const vals = rows[0].querySelectorAll('.val, .target');
+          if (vals[0]) vals[0].textContent = bed + '\u00b0C';
+          if (vals[1]) vals[1].textContent = '\u2192' + bedT + '\u00b0C';
+        }
+        // Row 1: nozzle 1
+        if (rows[1]) {
+          const vals = rows[1].querySelectorAll('.val, .target');
+          if (vals[0]) vals[0].textContent = nozzle + '\u00b0C';
+          if (vals[1]) vals[1].textContent = '\u2192' + nozzleT + '\u00b0C';
+        }
+        // Rows 2+: extra nozzles (skip index 0)
+        let extraIdx = 2;
+        (p.nozzle_temps || []).forEach(function(nt) {
+          if (nt.index === 0) return;
+          if (rows[extraIdx]) {
+            const actualStr = nt.actual !== null ? nt.actual.toFixed(1) : '?';
+            const targetStr = nt.target !== null ? nt.target.toFixed(1) : '?';
+            const vals = rows[extraIdx].querySelectorAll('.val, .target');
+            if (vals[0]) vals[0].textContent = actualStr + '\u00b0C';
+            if (vals[1]) vals[1].textContent = '\u2192' + targetStr + '\u00b0C';
+          }
+          extraIdx++;
+        });
+        // Last row: chamber
+        const lastRow = rows[rows.length - 1];
+        if (lastRow) {
+          const val = lastRow.querySelector('.val');
+          if (val) val.textContent = chamberVal + '\u00b0C';
+        }
+      }
+
+      // 6. File name
+      const fileEl = card.querySelector('.filename');
+      if (fileEl) {
+        if (p.current_file) { fileEl.textContent = escapeHtml(p.current_file); fileEl.style.display = ''; }
+        else fileEl.style.display = 'none';
+      }
+
+      // 7. Layer info
+      const layerEl = card.querySelector('.layer-info');
+      if (layerEl) {
+        if (p.total_layers > 0) { layerEl.textContent = 'Layer ' + p.current_layer + ' / ' + p.total_layers; layerEl.style.display = ''; }
+        else layerEl.style.display = 'none';
+      }
+
+      // 8. Error banner
+      const errorEl = card.querySelector('.error-banner');
+      if (errorEl && st === 'error' && p.error_msg) {
+        errorEl.textContent = escapeHtml(p.error_msg);
+        errorEl.style.display = '';
+      } else if (errorEl) {
+        errorEl.style.display = 'none';
+      }
+
+      // 9. Control buttons
+      const pauseBtn = card.querySelector('button[onclick*="pause"]');
+      const resumeBtn = card.querySelector('button[onclick*="resume"]');
+      const cancelBtn = card.querySelector('button[onclick*="cancel"]');
+      const skipBtn = card.querySelector('button[onclick*="skip"]');
+      if (pauseBtn) pauseBtn.disabled = st !== 'printing';
+      if (resumeBtn) resumeBtn.disabled = st !== 'paused';
+      if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
+      if (skipBtn) skipBtn.disabled = st !== 'printing';
     }
 
     function loadPrinters() {
@@ -675,11 +775,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             window._printerCache[p.id] = p;
           });
           container.innerHTML = list.map(renderCard).join('');
-          // Adjust camera slot visibility for all cards
-          list.forEach(function(p) {
-            const cardEl = document.getElementById('printer-' + p.id);
-            if (cardEl) adjustCameraSlots(cardEl);
-          });
+          // Cameras render inside each card — no separate setup needed
         })
         .catch(() => {
           document.getElementById('printer-list').innerHTML = '<p style="color:#c0392b;padding:20px;">Error loading printers.</p>';
@@ -730,29 +826,29 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             if (p.type === 'bambu') {
               reason = 'Camera: add LAN IP and access code in printer settings.';
             } else if (p.type === 'snapmaker') {
-              reason = 'Touchscreen: set printer host in config.';
+              reason = 'Camera: ensure printer is reachable and has a webcam configured.';
             }
             return '<div class="camera-section" id="cam-section-' + p.id + '"><div class="camera-placeholder">' + reason + '</div></div>';
           }
-          // Initialize slot indices
           if (!window._cameraSlots) window._cameraSlots = {};
-          if (!window._cameraSlots[p.id]) window._cameraSlots[p.id] = [0, Math.min(1, streams.length - 1)];
-          let html = '';
-          const numSlots = 2; // always render 2; visibility set after mount
-          for (let i = 0; i < numSlots; i++) {
-            const idx = window._cameraSlots[p.id][i] % streams.length;
-            const stream = streams[idx];
-            const label = escapeHtml(stream.label);
-            const url = escapeHtml(stream.url);
-            html += '<div class="camera-slot" id="cam-' + p.id + '-' + i + '">';
+          if (window._cameraSlots[p.id] === undefined) window._cameraSlots[p.id] = 0;
+          const idx = window._cameraSlots[p.id] % streams.length;
+          const stream = streams[idx];
+          const label = escapeHtml(stream.label);
+          const url = escapeHtml(stream.url);
+          const isTouchscreen = stream.type === 'touchscreen';
+          let html = '<div class="camera-slot" id="cam-' + p.id + '-0" data-type="' + escapeHtml(stream.type) + '">';
+          if (isTouchscreen) {
+            html += '<img src="' + url + '&_t=' + Date.now() + '" class="touchscreen-img" alt="' + label + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">';
+          } else {
             html += '<img src="' + url + '" alt="' + label + '" loading="lazy" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';">';
-            html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
-            html += '<div class="camera-nav">';
-            html += '<button class="cam-prev" onclick="cameraFlip(\'' + p.id + '\',' + i + ',-1)">‹</button>';
-            html += '<span class="cam-label">' + label + '</span>';
-            html += '<button class="cam-next" onclick="cameraFlip(\'' + p.id + '\',' + i + ',1)">›</button>';
-            html += '</div></div>';
           }
+          html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
+          html += '<div class="camera-nav">';
+          html += '<button class="cam-prev" onclick="cameraFlip(\'' + p.id + '\',-1)">‹</button>';
+          html += '<span class="cam-label">' + label + '</span>';
+          html += '<button class="cam-next" onclick="cameraFlip(\'' + p.id + '\',1)">›</button>';
+          html += '</div></div>';
           return '<div class="camera-section" id="cam-section-' + p.id + '">' + html + '</div>';
         })() +
         '<div class="temps">' +
@@ -813,25 +909,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     window._cameraSlots = window._cameraSlots || {};
 
-    function cameraFlip(printerId, slotIdx, dir) {
+    function cameraFlip(printerId, dir) {
       const p = window._printerCache[printerId];
       if (!p) return;
       const streams = p.camera_streams || [];
       if (streams.length === 0) return;
-      if (!window._cameraSlots[printerId]) window._cameraSlots[printerId] = [0, Math.min(1, streams.length - 1)];
-      window._cameraSlots[printerId][slotIdx] = (window._cameraSlots[printerId][slotIdx] + dir + streams.length) % streams.length;
-      updateCard(p);
-    }
-
-    function adjustCameraSlots(cardEl) {
-      const streams = window._printerCache[cardEl.id.replace('printer-', '')]?.camera_streams || [];
-      if (streams.length === 0) return;
-      const slots = cardEl.querySelectorAll('.camera-slot');
-      const cardWidth = cardEl.offsetWidth;
-      // Show only 1 slot when card < 600px wide
-      for (let i = 0; i < slots.length; i++) {
-        slots[i].style.display = (cardWidth >= 600 || i === 0) ? '' : 'none';
-      }
+      if (window._cameraSlots[printerId] === undefined) window._cameraSlots[printerId] = 0;
+      window._cameraSlots[printerId] = (window._cameraSlots[printerId] + dir + streams.length) % streams.length;
+      updateCard(p, true);
     }
 
     function connectWebSocket() {
@@ -863,6 +948,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     loadPrinters();
     connectWebSocket();
+
+    // Touchscreen image refresh — poll every 3 seconds for live feel
+    setInterval(function() {
+      document.querySelectorAll('img.touchscreen-img').forEach(function(img) {
+        if (img.style.display !== 'none') {
+          var base = img.src.replace(/&_t=\d+/g, '');
+          img.src = base + '&_t=' + Date.now();
+        }
+      });
+    }, 3000);
   </script>
 </body>
 </html>`

@@ -450,8 +450,8 @@ func TestEnrichStatusWithCameras_DriverOnly(t *testing.T) {
 	if len(enriched.CameraStreams) != 1 {
 		t.Fatalf("expected 1 camera stream, got %d", len(enriched.CameraStreams))
 	}
-	if enriched.CameraStreams[0].URL != "http://camera.local/stream" {
-		t.Errorf("URL = %q; want %q", enriched.CameraStreams[0].URL, "http://camera.local/stream")
+	if enriched.CameraStreams[0].URL != "/api/camera/proxy?url=http%3A%2F%2Fcamera.local%2Fstream" {
+		t.Errorf("URL = %q; want %q", enriched.CameraStreams[0].URL, "/api/camera/proxy?url=http%3A%2F%2Fcamera.local%2Fstream")
 	}
 	if enriched.CameraStreams[0].Type != "internal" {
 		t.Errorf("Type = %q; want %q", enriched.CameraStreams[0].Type, "internal")
@@ -480,8 +480,8 @@ func TestEnrichStatusWithCameras_ConfigOnly(t *testing.T) {
 	if len(enriched.CameraStreams) != 1 {
 		t.Fatalf("expected 1 camera stream, got %d", len(enriched.CameraStreams))
 	}
-	if enriched.CameraStreams[0].URL != "http://cam.local/feed" {
-		t.Errorf("URL = %q; want %q", enriched.CameraStreams[0].URL, "http://cam.local/feed")
+	if enriched.CameraStreams[0].URL != "/api/camera/proxy?url=http%3A%2F%2Fcam.local%2Ffeed" {
+		t.Errorf("URL = %q; want %q", enriched.CameraStreams[0].URL, "/api/camera/proxy?url=http%3A%2F%2Fcam.local%2Ffeed")
 	}
 	if enriched.CameraStreams[0].Type != "external" {
 		t.Errorf("Type = %q; want %q", enriched.CameraStreams[0].Type, "external")

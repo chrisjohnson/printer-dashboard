@@ -7,12 +7,14 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chrisjohnson/printer-dashboard/internal/camera"
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers/bambu"
@@ -331,6 +333,9 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/resume", s.handleResume)
 	s.mux.HandleFunc("POST /api/printers/{id}/cancel", s.handleCancel)
 	s.mux.HandleFunc("POST /api/printers/{id}/skip", s.handleSkipObject)
+
+	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
+	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler())
 }
 
 // renderTemplate is a helper that executes a Go template and writes to the response.
@@ -412,8 +417,22 @@ func (s *Server) enrichWithStreams(driverStreams []printers.CameraStream, printe
 		}
 	}
 
+	// Rewrite camera URLs to go through our same-origin proxy.
+	for i := range merged {
+		merged[i].URL = proxyCameraURL(merged[i].URL)
+	}
+
 	status.CameraStreams = merged
 	return status
+}
+
+// proxyCameraURL rewrites a camera stream URL to go through the server-side
+// proxy endpoint, keeping requests same-origin to avoid mixed-content issues.
+func proxyCameraURL(rawURL string) string {
+	if rawURL == "" {
+		return rawURL
+	}
+	return "/api/camera/proxy?url=" + url.QueryEscape(rawURL)
 }
 
 // writeError is a helper to write a JSON error response.

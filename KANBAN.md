@@ -20,6 +20,19 @@ Ideas / feature requests that haven't been scoped yet.
 - [ ] **Temperature graphs** — Historical chart of nozzle/bed/ enclosure temps.
 - [ ] **Webhook API** — Let external services (Home Assistant, etc.) subscribe to printer events.
 - [ ] **Dark mode** — Theme toggle for the UI.
+- [ ] **Light controls** — Per-printer light on/off/toggle controls.
+- [ ] **P1S cloud camera** — Access P1S camera stream without LAN mode (via cloud API/proxy).
+- [ ] **H2S cloud camera stream** — Research how to access H2S camera stream from Bambu Cloud (WebRTC/TUTK).
+- [ ] **H2S status icon hysteresis** — H2S is flipping between idle and complete; needs more attention on state transitions.
+- [ ] **Control pad section** — UI for bed/printhead movements, homing, etc.
+- [ ] **Filament loaded status** — Show which filament is loaded in each tool.
+- [ ] **AMS status display** — Show AMS (Auto Material System) status per printer.
+- [ ] **AMS humidity display** — Show humidity readings from AMS.
+- [ ] **Print recordings** — Show available recordings per printer.
+- [ ] **Download recordings** — Download/save printer recordings.
+- [ ] **Chamber target temp for H2S** — Display target chamber temperature (H2S has chamber heater).
+- [ ] **P1S chamber temp investigation** — Determine if P1S has a chamber temp sensor (shows 5°C — is this real?).
+- [ ] **Longer temperature labels** — Use "Heatbed Temp", "Nozzle 1 Temp", "Nozzle 2 Temp", "Chamber Temp" instead of short codes.
 
 ---
 
@@ -101,6 +114,7 @@ Work related to test infrastructure and coverage.
 - [x] **Snapmaker Paxx client: Connect lifecycle** — Initial REST fetch, WebSocket dial with ping/pong, WS message read loop with status merge, REST polling fallback with 3s interval, WS retry at 15s. `handleStatusReport` with nil-guard value preservation. 8 new tests (handleStatusReport, fetchStatus, Connect with WS messages, partial update preservation).
 - [x] **Snapmaker Paxx client: partial report fix** — `Progress`, `File`, `Error` changed from value to pointer types so absent JSON fields don't overwrite cached values (matches existing pattern for temp/layer fields).
 - [x] **Snapmaker UX — server integration** — `StatusCh` wired to WebSocket hub in `initPrinters()` and `connectAllPrinters()` for Snapmaker printers (same pattern as Bambu). Extracted `startStatusForwarder` helper to avoid duplication. Error messages now rendered in UI as red `.error-banner`. 3 new tests: Snapmaker WS forwarding, error_msg forwarding, template banner presence.
+- [x] **Touchscreen rendered as `<img>` instead of `<iframe>`** — Touchscreen PNG snapshots now render as `<img>` with `width: 100%` and natural aspect ratio, filling the card width. Added 3-second auto-refresh with cache-busting for live feel. Removed unused iframe CSS.
 
 ---
 
@@ -121,4 +135,4 @@ Work related to test infrastructure and coverage.
 
 ---
 
-*Last updated: 2026-07-08* (session 4: Snapmaker server integration — StatusCh → wsHub forwarding + ErrorMsg UI)
+*Last updated: 2026-07-11* (session 5: Touchscreen width-fix — rendered as `<img>`, auto-refresh, KANBAN/PLAN updated with new backlog items)

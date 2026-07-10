@@ -73,9 +73,8 @@ func TestCameraStreams(t *testing.T) {
 				Port: 8080,
 			},
 			want: []printers.CameraStream{
-				{URL: "http://192.168.1.100:8080/camera", Type: "internal", Label: "Camera"},
-				{URL: "http://192.168.1.100:8080/webcam/?action=stream", Type: "internal", Label: "Camera"},
-				{URL: "http://192.168.1.100:8080/touchscreen", Type: "touchscreen", Label: "Touchscreen"},
+				{URL: "http://192.168.1.100:8080/webcam/stream.mjpg", Type: "internal", Label: "Camera"},
+				{URL: "http://192.168.1.100:8080/screen/snapshot", Type: "touchscreen", Label: "Touchscreen"},
 			},
 		},
 		{
@@ -85,9 +84,20 @@ func TestCameraStreams(t *testing.T) {
 				Port: 0,
 			},
 			want: []printers.CameraStream{
-				{URL: "http://10.0.0.50:80/camera", Type: "internal", Label: "Camera"},
-				{URL: "http://10.0.0.50:80/webcam/?action=stream", Type: "internal", Label: "Camera"},
-				{URL: "http://10.0.0.50:80/touchscreen", Type: "touchscreen", Label: "Touchscreen"},
+				{URL: "http://10.0.0.50:80/webcam/stream.mjpg", Type: "internal", Label: "Camera"},
+				{URL: "http://10.0.0.50:80/screen/snapshot", Type: "touchscreen", Label: "Touchscreen"},
+			},
+		},
+		{
+			name: "with access code",
+			cfg: config.PrinterDef{
+				Host:       "192.168.1.100",
+				Port:       8080,
+				AccessCode: "my-access-code",
+			},
+			want: []printers.CameraStream{
+				{URL: "http://192.168.1.100:8080/webcam/stream.mjpg?access_code=my-access-code", Type: "internal", Label: "Camera"},
+				{URL: "http://192.168.1.100:8080/screen/snapshot?access_code=my-access-code", Type: "touchscreen", Label: "Touchscreen"},
 			},
 		},
 		{

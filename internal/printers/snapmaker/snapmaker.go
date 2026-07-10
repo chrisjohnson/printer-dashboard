@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -551,9 +552,9 @@ func (p *Printer) SkipObject(ctx context.Context) error {
 }
 
 // CameraStreams returns the available camera/display streams for this printer.
-// The camera endpoint is /camera on the printer's HTTP port.
-// Moonraker-based firmware also commonly exposes the webcam at /webcam/?action=stream
-// or on port 8080. Users can add additional cameras via CameraDef in config.
+// The U1 has a built-in webcam at /webcam/stream.mjpg on the printer's HTTP port
+// and a touchscreen polling-based snapshot viewer at /screen/.
+// Users can add additional cameras via CameraDef in config.
 func (p *Printer) CameraStreams() []printers.CameraStream {
 	if p.cfg.Host == "" {
 		return nil
@@ -563,9 +564,24 @@ func (p *Printer) CameraStreams() []printers.CameraStream {
 		port = 80
 	}
 	base := fmt.Sprintf("http://%s:%d", p.cfg.Host, port)
+
+	// Build a full URL with optional access_code query parameter.
+	// Follows the same pattern as Bambu's CameraStreams which includes ?token=xxx.
+	withAuth := func(path string) string {
+		u, _ := url.Parse(base + path)
+		if p.cfg.AccessCode != "" {
+			q := u.Query()
+			q.Set("access_code", p.cfg.AccessCode)
+			u.RawQuery = q.Encode()
+		}
+		return u.String()
+	}
+
 	return []printers.CameraStream{
-		{URL: base + "/camera", Type: "internal", Label: "Camera"},
-		{URL: base + "/webcam/?action=stream", Type: "internal", Label: "Camera"},
-		{URL: base + "/touchscreen", Type: "touchscreen", Label: "Touchscreen"},
+		// The U1 runs Fluidd (Klipper web UI) on port 80. The touchscreen is a
+		// polling-based snapshot viewer at /screen/ (HTML+JS polling /screen/snapshot
+		// at ~10 fps). The snapshot endpoint returns a PNG of the touchscreen display.
+		{URL: withAuth("/webcam/stream.mjpg"), Type: "internal", Label: "Camera"},
+		{URL: withAuth("/screen/snapshot"), Type: "touchscreen", Label: "Touchscreen"},
 	}
 }
