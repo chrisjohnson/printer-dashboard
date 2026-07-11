@@ -479,6 +479,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       --radius-control: 8px;
       --radius-card: 12px;
       --radius-pill: 999px;
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+      /* Heat-source icon tints (by type) — warm bed, sky nozzle, cool chamber */
+      --temp-bed: #f97316;
+      --temp-nozzle: #3b82f6;
+      --temp-chamber: #14b8a6;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -494,9 +500,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     /* Card — compact on mobile, expands on desktop */
     .card {
-      background: var(--bg-card); border: 1px solid var(--border-subtle);
+      background: var(--bg-card); background-clip: padding-box;
       border-radius: var(--radius-card); padding: 12px;
-      box-shadow: var(--shadow-card);
+      box-shadow: 0 0 0 1px rgba(0,0,0,.06), var(--shadow-card);
       display: flex; flex-direction: column; gap: 8px;
     }
     .card-header {
@@ -518,7 +524,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     .card-online { font-size: 0.6875rem; color: var(--text-subtle); margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
     .card-online.yes { color: #15803d; }
-    .card-online svg { width: 10px; height: 10px; flex-shrink: 0; }
+    .card-online svg { width: 13px; height: 13px; flex-shrink: 0; }
 
     .error-banner {
       background: #fee2e2; color: #b91c1c;
@@ -542,10 +548,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .temps .label { color: var(--text-subtle); font-weight: 500; display: flex; align-items: center; gap: 4px; }
     .temps .val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
     .temps .target { color: var(--text-muted); }
+    /* Editable target-temp input — soft pill, faint border, accent focus ring. */
+    input.target {
+      width: 5.5em; padding: 3px 8px;
+      font-size: inherit; font-family: inherit; font-weight: 600;
+      color: var(--accent); text-align: center;
+      background: #f6f8fc; border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill); outline: none;
+      font-variant-numeric: tabular-nums; -moz-appearance: textfield;
+    }
+    input.target:hover { border-color: #c7d2e8; }
+    input.target:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.18); background: #fff; }
+    input.target::-webkit-outer-spin-button, input.target::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     .temp-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 2px 0; }
-    .temp-icon { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1; color: var(--text-muted); }
-    .temp-icon svg { width: 14px; height: 14px; flex-shrink: 0; display: block; }
-    .temp-values { display: flex; gap: 8px; }
+    .temps .label { gap: 7px; }
+    .temp-icon { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1; color: var(--text-muted); }
+    .temp-icon svg { width: 24px; height: 24px; flex-shrink: 0; display: block; }
+    .temp-icon.bed { color: var(--temp-bed); }
+    .temp-icon.nozzle { color: var(--temp-nozzle); }
+    .temp-icon.chamber { color: var(--temp-chamber); }
+    .temp-values { display: flex; gap: 8px; align-items: center; }
 
     /* File name — hidden on mobile, shown on desktop (see media query below).
        Always rendered in the markup (with a "—" placeholder when no file is
@@ -557,17 +579,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
     .controls button {
       flex: 1; min-width: 0;
-      background: var(--bg-card); color: var(--text); border: 1px solid var(--border-subtle);
-      padding: 6px 10px; border-radius: var(--radius-control); cursor: pointer;
-      font-size: 0.75rem; font-weight: 600;
-      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      background: var(--accent); color: #fff; border: 1px solid var(--accent);
+      padding: 9px 14px; border-radius: var(--radius-control); cursor: pointer;
+      font-size: 0.8125rem; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
       line-height: 1;
     }
-    .controls button svg { width: 14px; height: 14px; flex-shrink: 0; }
-    .controls button:hover:not(:disabled) { background: #f1f3f5; border-color: #d0d0d6; }
+    .controls button svg { width: 18px; height: 18px; flex-shrink: 0; }
+    .controls button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
     .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .controls button.danger { border-color: #f5c2c2; color: #b91c1c; }
-    .controls button.danger:hover:not(:disabled) { background: #fee2e2; border-color: #e9a8a8; }
+    .controls button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+    .controls button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
     /* Hide skip + resume on mobile */
     .btn-skip, .btn-resume { display: none; }
 
@@ -627,7 +649,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       font-size: 1rem; line-height: 1.4;
       display: inline-flex; align-items: center; justify-content: center;
     }
-    .camera-nav button svg { width: 16px; height: 16px; flex-shrink: 0; display: block; }
+    .camera-nav button svg { width: 20px; height: 20px; flex-shrink: 0; display: block; }
     .camera-nav button:hover { background: #e9ebee; border-color: #d0d0d6; }
     .camera-nav .cam-label { font-size: 0.6875rem; color: var(--text-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .camera-placeholder {
@@ -684,15 +706,15 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       </div>
       <div class="temps">
         <span class="temp-row">
-          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><path d="M8 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M12 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M16 13c-1 1-1 2 0 3s1 2 0 3"/></svg></span>BED:</span>
-          <span class="temp-values"><span class="val">--°C</span><span class="target">→--°C</span></span>
+          <span class="label"><span class="temp-icon bed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><path d="M8 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M12 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M16 13c-1 1-1 2 0 3s1 2 0 3"/></svg></span>Bed:</span>
+          <span class="temp-values"><span class="val">--°C</span><input class="target" type="text" inputmode="decimal" value="--" disabled></span>
         </span>
         <span class="temp-row">
-          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10l-1.5 9H8.5z"/><path d="M10.5 12l1.5 6 1.5-6"/><circle cx="18.5" cy="5.5" r="4.5" fill="var(--bg-card)"/><text x="18.5" y="8" text-anchor="middle" font-size="7" font-weight="700" stroke="none" fill="currentColor" font-family="-apple-system,sans-serif">1</text></svg></span>NOZ1:</span>
-          <span class="temp-values"><span class="val">--°C</span><span class="target">→--°C</span></span>
+          <span class="label"><span class="temp-icon nozzle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10l-1.5 9H8.5z"/><path d="M10.5 12l1.5 6 1.5-6"/><circle cx="18.5" cy="5.5" r="4.5" fill="var(--bg-card)"/><text x="18.5" y="8" text-anchor="middle" font-size="7" font-weight="700" stroke="none" fill="currentColor" font-family="-apple-system,sans-serif">1</text></svg></span>Nozzle 1:</span>
+          <span class="temp-values"><span class="val">--°C</span><input class="target" type="text" inputmode="decimal" value="--" disabled></span>
         </span>
         <span class="temp-row">
-          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16"/></svg></span>CHAMBER:</span>
+          <span class="label"><span class="temp-icon chamber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16"/></svg></span>Chamber:</span>
           <span class="temp-values"><span class="val">--°C</span></span>
         </span>
       </div>
@@ -703,7 +725,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>Pause</button>
         <button class="btn-resume" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"/></svg>Resume</button>
         <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
-        <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip</button>
+        <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip Object</button>
       </div>
     </div>
     {{end}}
@@ -780,18 +802,25 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '?';
         const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
 
+        // Set an input.target's value only when the user isn't editing it, so
+        // a live WS update never clobbers what they're typing.
+        function setTargetInput(row, targetVal) {
+          const inp = row.querySelector('.target');
+          if (inp && document.activeElement !== inp) inp.value = targetVal;
+        }
+
         const rows = temps.querySelectorAll('.temp-row');
         // Row 0: bed
         if (rows[0]) {
-          const vals = rows[0].querySelectorAll('.val, .target');
-          if (vals[0]) vals[0].textContent = bed + '\u00b0C';
-          if (vals[1]) vals[1].textContent = '\u2192' + bedT + '\u00b0C';
+          const val = rows[0].querySelector('.val');
+          if (val) val.textContent = bed + '\u00b0C';
+          setTargetInput(rows[0], bedT);
         }
         // Row 1: nozzle 1
         if (rows[1]) {
-          const vals = rows[1].querySelectorAll('.val, .target');
-          if (vals[0]) vals[0].textContent = nozzle + '\u00b0C';
-          if (vals[1]) vals[1].textContent = '\u2192' + nozzleT + '\u00b0C';
+          const val = rows[1].querySelector('.val');
+          if (val) val.textContent = nozzle + '\u00b0C';
+          setTargetInput(rows[1], nozzleT);
         }
         // Rows 2+: extra nozzles (skip index 0)
         let extraIdx = 2;
@@ -800,9 +829,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           if (rows[extraIdx]) {
             const actualStr = nt.actual !== null ? nt.actual.toFixed(1) : '?';
             const targetStr = nt.target !== null ? nt.target.toFixed(1) : '?';
-            const vals = rows[extraIdx].querySelectorAll('.val, .target');
-            if (vals[0]) vals[0].textContent = actualStr + '\u00b0C';
-            if (vals[1]) vals[1].textContent = '\u2192' + targetStr + '\u00b0C';
+            const val = rows[extraIdx].querySelector('.val');
+            if (val) val.textContent = actualStr + '\u00b0C';
+            setTargetInput(rows[extraIdx], targetStr);
           }
           extraIdx++;
         });
@@ -940,6 +969,20 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         : _svgOpen + '<circle cx="12" cy="12" r="6"/></svg>';
     }
 
+    // Editable target-temp input. Keeps the .target class so updateCard's
+    // selector still finds it. STUB: onchange calls setTargetTemp (no-op for now).
+    function targetInput(printerId, sensor, value) {
+      return '<input class="target" type="text" inputmode="decimal"' +
+        ' value="' + escapeHtml(String(value)) + '"' +
+        ' onchange="setTargetTemp(\'' + printerId + '\',\'' + sensor + '\',this.value)">';
+    }
+
+    // STUB: set a new target temperature. Does not POST/apply yet — placeholder
+    // so the wiring exists for a later real implementation.
+    function setTargetTemp(printerId, sensor, value) {
+      console.log('setTargetTemp (stub):', printerId, sensor, value);
+    }
+
     function renderCard(p) {
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
@@ -1044,26 +1087,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '<div class="temps">' +
         // Bed row
           '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon">' + svgBed() + '</span>BED:</span>' +
-            '<span class="temp-values"><span class="val">' + bed + '°C</span><span class="target">→' + bedT + '°C</span></span>' +
+            '<span class="label"><span class="temp-icon bed">' + svgBed() + '</span>Bed:</span>' +
+            '<span class="temp-values"><span class="val">' + bed + '°C</span>' + targetInput(p.id, 'bed', bedT) + '</span>' +
           '</span>' +
         // Primary nozzle (tool0)
           '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon">' + svgNozzle(1) + '</span>NOZ1:</span>' +
-            '<span class="temp-values"><span class="val">' + nozzle + '°C</span><span class="target">→' + nozzleT + '°C</span></span>' +
+            '<span class="label"><span class="temp-icon nozzle">' + svgNozzle(1) + '</span>Nozzle 1:</span>' +
+            '<span class="temp-values"><span class="val">' + nozzle + '°C</span>' + targetInput(p.id, 'nozzle', nozzleT) + '</span>' +
           '</span>' +
         // Extra nozzles (tool1+)
           (p.nozzle_temps || []).filter(function(nt) { return nt.index > 0; }).map(function(nt) {
             const actualStr = nt.actual !== null ? nt.actual.toFixed(1) : '?';
             const targetStr = nt.target !== null ? nt.target.toFixed(1) : '?';
             return '<span class="temp-row">' +
-              '<span class="label"><span class="temp-icon">' + svgNozzle(nt.index + 1) + '</span>NOZ' + (nt.index + 1) + ':</span>' +
-              '<span class="temp-values"><span class="val">' + actualStr + '°C</span><span class="target">→' + targetStr + '°C</span></span>' +
+              '<span class="label"><span class="temp-icon nozzle">' + svgNozzle(nt.index + 1) + '</span>Nozzle ' + (nt.index + 1) + ':</span>' +
+              '<span class="temp-values"><span class="val">' + actualStr + '°C</span>' + targetInput(p.id, 'nozzle' + nt.index, targetStr) + '</span>' +
             '</span>';
           }).join('') +
           // Chamber
           '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon">' + svgChamber() + '</span>CHAMBER:</span>' +
+            '<span class="label"><span class="temp-icon chamber">' + svgChamber() + '</span>Chamber:</span>' +
             '<span class="temp-values"><span class="val">' + chamberVal + '°C</span></span>' +
           '</span>' +
         '</div>' +
@@ -1074,7 +1117,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip</button>' +
+          '<button onclick="cmd(\'' + p.id + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
         '</div>' +
       '</div>';
     }
