@@ -48,8 +48,7 @@ go test ./coverprofile=coverage.out
 go tool cover -html=coverage.out
 ```
 
-See [`KANBAN.md`](KANBAN.md) for the current task board,  
-[`PLAN.md`](PLAN.md) for the full architecture plan and testing standards.
+See [`PLAN.md`](PLAN.md) for the full architecture plan and testing standards.
 
 ## License
 
