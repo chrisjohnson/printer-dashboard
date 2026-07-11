@@ -228,8 +228,8 @@ func TestClient_CameraStreams_H2S_ConfigFallback(t *testing.T) {
 	c := New(cfg, nil)
 
 	streams := c.CameraStreams()
-	if len(streams) != 2 {
-		t.Fatalf("CameraStreams() returned %d streams; want 2 (RTSPS x2)", len(streams))
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1 (BirdsEye only — H2S has a single physical camera)", len(streams))
 	}
 
 	// BirdsEye camera (live/1)
@@ -241,14 +241,6 @@ func TestClient_CameraStreams_H2S_ConfigFallback(t *testing.T) {
 	}
 	if streams[0].Type != "internal" {
 		t.Errorf("streams[0].Type = %q; want %q", streams[0].Type, "internal")
-	}
-
-	// Toolhead camera (live/2)
-	if streams[1].URL != "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/2" {
-		t.Errorf("streams[1].URL = %q; want rtsps URL for live/2", streams[1].URL)
-	}
-	if streams[1].Label != "Toolhead Camera" {
-		t.Errorf("streams[1].Label = %q; want %q", streams[1].Label, "Toolhead Camera")
 	}
 }
 
@@ -270,50 +262,16 @@ func TestClient_CameraStreams_H2S_MQTTCamURL(t *testing.T) {
 	c.mu.Unlock()
 
 	streams := c.CameraStreams()
-	if len(streams) != 2 {
-		t.Fatalf("CameraStreams() returned %d streams; want 2 (Camera + derived Toolhead)", len(streams))
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1 (Camera only — H2S has a single physical camera)", len(streams))
 	}
 
-	// First stream is the MQTT URL directly
+	// The stream is the MQTT URL directly
 	if streams[0].URL != "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/1" {
 		t.Errorf("streams[0].URL = %q; want MQTT URL", streams[0].URL)
 	}
 	if streams[0].Label != "Camera" {
 		t.Errorf("streams[0].Label = %q; want %q", streams[0].Label, "Camera")
-	}
-
-	// Second stream is derived from the MQTT URL (live/1 → live/2)
-	expectedToolhead := "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/2"
-	if streams[1].URL != expectedToolhead {
-		t.Errorf("streams[1].URL = %q; want %q", streams[1].URL, expectedToolhead)
-	}
-	if streams[1].Label != "Toolhead Camera" {
-		t.Errorf("streams[1].Label = %q; want %q", streams[1].Label, "Toolhead Camera")
-	}
-}
-
-func TestClient_CameraStreams_H2S_MQTTCamURL_NoLive1(t *testing.T) {
-	// If the MQTT URL doesn't contain /streaming/live/1, we should NOT
-	// derive a second stream even for H2S.
-	cfg := config.PrinterDef{
-		ID:         "h2s-nolive1",
-		Name:       "H2S NoLive1",
-		Type:       "bambu",
-		Serial:     "SERIAL-H2S-3",
-		Model:      "H2S",
-	}
-	c := New(cfg, nil)
-
-	c.mu.Lock()
-	c.camIPCamURL = "rtsps://bblp:x@10.0.0.50:322/something/else"
-	c.mu.Unlock()
-
-	streams := c.CameraStreams()
-	if len(streams) != 1 {
-		t.Fatalf("CameraStreams() returned %d streams; want 1 (no derivation from non-live/1 URL)", len(streams))
-	}
-	if streams[0].URL != "rtsps://bblp:x@10.0.0.50:322/something/else" {
-		t.Errorf("streams[0].URL = %q; want MQTT URL", streams[0].URL)
 	}
 }
 
@@ -384,7 +342,9 @@ func TestClient_CameraStreams_EmptyModel_DefaultsToP1S(t *testing.T) {
 }
 
 func TestClient_CameraStreams_H2DSeries(t *testing.T) {
-	// Verify all H2-series models get multi-camera behavior
+	// Verify all H2-series models get the RTSPS camera stream (a single
+	// physical camera — see CameraStreams for why no second stream is
+	// derived).
 	for _, model := range []string{"H2S", "H2D", "H2C", "H2D PRO", "P2S", "X2D"} {
 		cfg := config.PrinterDef{
 			ID:         "h2-series",
@@ -398,15 +358,12 @@ func TestClient_CameraStreams_H2DSeries(t *testing.T) {
 		c := New(cfg, nil)
 
 		streams := c.CameraStreams()
-		if len(streams) != 2 {
-			t.Errorf("Model %q: CameraStreams() returned %d streams; want 2 (RTSPS x2)", model, len(streams))
+		if len(streams) != 1 {
+			t.Errorf("Model %q: CameraStreams() returned %d streams; want 1 (RTSPS)", model, len(streams))
 			continue
 		}
 		if !strings.Contains(streams[0].URL, "live/1") {
 			t.Errorf("Model %q: streams[0].URL = %q; want live/1", model, streams[0].URL)
-		}
-		if !strings.Contains(streams[1].URL, "live/2") {
-			t.Errorf("Model %q: streams[1].URL = %q; want live/2", model, streams[1].URL)
 		}
 	}
 }
@@ -1438,14 +1395,11 @@ func TestClient_SetModel(t *testing.T) {
 	c2.SetModel("H2S")
 
 	streams := c2.CameraStreams()
-	if len(streams) != 2 {
-		t.Fatalf("After SetModel(H2S): CameraStreams() returned %d streams; want 2 (RTSPS x2)", len(streams))
+	if len(streams) != 1 {
+		t.Fatalf("After SetModel(H2S): CameraStreams() returned %d streams; want 1 (RTSPS)", len(streams))
 	}
 	if !strings.Contains(streams[0].URL, "live/1") {
 		t.Errorf("streams[0].URL = %q; want live/1", streams[0].URL)
-	}
-	if !strings.Contains(streams[1].URL, "live/2") {
-		t.Errorf("streams[1].URL = %q; want live/2", streams[1].URL)
 	}
 }
 

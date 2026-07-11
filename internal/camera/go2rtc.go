@@ -21,6 +21,16 @@ type Go2RTCManager struct {
 	basePort   int
 	mu         sync.Mutex
 	instances  map[string]*go2rtcInstance
+	nextOffset int // monotonic port-allocation counter, incremented under mu
+
+	// rootCtx is the parent context for every spawned subprocess. It must
+	// NOT be a caller's per-HTTP-request context: Start is called from
+	// request handlers (via r.Context()), and a stream is meant to keep
+	// running (shared, cached by streamKey) after that one request ends.
+	// Only rootCtx's cancellation (StopAll/app shutdown) or an explicit
+	// Stop should kill an instance.
+	rootCtx    context.Context
+	rootCancel context.CancelFunc
 }
 
 // go2rtcInstance represents a single running go2rtc subprocess.
@@ -38,9 +48,19 @@ type go2rtcInstance struct {
 type go2rtcConfig struct {
 	Streams map[string]string `yaml:"streams"`
 	API     go2rtcAPIConfig   `yaml:"api"`
+	RTSP    go2rtcRTSPConfig  `yaml:"rtsp"`
 }
 
 type go2rtcAPIConfig struct {
+	Listen string `yaml:"listen"`
+}
+
+// go2rtcRTSPConfig sets a per-instance RTSP listen port. Each go2rtc
+// subprocess must get its own port: go2rtc's "ffmpeg:" pseudo-source (used
+// to transcode H264 to MJPEG) pulls the source stream back from go2rtc's own
+// RTSP listener, so if two instances both default to :8554 the second one's
+// bind fails and its ffmpeg transcode is left with no loopback URL to read.
+type go2rtcRTSPConfig struct {
 	Listen string `yaml:"listen"`
 }
 
@@ -54,10 +74,13 @@ func NewGo2RTCManager(binaryPath string, basePort int) *Go2RTCManager {
 	if basePort <= 0 {
 		basePort = 1984
 	}
+	rootCtx, rootCancel := context.WithCancel(context.Background())
 	return &Go2RTCManager{
 		binaryPath: binaryPath,
 		basePort:   basePort,
 		instances:  make(map[string]*go2rtcInstance),
+		rootCtx:    rootCtx,
+		rootCancel: rootCancel,
 	}
 }
 
@@ -78,18 +101,36 @@ func (m *Go2RTCManager) Start(ctx context.Context, streamKey, rtspsURL string) (
 		return inst.mjpegURL(), nil
 	}
 
-	// Allocate the next available port.
-	port := m.basePort + len(m.instances)
+	// Allocate the next available ports from a monotonic counter (not
+	// len(m.instances)): two concurrent Start calls for different new
+	// stream keys could otherwise both read the same len() before either
+	// is registered and collide on the same ports. rtspPort uses its own
+	// range, well clear of go2rtc's other default ports (8554 RTSP, 8555
+	// WebRTC), so each instance gets its own RTSP listener too.
+	offset := m.nextOffset
+	m.nextOffset++
+	port := m.basePort + offset
+	rtspPort := 18554 + offset
 
 	m.mu.Unlock()
+
+	// go2rtc's MJPEG endpoint requires a JPEG/RAW source; the camera's raw
+	// stream is H264, so declare a second virtual stream that transcodes it
+	// via ffmpeg (go2rtc's built-in "ffmpeg:" pseudo-source, which pulls the
+	// named stream back from go2rtc's own RTSP listener).
+	mjpegKey := streamKey + "_mjpeg"
 
 	// Build the YAML config.
 	cfg := go2rtcConfig{
 		Streams: map[string]string{
 			streamKey: rtspsURL,
+			mjpegKey:  fmt.Sprintf("ffmpeg:%s#video=mjpeg", streamKey),
 		},
 		API: go2rtcAPIConfig{
 			Listen: fmt.Sprintf("127.0.0.1:%d", port),
+		},
+		RTSP: go2rtcRTSPConfig{
+			Listen: fmt.Sprintf("127.0.0.1:%d", rtspPort),
 		},
 	}
 
@@ -111,11 +152,14 @@ func (m *Go2RTCManager) Start(ctx context.Context, streamKey, rtspsURL string) (
 	}
 	tmpFile.Close()
 
-	// Derive a cancellable context for this instance. Cancelling it sends
-	// SIGKILL via exec.CommandContext and releases resources.
-	instanceCtx, cancel := context.WithCancel(ctx)
+	// Derive a cancellable context for this instance from the manager's
+	// long-lived rootCtx (NOT the caller's ctx, which may be a per-HTTP-
+	// request context that gets cancelled as soon as that one request
+	// ends). Cancelling it sends SIGKILL via exec.CommandContext.
+	instanceCtx, cancel := context.WithCancel(m.rootCtx)
 
 	cmd := exec.CommandContext(instanceCtx, m.binaryPath, "-c", configPath)
+	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
@@ -173,7 +217,7 @@ func (m *Go2RTCManager) Start(ctx context.Context, streamKey, rtspsURL string) (
 	return inst.mjpegURL(), nil
 }
 
-// waitForReady polls the go2rtc /api/frames endpoint until it responds with
+// waitForReady polls the go2rtc /api/streams endpoint until it responds with
 // 200 OK, the context is cancelled, or the timeout expires.
 func (m *Go2RTCManager) waitForReady(ctx context.Context, inst *go2rtcInstance, timeout time.Duration) (bool, error) {
 	pollCtx, pollCancel := context.WithTimeout(ctx, timeout)
@@ -183,7 +227,7 @@ func (m *Go2RTCManager) waitForReady(ctx context.Context, inst *go2rtcInstance, 
 		Timeout: 2 * time.Second,
 	}
 
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/frames", inst.localPort)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/streams", inst.localPort)
 
 	for {
 		select {
@@ -282,7 +326,7 @@ func (m *Go2RTCManager) IsRunning(streamKey string) bool {
 }
 
 // Healthy returns true if the go2rtc instance for streamKey responds to a
-// health-check request on its /api/frames endpoint.
+// health-check request on its /api/streams endpoint.
 func (m *Go2RTCManager) Healthy(streamKey string) bool {
 	m.mu.Lock()
 	inst, ok := m.instances[streamKey]
@@ -292,7 +336,7 @@ func (m *Go2RTCManager) Healthy(streamKey string) bool {
 	}
 
 	client := &http.Client{Timeout: 2 * time.Second}
-	url := fmt.Sprintf("http://127.0.0.1:%d/api/frames", inst.localPort)
+	url := fmt.Sprintf("http://127.0.0.1:%d/api/streams", inst.localPort)
 
 	resp, err := client.Get(url)
 	if err != nil {
@@ -311,10 +355,14 @@ func (m *Go2RTCManager) FrameURL(streamKey string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d/api/frame.jpeg?src=%s", inst.localPort, streamKey), true
+	return fmt.Sprintf("http://127.0.0.1:%d/api/frame.jpeg?src=%s", inst.localPort, streamKey+"_mjpeg"), true
 }
 
 // mjpegURL returns the MJPEG stream URL for this go2rtc instance.
+//
+// go2rtc's MJPEG/snapshot endpoints require a JPEG/RAW source, but camera
+// streams (e.g. H2S) are H264, so this targets the "<streamKey>_mjpeg"
+// virtual stream that Start configures to transcode via ffmpeg.
 func (inst *go2rtcInstance) mjpegURL() string {
-	return fmt.Sprintf("http://127.0.0.1:%d/api/stream.mjpeg?src=%s", inst.localPort, inst.streamKey)
+	return fmt.Sprintf("http://127.0.0.1:%d/api/stream.mjpeg?src=%s", inst.localPort, inst.streamKey+"_mjpeg")
 }

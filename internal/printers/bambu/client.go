@@ -96,36 +96,26 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 
 	if c.camIPCamURL != "" {
 		// Use the URL from MQTT report — it already has the right format.
+		// H2S-series printers only expose a single chamber camera; a
+		// second stream was previously guessed at /streaming/live/2, but
+		// that path 404s on real hardware (confirmed against a live H2S),
+		// so it's not offered here.
 		streams = append(streams, printers.CameraStream{
 			URL:   c.camIPCamURL,
 			Type:  "internal",
 			Label: "Camera",
 		})
-		// For H2S-series printers, if the MQTT URL ends with /live/1,
-		// derive the toolhead stream from /live/2.
-		if IsH2S(c.model) && strings.Contains(c.camIPCamURL, "/streaming/live/1") {
-			streams = append(streams, printers.CameraStream{
-				URL:   strings.Replace(c.camIPCamURL, "/streaming/live/1", "/streaming/live/2", 1),
-				Type:  "internal",
-				Label: "Toolhead Camera",
-			})
-		}
 		return streams
 	}
 
 	// Fallback: construct URL from config (host + access code)
 	if c.cfg.Host != "" && c.cfg.AccessCode != "" {
 		if IsH2S(c.model) {
-			// RTSPS streams on port 322 (requires LAN mode enabled on printer).
+			// RTSPS stream on port 322 (requires LAN mode enabled on printer).
 			streams = append(streams, printers.CameraStream{
 				URL:   fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", c.cfg.AccessCode, c.cfg.Host),
 				Type:  "internal",
 				Label: "BirdsEye Camera",
-			})
-			streams = append(streams, printers.CameraStream{
-				URL:   fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/2", c.cfg.AccessCode, c.cfg.Host),
-				Type:  "internal",
-				Label: "Toolhead Camera",
 			})
 		} else {
 			// P1S, A1, X1 series use bambus:// binary TLS protocol on port 6000.

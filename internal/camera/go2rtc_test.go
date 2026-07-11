@@ -88,7 +88,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/frames", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/streams", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]int{"count": 1})
 	})
@@ -206,7 +206,7 @@ func TestGo2RTCStart_FakeBinary(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	wantPrefix := "http://127.0.0.1:9100/api/stream.mjpeg?src=test"
+	wantPrefix := "http://127.0.0.1:9100/api/stream.mjpeg?src=test_mjpeg"
 	if url != wantPrefix {
 		t.Errorf("URL = %q; want %q", url, wantPrefix)
 	}
@@ -223,7 +223,7 @@ func TestGo2RTCStart_FakeBinary(t *testing.T) {
 	if !ok {
 		t.Fatal("FrameURL returned false for running stream")
 	}
-	wantFrameURL := "http://127.0.0.1:9100/api/frame.jpeg?src=test"
+	wantFrameURL := "http://127.0.0.1:9100/api/frame.jpeg?src=test_mjpeg"
 	if frameURL != wantFrameURL {
 		t.Errorf("FrameURL = %q; want %q", frameURL, wantFrameURL)
 	}
@@ -362,7 +362,7 @@ func TestGo2RTCFrameURL(t *testing.T) {
 	if !ok {
 		t.Fatal("FrameURL should return true for existing stream")
 	}
-	want := "http://127.0.0.1:9700/api/frame.jpeg?src=test"
+	want := "http://127.0.0.1:9700/api/frame.jpeg?src=test_mjpeg"
 	if url != want {
 		t.Errorf("FrameURL = %q; want %q", url, want)
 	}

@@ -217,8 +217,8 @@ func TestHandler_RTSPS_WithGo2RTC(t *testing.T) {
 	// Start a mock HTTP server that mimics go2rtc's API.
 	wantBody := "mock-mjpeg-data"
 	mockGo2RTC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// go2rtc's /api/frames endpoint is used for health polling.
-		if strings.Contains(r.URL.Path, "/api/frames") {
+		// go2rtc's /api/streams endpoint is used for health polling.
+		if strings.Contains(r.URL.Path, "/api/streams") {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -239,7 +239,7 @@ func TestHandler_RTSPS_WithGo2RTC(t *testing.T) {
 	// Create a Go2RTCManager and inject a pre-registered instance pointing to
 	// the mock server so that Start() returns early without exec'ing a binary.
 	rtspMgr := NewGo2RTCManager("", 0)
-	streamKey := "192.168.1.100:322"
+	streamKey := "192.168.1.100:322_live"
 	rtspMgr.mu.Lock()
 	rtspMgr.instances[streamKey] = &go2rtcInstance{
 		streamKey: streamKey,
@@ -326,7 +326,7 @@ func TestFrameHandler_UnknownScheme(t *testing.T) {
 func TestFrameHandler_RTSPS_WithGo2RTC(t *testing.T) {
 	// Start a mock HTTP server that mimics go2rtc's frame API.
 	mockGo2RTC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.Path, "/api/frames") {
+		if strings.Contains(r.URL.Path, "/api/streams") {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -347,7 +347,7 @@ func TestFrameHandler_RTSPS_WithGo2RTC(t *testing.T) {
 	mockPort, _ := strconv.Atoi(mockURL.Port())
 
 	rtspMgr := NewGo2RTCManager("", 0)
-	streamKey := "192.168.1.100:322"
+	streamKey := "192.168.1.100:322_live"
 	rtspMgr.mu.Lock()
 	rtspMgr.instances[streamKey] = &go2rtcInstance{
 		streamKey: streamKey,

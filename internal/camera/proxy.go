@@ -17,6 +17,15 @@ import (
 // ConnectTimeout is how long we wait for the upstream camera to accept the connection.
 const ConnectTimeout = 5 * time.Second
 
+// RTSPStreamKey derives a go2rtc instance key from an rtsps:// URL. It must
+// include the path (not just host:port): H2-series printers expose multiple
+// distinct camera feeds (e.g. /streaming/live/1, /streaming/live/2) on the
+// same host:port, so host:port alone would collide and silently serve one
+// camera's stream for both.
+func RTSPStreamKey(u *url.URL) string {
+	return u.Hostname() + ":" + u.Port() + strings.ReplaceAll(u.Path, "/", "_")
+}
+
 // Handler returns an http.HandlerFunc that proxies MJPEG/snapshot camera streams.
 // Expected query parameter: url (the target camera stream URL, must be absolute).
 //
@@ -61,11 +70,10 @@ func Handler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 				})
 				return
 			}
-			// Start go2rtc instance for this RTSPS URL.
-			// Use host:port as the stream key for deduplication.
-			// Use Hostname()+Port() to ensure credentials are never included
-			// (matching the format used by server.go for pre-connect).
-			streamKey := parsedURL.Hostname() + ":" + parsedURL.Port() // e.g., "192.168.1.100:322"
+			// Start go2rtc instance for this RTSPS URL. The stream key
+			// includes the path so distinct camera feeds on the same
+			// host:port (e.g. H2S's /live/1 and /live/2) don't collide.
+			streamKey := RTSPStreamKey(parsedURL)
 			mjpegURL, err := rtspMgr.Start(r.Context(), streamKey, rawURL)
 			if err != nil {
 				writeJSON(w, http.StatusBadGateway, map[string]string{
@@ -309,7 +317,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 				servePlaceholder(w)
 				return
 			}
-			streamKey := parsedURL.Hostname() + ":" + parsedURL.Port()
+			streamKey := RTSPStreamKey(parsedURL)
 			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
 				servePlaceholder(w)
 				return
