@@ -409,31 +409,46 @@ const indexOnboardingTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Printer Dashboard</title>
 <style>
+  :root {
+    --bg-page: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --text-subtle: #8a8a8e;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd6;
+    --border-subtle: #e5e5ea;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-pill: 999px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 24px;
+    background: var(--bg-page); color: var(--text); padding: 24px;
     display: flex; justify-content: center; align-items: center; min-height: 100vh;
   }
   .onboarding {
     text-align: center; max-width: 520px;
   }
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; }
-  p { color: #8a8a8a; margin-bottom: 24px; font-size: 1.125rem; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+  h1 svg { width: 28px; height: 28px; flex-shrink: 0; color: var(--accent); }
+  p { color: var(--text-muted); margin-bottom: 24px; font-size: 1.125rem; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 6px;
+    display: inline-block; padding: 14px 32px; border-radius: var(--radius-control);
     font-size: 1rem; font-weight: 600; cursor: pointer;
     text-decoration: none; border: none;
-    background: #0071e3; color: #fff;
+    background: var(--accent); color: #fff;
   }
-  .btn:hover { background: #0064cc; }
-  .step-list { text-align: left; margin: 24px 0; color: #bbb; font-size: 0.875rem; }
+  .btn:hover { background: var(--accent-hover); }
+  .step-list { text-align: left; margin: 24px 0; color: var(--text-muted); font-size: 0.875rem; }
   .step-list li { margin: 8px 0; }
 </style>
 </head>
 <body>
 <div class="onboarding">
-  <h1>🖨 Printer Dashboard</h1>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8" rx="1"/></svg>Printer Dashboard</h1>
   <p>No printers configured yet. Let's set one up.</p>
   <a href="/onboarding" class="btn">+ Add Your First Printer</a>
 </div>
@@ -451,13 +466,27 @@ const indexDashboardTemplate = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Printer Dashboard</title>
   <style>
+    :root {
+      --bg-page: #f5f5f7;
+      --bg-card: #ffffff;
+      --text: #1d1d1f;
+      --text-muted: #6e6e73;
+      --text-subtle: #8a8a8e;
+      --accent: #3b82f6;
+      --accent-hover: #2f6fd6;
+      --border-subtle: #e5e5ea;
+      --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+      --radius-control: 8px;
+      --radius-card: 12px;
+      --radius-pill: 999px;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #111; color: #eee; padding: 16px;
+      background: var(--bg-page); color: var(--text); padding: 16px;
     }
-    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 16px; color: #fff; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    h1 .count { color: #8a8a8a; font-size: 0.8125rem; font-weight: 500; }
+    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 16px; color: var(--text); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    h1 .count { color: var(--text-subtle); font-size: 0.8125rem; font-weight: 500; }
     .header-actions { margin-left: auto; display: flex; gap: 8px; }
 
     /* Printer grid — mobile first: single column */
@@ -465,7 +494,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     /* Card — compact on mobile, expands on desktop */
     .card {
-      background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 12px;
+      background: var(--bg-card); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-card); padding: 12px;
+      box-shadow: var(--shadow-card);
       display: flex; flex-direction: column; gap: 8px;
     }
     .card-header {
@@ -477,75 +508,80 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    .tag.printing { background: #1f8b4c; color: #fff; }
-    .tag.paused { background: #c8850f; color: #fff; }
-    .tag.idle { background: #4a4a52; color: #d8d8de; }
-    .tag.error { background: #d93838; color: #fff; }
-    .tag.complete { background: #1f6b45; color: #8be3ab; }
-    .tag.unknown { background: #4a4a52; color: #b8b8c0; }
-    .tag.offline { background: #333338; color: #9a9aa2; }
+    .tag.printing { background: #dcfce7; color: #15803d; }
+    .tag.paused { background: #fef3c7; color: #92400e; }
+    .tag.idle { background: #f1f3f5; color: #4b5563; }
+    .tag.error { background: #fee2e2; color: #b91c1c; }
+    .tag.complete { background: #dcfce7; color: #15803d; }
+    .tag.unknown { background: #f1f3f5; color: #4b5563; }
+    .tag.offline { background: #f1f3f5; color: #6b7280; }
 
-    .card-online { font-size: 0.6875rem; color: #555; margin-left: auto; }
-    .card-online.yes { color: #2fa860; }
+    .card-online { font-size: 0.6875rem; color: var(--text-subtle); margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+    .card-online.yes { color: #15803d; }
+    .card-online svg { width: 10px; height: 10px; flex-shrink: 0; }
 
     .error-banner {
-      background: #7f1d1d; color: #fecaca;
-      padding: 8px 12px; border-radius: 8px;
+      background: #fee2e2; color: #b91c1c;
+      padding: 8px 12px; border-radius: var(--radius-control);
       font-size: 0.8125rem; line-height: 1.4;
       word-break: break-word;
     }
 
     /* Progress bar — always visible */
     .progress-section { margin: 4px 0; }
-    .progress-bar { background: #2a2a2a; height: 6px; border-radius: 999px; overflow: hidden; }
-    .progress-bar .fill { background: #2fa860; height: 100%; border-radius: 999px; }
-    .progress-text { font-size: 0.8125rem; color: #aaa; display: flex; justify-content: space-between; margin-top: 4px; }
+    .progress-bar { background: var(--border-subtle); height: 6px; border-radius: var(--radius-pill); overflow: hidden; }
+    .progress-bar .fill { background: var(--accent); height: 100%; border-radius: var(--radius-pill); }
+    .progress-text { font-size: 0.8125rem; color: var(--text-muted); display: flex; justify-content: space-between; margin-top: 4px; }
 
     /* Temperature row — compact on mobile, expanded on desktop */
     .temps {
       display: flex; flex-direction: column; gap: 4px;
-      font-size: 0.75rem; color: #aaa;
+      font-size: 0.75rem; color: var(--text-muted);
       padding: 4px 0;
     }
-    .temps .label { color: #8a8a8a; font-weight: 500; display: flex; align-items: center; gap: 4px; }
-    .temps .val { color: #ddd; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .temps .target { color: #888; }
+    .temps .label { color: var(--text-subtle); font-weight: 500; display: flex; align-items: center; gap: 4px; }
+    .temps .val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .temps .target { color: var(--text-muted); }
     .temp-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 2px 0; }
-    .temp-icon { width: 14px; text-align: center; font-size: 0.6875rem; line-height: 1; }
+    .temp-icon { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; line-height: 1; color: var(--text-muted); }
+    .temp-icon svg { width: 14px; height: 14px; flex-shrink: 0; display: block; }
     .temp-values { display: flex; gap: 8px; }
 
     /* File name — hidden on mobile, shown on desktop (see media query below).
        Always rendered in the markup (with a "—" placeholder when no file is
        printing) so its row height is reserved from first paint; a later WS
        update swapping in a real filename never changes card height. */
-    .filename { display: none; font-size: 0.75rem; color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .filename { display: none; font-size: 0.75rem; color: var(--text-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Controls — always visible but less buttons on mobile */
     .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
     .controls button {
       flex: 1; min-width: 0;
-      background: #2c2c2c; color: #eee; border: 1px solid #444;
-      padding: 6px 10px; border-radius: 6px; cursor: pointer;
+      background: var(--bg-card); color: var(--text); border: 1px solid var(--border-subtle);
+      padding: 6px 10px; border-radius: var(--radius-control); cursor: pointer;
       font-size: 0.75rem; font-weight: 600;
+      display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+      line-height: 1;
     }
-    .controls button:hover:not(:disabled) { background: #383838; border-color: #555; }
-    .controls button:disabled { opacity: 0.35; cursor: not-allowed; }
-    .controls button.danger { border-color: #7a3636; color: #f88; }
-    .controls button.danger:hover:not(:disabled) { background: #4a2424; border-color: #8b3a3a; }
+    .controls button svg { width: 14px; height: 14px; flex-shrink: 0; }
+    .controls button:hover:not(:disabled) { background: #f1f3f5; border-color: #d0d0d6; }
+    .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .controls button.danger { border-color: #f5c2c2; color: #b91c1c; }
+    .controls button.danger:hover:not(:disabled) { background: #fee2e2; border-color: #e9a8a8; }
     /* Hide skip + resume on mobile */
     .btn-skip, .btn-resume { display: none; }
 
     /* Layer info — desktop only (see media query below). Always rendered
        (with a "—" placeholder when no layer data yet) for the same
        reserved-height reason as .filename above. */
-    .layer-info { display: none; font-size: 0.75rem; color: #8a8a8a; }
+    .layer-info { display: none; font-size: 0.75rem; color: var(--text-subtle); }
 
     .add-printer {
       display: inline-block; margin-top: 12px; padding: 8px 16px;
-      background: #0071e3; color: #fff; border-radius: 8px;
+      background: var(--accent); color: #fff; border-radius: var(--radius-control);
       text-decoration: none; font-size: 0.8125rem; font-weight: 600;
     }
-    .add-printer:hover { background: #0064cc; }
+    .add-printer:hover { background: var(--accent-hover); }
 
     /* ─── Desktop (>=768px) ─── */
     @media (min-width: 768px) {
@@ -568,7 +604,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .camera-slot {
       flex: 1; position: relative; min-width: 0; min-height: 300px;
-      background: #0a0a0a; border-radius: 12px; overflow: hidden;
+      background: #0a0a0a; border-radius: var(--radius-card); overflow: hidden;
+      border: 1px solid var(--border-subtle);
       display: flex; flex-direction: column;
       visibility: hidden;
     }
@@ -582,27 +619,30 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .camera-nav {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 4px 8px; background: #1a1a1a; flex-shrink: 0;
+      padding: 4px 8px; background: #f1f3f5; flex-shrink: 0;
     }
     .camera-nav button {
-      background: none; border: 1px solid #444; color: #ccc;
-      border-radius: 6px; cursor: pointer; padding: 1px 10px;
+      background: var(--bg-card); border: 1px solid var(--border-subtle); color: var(--text-muted);
+      border-radius: var(--radius-control); cursor: pointer; padding: 1px 10px;
       font-size: 1rem; line-height: 1.4;
+      display: inline-flex; align-items: center; justify-content: center;
     }
-    .camera-nav button:hover { background: #333; border-color: #555; }
-    .camera-nav .cam-label { font-size: 0.6875rem; color: #8a8a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .camera-nav button svg { width: 16px; height: 16px; flex-shrink: 0; display: block; }
+    .camera-nav button:hover { background: #e9ebee; border-color: #d0d0d6; }
+    .camera-nav .cam-label { font-size: 0.6875rem; color: var(--text-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .camera-placeholder {
       display: flex; align-items: center; justify-content: center;
       width: 100%; min-height: 80px;
-      background: #1a1a1a; border-radius: 12px;
-      color: #666; font-size: 0.75rem; font-style: italic;
+      background: #f1f3f5; border-radius: var(--radius-card);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted); font-size: 0.75rem; font-style: italic;
       padding: 16px;
     }
     .cam-error {
       display: none; align-items: center; justify-content: center;
       width: 100%; aspect-ratio: 3/2;
-      background: #1a1a1a; border-radius: 12px;
-      color: #e05252; font-size: 0.8125rem;
+      background: #f1f3f5; border-radius: var(--radius-card);
+      color: #b91c1c; font-size: 0.8125rem;
     }
     /* ─── Wide desktop (>=1200px) ─── */
     @media (min-width: 1200px) {
@@ -626,7 +666,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       <div class="card-header">
         <h2>&nbsp;</h2>
         <span class="tag unknown">&nbsp;</span>
-        <span class="card-online">&nbsp;</span>
+        <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
       <div class="progress-section">
         <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
@@ -636,23 +676,23 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <div class="camera-slot">
           <div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>
           <div class="camera-nav">
-            <button class="cam-prev" disabled>‹</button>
+            <button class="cam-prev" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
             <span class="cam-label">&nbsp;</span>
-            <button class="cam-next" disabled>›</button>
+            <button class="cam-next" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>
           </div>
         </div>
       </div>
       <div class="temps">
         <span class="temp-row">
-          <span class="label"><span class="temp-icon">🔥</span>BED:</span>
+          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><path d="M8 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M12 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M16 13c-1 1-1 2 0 3s1 2 0 3"/></svg></span>BED:</span>
           <span class="temp-values"><span class="val">--°C</span><span class="target">→--°C</span></span>
         </span>
         <span class="temp-row">
-          <span class="label"><span class="temp-icon">▾</span>NOZ1:</span>
+          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10l-1.5 9H8.5z"/><path d="M10.5 12l1.5 6 1.5-6"/><circle cx="18.5" cy="5.5" r="4.5" fill="var(--bg-card)"/><text x="18.5" y="8" text-anchor="middle" font-size="7" font-weight="700" stroke="none" fill="currentColor" font-family="-apple-system,sans-serif">1</text></svg></span>NOZ1:</span>
           <span class="temp-values"><span class="val">--°C</span><span class="target">→--°C</span></span>
         </span>
         <span class="temp-row">
-          <span class="label"><span class="temp-icon">◻</span>CHAMBER:</span>
+          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16"/></svg></span>CHAMBER:</span>
           <span class="temp-values"><span class="val">--°C</span></span>
         </span>
       </div>
@@ -660,10 +700,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       <div class="layer-info">&nbsp;</div>
       <div class="error-banner" style="display:none;"></div>
       <div class="controls">
-        <button disabled>⏸ Pause</button>
-        <button class="btn-resume" disabled>▶ Resume</button>
-        <button class="danger" disabled>⏹ Cancel</button>
-        <button class="btn-skip" disabled>⏭ Skip</button>
+        <button disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>Pause</button>
+        <button class="btn-resume" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"/></svg>Resume</button>
+        <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
+        <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip</button>
       </div>
     </div>
     {{end}}
@@ -719,8 +759,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // 2. Online indicator
       const onlineEl = card.querySelector('.card-online');
       if (onlineEl) {
-        if (p.online) { onlineEl.className = 'card-online yes'; onlineEl.textContent = '\u25cf'; }
-        else { onlineEl.className = 'card-online'; onlineEl.textContent = '\u25cb Offline'; }
+        if (p.online) { onlineEl.className = 'card-online yes'; onlineEl.innerHTML = svgStatusDot(true); }
+        else { onlineEl.className = 'card-online'; onlineEl.innerHTML = svgStatusDot(false) + 'Offline'; }
       }
 
       // 3. Progress bar fill
@@ -817,7 +857,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           const list = data.printers || [];
           count.textContent = list.length + ' printer' + (list.length !== 1 ? 's' : '');
           if (list.length === 0) {
-            container.innerHTML = '<p style="color:#666;padding:20px;">No printers configured. <a href="/onboarding" style="color:#0071e3;">Add one</a>.</p>';
+            container.innerHTML = '<p style="color:#6e6e73;padding:20px;">No printers configured. <a href="/onboarding" style="color:#3b82f6;">Add one</a>.</p>';
             return;
           }
           // Populate cache with full response
@@ -840,8 +880,64 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
         })
         .catch(() => {
-          document.getElementById('printer-list').innerHTML = '<p style="color:#c0392b;padding:20px;">Error loading printers.</p>';
+          document.getElementById('printer-list').innerHTML = '<p style="color:#b91c1c;padding:20px;">Error loading printers.</p>';
         });
+    }
+
+    // ── Inline SVG icon set (Lucide/Heroicons stroke style) ──
+    // Each returns a fixed viewBox="0 0 24 24" <svg> string that inherits its
+    // color via currentColor and is sized by CSS (.temp-icon svg / button svg).
+    // The skeleton markup (server-rendered first paint) inlines the SAME strings
+    // literally so it matches renderCard byte-for-byte — keep them in sync.
+    const _svgOpen = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+    // Heated bed: a flat platform bar with heat waves rising beneath it.
+    function svgBed() {
+      return _svgOpen +
+        '<line x1="4" y1="9" x2="20" y2="9"/>' +
+        '<path d="M8 13c-1 1-1 2 0 3s1 2 0 3"/>' +
+        '<path d="M12 13c-1 1-1 2 0 3s1 2 0 3"/>' +
+        '<path d="M16 13c-1 1-1 2 0 3s1 2 0 3"/>' +
+        '</svg>';
+    }
+    // Nozzle: a downward-narrowing extruder tip with a numbered badge so
+    // nozzle 1/2/3 are unambiguous even at 14px.
+    function svgNozzle(idx) {
+      return _svgOpen +
+        '<path d="M7 3h10l-1.5 9H8.5z"/>' +
+        '<path d="M10.5 12l1.5 6 1.5-6"/>' +
+        '<circle cx="18.5" cy="5.5" r="4.5" fill="var(--bg-card)"/>' +
+        '<text x="18.5" y="8" text-anchor="middle" font-size="7" font-weight="700" stroke="none" fill="currentColor" font-family="-apple-system,sans-serif">' + idx + '</text>' +
+        '</svg>';
+    }
+    // Chamber: an enclosure/box outline (the print enclosure). Not a heat source.
+    function svgChamber() {
+      return _svgOpen +
+        '<rect x="4" y="6" width="16" height="14" rx="1"/>' +
+        '<path d="M4 10h16"/>' +
+        '</svg>';
+    }
+    function svgPause() {
+      return _svgOpen + '<line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>';
+    }
+    function svgResume() {
+      return _svgOpen + '<path d="M7 5l11 7-11 7z"/></svg>';
+    }
+    function svgCancel() {
+      return _svgOpen + '<rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
+    }
+    function svgSkip() {
+      return _svgOpen + '<path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>';
+    }
+    function svgChevron(dir) {
+      return dir === 'left'
+        ? _svgOpen + '<path d="M15 6l-6 6 6 6"/></svg>'
+        : _svgOpen + '<path d="M9 6l6 6-6 6"/></svg>';
+    }
+    // Online status dot: filled circle when online, hollow ring when offline.
+    function svgStatusDot(online) {
+      return online
+        ? _svgOpen.replace('fill="none"', 'fill="currentColor"') + '<circle cx="12" cy="12" r="6"/></svg>'
+        : _svgOpen + '<circle cx="12" cy="12" r="6"/></svg>';
     }
 
     function renderCard(p) {
@@ -858,7 +954,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
 
       // Online indicator
-      const onlineDot = p.online ? '<span class="card-online yes">●</span>' : '<span class="card-online">○ Offline</span>';
+      const onlineDot = p.online
+        ? '<span class="card-online yes">' + svgStatusDot(true) + '</span>'
+        : '<span class="card-online">' + svgStatusDot(false) + 'Offline</span>';
 
       // File name (desktop only). Always rendered — with a "—" placeholder
       // when no file is printing — so the row's height is reserved from
@@ -937,21 +1035,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
           html += '<div class="camera-nav">';
-          html += '<button class="cam-prev" onclick="cameraFlip(\'' + p.id + '\',-1)">‹</button>';
+          html += '<button class="cam-prev" onclick="cameraFlip(\'' + p.id + '\',-1)">' + svgChevron('left') + '</button>';
           html += '<span class="cam-label">' + label + '</span>';
-          html += '<button class="cam-next" onclick="cameraFlip(\'' + p.id + '\',1)">›</button>';
+          html += '<button class="cam-next" onclick="cameraFlip(\'' + p.id + '\',1)">' + svgChevron('right') + '</button>';
           html += '</div></div>';
           return '<div class="camera-section" id="cam-section-' + p.id + '">' + html + '</div>';
         })() +
         '<div class="temps">' +
         // Bed row
           '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon">🔥</span>BED:</span>' +
+            '<span class="label"><span class="temp-icon">' + svgBed() + '</span>BED:</span>' +
             '<span class="temp-values"><span class="val">' + bed + '°C</span><span class="target">→' + bedT + '°C</span></span>' +
           '</span>' +
         // Primary nozzle (tool0)
           '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon">▾</span>NOZ1:</span>' +
+            '<span class="label"><span class="temp-icon">' + svgNozzle(1) + '</span>NOZ1:</span>' +
             '<span class="temp-values"><span class="val">' + nozzle + '°C</span><span class="target">→' + nozzleT + '°C</span></span>' +
           '</span>' +
         // Extra nozzles (tool1+)
@@ -959,13 +1057,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             const actualStr = nt.actual !== null ? nt.actual.toFixed(1) : '?';
             const targetStr = nt.target !== null ? nt.target.toFixed(1) : '?';
             return '<span class="temp-row">' +
-              '<span class="label"><span class="temp-icon">▾</span>NOZ' + (nt.index + 1) + ':</span>' +
+              '<span class="label"><span class="temp-icon">' + svgNozzle(nt.index + 1) + '</span>NOZ' + (nt.index + 1) + ':</span>' +
               '<span class="temp-values"><span class="val">' + actualStr + '°C</span><span class="target">→' + targetStr + '°C</span></span>' +
             '</span>';
           }).join('') +
           // Chamber
           '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon">◻</span>CHAMBER:</span>' +
+            '<span class="label"><span class="temp-icon">' + svgChamber() + '</span>CHAMBER:</span>' +
             '<span class="temp-values"><span class="val">' + chamberVal + '°C</span></span>' +
           '</span>' +
         '</div>' +
@@ -973,10 +1071,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         layerHtml +
         errorHtml +
         '<div class="controls">' +
-          '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>⏸ Pause</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>▶ Resume</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>⏹ Cancel</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>⏭ Skip</button>' +
+          '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
+          '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
+          '<button onclick="cmd(\'' + p.id + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
+          '<button onclick="cmd(\'' + p.id + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip</button>' +
         '</div>' +
       '</div>';
     }
@@ -1068,33 +1166,48 @@ const onboardingStartTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Add Printer</title>
 <style>
+  :root {
+    --bg-page: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --text-subtle: #8a8a8e;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd6;
+    --border-subtle: #e5e5ea;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-pill: 999px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 24px;
+    background: var(--bg-page); color: var(--text); padding: 40px 24px;
   }
   .container { max-width: 600px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; color: var(--text); }
+  .subtitle { color: var(--text-muted); margin-bottom: 24px; }
   .option {
-    background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card);
     padding: 16px; margin-bottom: 12px; cursor: pointer;
     display: block; text-decoration: none; color: inherit;
+    box-shadow: var(--shadow-card);
   }
-  .option:hover { border-color: #0071e3; }
+  .option:hover { border-color: var(--accent); }
   .option h3 { font-size: 1.125rem; font-weight: 700; margin-bottom: 4px; }
-  .option p { color: #8a8a8a; font-size: 0.875rem; }
+  .option p { color: var(--text-muted); font-size: 0.875rem; }
   .option .tag {
-    display: inline-block; background: #2d7d46; color: #fff;
+    display: inline-block; background: #dcfce7; color: #15803d;
     padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;
     margin-left: 8px; vertical-align: middle;
   }
   .option .tag-coming {
-    display: inline-block; background: #805a0a; color: #fff;
+    display: inline-block; background: #fef3c7; color: #92400e;
     padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;
     margin-left: 8px; vertical-align: middle;
   }
-  .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
+  .back { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; }
   .back:hover { text-decoration: underline; }
 </style>
 </head>
@@ -1136,51 +1249,67 @@ const bambuLoginTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bambu Lab — Sign In</title>
 <style>
+  :root {
+    --bg-page: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --text-subtle: #8a8a8e;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd6;
+    --border-subtle: #e5e5ea;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-pill: 999px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 24px;
+    background: var(--bg-page); color: var(--text); padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 460px; width: 100%; }
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+  h1 svg { width: 26px; height: 26px; flex-shrink: 0; color: var(--accent); }
+  .subtitle { color: var(--text-muted); margin-bottom: 24px; }
   .card {
-    background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card);
     padding: 24px; margin-bottom: 16px;
+    box-shadow: var(--shadow-card);
   }
-  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.875rem; font-weight: 500; }
+  .card label { display: block; margin-bottom: 6px; color: var(--text); font-size: 0.875rem; font-weight: 500; }
   .card input[type="email"],
   .card input[type="password"] {
-    width: 100%; padding: 12px; background: #000; color: #eee;
-    border: 1px solid #333; border-radius: 6px;
+    width: 100%; padding: 12px; background: var(--bg-card); color: var(--text);
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-control);
     font-size: 1rem; margin-bottom: 16px;
   }
-  .card input:focus { outline: none; border-color: #0071e3; }
+  .card input:focus { outline: none; border-color: var(--accent); }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 6px;
+    display: inline-block; padding: 14px 32px; border-radius: var(--radius-control);
     font-size: 1rem; font-weight: 600; cursor: pointer;
     text-decoration: none; border: none;
     width: 100%;
   }
-  .btn-primary { background: #0071e3; color: #fff; }
-  .btn-primary:hover { background: #0064cc; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-  .btn-secondary { background: #333; color: #eee; border: 1px solid #555; }
-  .btn-secondary:hover { background: #444; }
+  .btn-secondary { background: var(--bg-card); color: var(--text); border: 1px solid var(--border-subtle); }
+  .btn-secondary:hover { background: #f1f3f5; }
   .status {
-    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: var(--radius-control); margin-top: 16px;
     font-weight: 500; text-align: center;
   }
-  .status.error { display: block; background: #7f1d1d; color: #fecaca; }
-  .status.info { display: block; background: #1e3a5f; color: #bfdbfe; }
-  .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
+  .status.error { display: block; background: #fee2e2; color: #b91c1c; }
+  .status.info { display: block; background: #dbeafe; color: #1e40af; }
+  .back { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; }
   .back:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>🔑 Sign in to Bambu Lab</h1>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 21 2"/><path d="m17 5 3 3"/><path d="m14 8 3 3"/></svg>Sign in to Bambu Lab</h1>
   <p class="subtitle">Enter your Bambu Lab account credentials. If 2FA is enabled, we'll ask for a verification code next.</p>
 
   <div class="card">
@@ -1246,50 +1375,66 @@ const bambuCodeTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bambu Lab — Verification Code</title>
 <style>
+  :root {
+    --bg-page: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --text-subtle: #8a8a8e;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd6;
+    --border-subtle: #e5e5ea;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-pill: 999px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 24px;
+    background: var(--bg-page); color: var(--text); padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 460px; width: 100%; }
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+  h1 svg { width: 26px; height: 26px; flex-shrink: 0; color: var(--accent); }
+  .subtitle { color: var(--text-muted); margin-bottom: 24px; }
   .card {
-    background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card);
     padding: 24px; margin-bottom: 16px;
+    box-shadow: var(--shadow-card);
   }
-  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.875rem; font-weight: 500; }
+  .card label { display: block; margin-bottom: 6px; color: var(--text); font-size: 0.875rem; font-weight: 500; }
   .card input[type="text"] {
-    width: 100%; padding: 12px; background: #000; color: #eee;
-    border: 1px solid #333; border-radius: 6px;
+    width: 100%; padding: 12px; background: var(--bg-card); color: var(--text);
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-control);
     font-size: 1.5rem; text-align: center; letter-spacing: 8px;
     margin-bottom: 16px; font-family: monospace;
   }
-  .card input:focus { outline: none; border-color: #0071e3; }
+  .card input:focus { outline: none; border-color: var(--accent); }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 6px;
+    display: inline-block; padding: 14px 32px; border-radius: var(--radius-control);
     font-size: 1rem; font-weight: 600; cursor: pointer;
     text-decoration: none; border: none;
     width: 100%;
   }
-  .btn-primary { background: #0071e3; color: #fff; }
-  .btn-primary:hover { background: #0064cc; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .status {
-    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: var(--radius-control); margin-top: 16px;
     font-weight: 500; text-align: center;
   }
-  .status.error { display: block; background: #7f1d1d; color: #fecaca; }
-  .status.info { display: block; background: #1e3a5f; color: #bfdbfe; }
-  .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
+  .status.error { display: block; background: #fee2e2; color: #b91c1c; }
+  .status.info { display: block; background: #dbeafe; color: #1e40af; }
+  .back { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; }
   .back:hover { text-decoration: underline; }
-  .email-info { color: #6ee7b7; font-size: 0.875rem; font-weight: 600; margin-bottom: 16px; text-align: center; }
+  .email-info { color: #15803d; font-size: 0.875rem; font-weight: 600; margin-bottom: 16px; text-align: center; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>📧 Verification Code Sent</h1>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>Verification Code Sent</h1>
   <p class="subtitle">Check your inbox (and spam) for the 6-digit code.</p>
   <div class="email-info">Sent to: <strong>{{.Email}}</strong></div>
 
@@ -1360,58 +1505,74 @@ const onboardingSelectTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Connect Bambu Lab — Select Printers</title>
 <style>
+  :root {
+    --bg-page: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --text-subtle: #8a8a8e;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd6;
+    --border-subtle: #e5e5ea;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-pill: 999px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 24px;
+    background: var(--bg-page); color: var(--text); padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 600px; width: 100%; }
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+  h1 svg { width: 26px; height: 26px; flex-shrink: 0; color: #15803d; }
+  .subtitle { color: var(--text-muted); margin-bottom: 24px; }
   .printer-item {
-    background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card);
     padding: 16px; margin-bottom: 12px;
     display: flex; align-items: center; gap: 12px;
+    box-shadow: var(--shadow-card);
   }
-  .printer-item:hover { border-color: #555; }
+  .printer-item:hover { border-color: #d0d0d6; }
   .printer-item input[type="checkbox"] {
-    width: 20px; height: 20px; accent-color: #0071e3; flex-shrink: 0;
+    width: 20px; height: 20px; accent-color: var(--accent); flex-shrink: 0;
   }
   .printer-info { flex: 1; }
   .printer-info .name { font-weight: 600; font-size: 1rem; }
-  .printer-info .detail { color: #8a8a8a; font-size: 0.8125rem; margin-top: 2px; }
+  .printer-info .detail { color: var(--text-muted); font-size: 0.8125rem; margin-top: 2px; }
   .printer-info .online { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
-  .printer-info .online.yes { background: #2d7d46; color: #fff; }
-  .printer-info .online.no { background: #555; color: #ddd; }
+  .printer-info .online.yes { background: #dcfce7; color: #15803d; }
+  .printer-info .online.no { background: #f1f3f5; color: #6b7280; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 6px;
+    display: inline-block; padding: 14px 32px; border-radius: var(--radius-control);
     font-size: 1rem; font-weight: 600; cursor: pointer;
     text-decoration: none; border: none;
   }
-  .btn-primary { background: #0071e3; color: #fff; width: 100%; }
-  .btn-primary:hover { background: #0064cc; }
+  .btn-primary { background: var(--accent); color: #fff; width: 100%; }
+  .btn-primary:hover { background: var(--accent-hover); }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-  .empty { color: #8a8a8a; text-align: center; padding: 40px; }
-  .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
+  .empty { color: var(--text-muted); text-align: center; padding: 40px; }
+  .back { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; }
   .back:hover { text-decoration: underline; }
   .status {
-    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: var(--radius-control); margin-top: 16px;
     font-weight: 500; text-align: center;
   }
-  .status.saving { display: block; background: #1e3a5f; color: #bfdbfe; }
-  .status.done { display: block; background: #065f46; color: #d1fae5; }
-  .status.error { display: block; background: #7f1d1d; color: #fecaca; }
-  .user-badge { color: #6ee7b7; font-size: 0.8125rem; font-weight: 600; margin-bottom: 16px; }
+  .status.saving { display: block; background: #dbeafe; color: #1e40af; }
+  .status.done { display: block; background: #dcfce7; color: #15803d; }
+  .status.error { display: block; background: #fee2e2; color: #b91c1c; }
+  .user-badge { color: #15803d; font-size: 0.8125rem; font-weight: 600; margin-bottom: 16px; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>✅ Signed In</h1>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>Signed In</h1>
   <p class="subtitle">
     Select the printers to add to your dashboard.
     {{if .HasDevices}}
-      <span style="color:#6ee7b7;font-weight:600;">{{len .Devices}} printer(s) found on your account.</span>
+      <span style="color:#15803d;font-weight:600;">{{len .Devices}} printer(s) found on your account.</span>
     {{end}}
   </p>
   <div class="user-badge">User ID: {{.UserID}}</div>
@@ -1435,7 +1596,7 @@ const onboardingSelectTemplate = `<!DOCTYPE html>
       </div>
       {{end}}
 
-      <div style="margin-top: 8px; color: #8a8a8a; font-size: 0.8125rem;">
+      <div style="margin-top: 8px; color: var(--text-muted); font-size: 0.8125rem;">
         You can add LAN IP and access code later for camera access.
       </div>
 
@@ -1476,7 +1637,7 @@ document.getElementById('selectForm')?.addEventListener('submit', function(e) {
   }).then(r => r.json()).then(d => {
     if (d.success) {
       status.className = 'status done';
-      status.textContent = '✅ ' + d.printers_added + ' printer(s) added! Redirecting...';
+      status.textContent = d.printers_added + ' printer(s) added! Redirecting...';
       setTimeout(() => { window.location.href = d.redirect; }, 1500);
     } else {
       status.className = 'status error';
@@ -1503,50 +1664,66 @@ const snapmakerFormTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Add Snapmaker U1</title>
 <style>
+  :root {
+    --bg-page: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --text-subtle: #8a8a8e;
+    --accent: #3b82f6;
+    --accent-hover: #2f6fd6;
+    --border-subtle: #e5e5ea;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+    --radius-control: 8px;
+    --radius-card: 12px;
+    --radius-pill: 999px;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 24px;
+    background: var(--bg-page); color: var(--text); padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 460px; width: 100%; }
-  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
-  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; color: var(--text); display: inline-flex; align-items: center; gap: 10px; }
+  h1 svg { width: 26px; height: 26px; flex-shrink: 0; color: var(--accent); }
+  .subtitle { color: var(--text-muted); margin-bottom: 24px; }
   .card {
-    background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
+    background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-card);
     padding: 24px; margin-bottom: 16px;
+    box-shadow: var(--shadow-card);
   }
-  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.875rem; font-weight: 500; }
+  .card label { display: block; margin-bottom: 6px; color: var(--text); font-size: 0.875rem; font-weight: 500; }
   .card input[type="text"],
   .card input[type="number"] {
-    width: 100%; padding: 12px; background: #000; color: #eee;
-    border: 1px solid #333; border-radius: 6px;
+    width: 100%; padding: 12px; background: var(--bg-card); color: var(--text);
+    border: 1px solid var(--border-subtle); border-radius: var(--radius-control);
     font-size: 1rem; margin-bottom: 16px;
   }
-  .card input:focus { outline: none; border-color: #0071e3; }
-  .card .hint { color: #8a8a8a; font-size: 0.75rem; margin-top: -12px; margin-bottom: 16px; }
+  .card input:focus { outline: none; border-color: var(--accent); }
+  .card .hint { color: var(--text-muted); font-size: 0.75rem; margin-top: -12px; margin-bottom: 16px; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 6px;
+    display: inline-block; padding: 14px 32px; border-radius: var(--radius-control);
     font-size: 1rem; font-weight: 600; cursor: pointer;
     text-decoration: none; border: none;
     width: 100%;
   }
-  .btn-primary { background: #0071e3; color: #fff; }
-  .btn-primary:hover { background: #0064cc; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-hover); }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .status {
-    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: var(--radius-control); margin-top: 16px;
     font-weight: 500; text-align: center;
   }
-  .status.error { display: block; background: #7f1d1d; color: #fecaca; }
-  .status.info { display: block; background: #1e3a5f; color: #bfdbfe; }
-  .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
+  .status.error { display: block; background: #fee2e2; color: #b91c1c; }
+  .status.info { display: block; background: #dbeafe; color: #1e40af; }
+  .back { display: inline-block; margin-top: 16px; color: var(--accent); text-decoration: none; }
   .back:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>🔧 Add Snapmaker U1</h1>
+  <h1><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>Add Snapmaker U1</h1>
   <p class="subtitle">Enter the network details for your Snapmaker U1 running Paxx firmware.</p>
 
   <div class="card">
@@ -1591,7 +1768,7 @@ document.getElementById('snapmakerForm').addEventListener('submit', async functi
     const d = await res.json();
     if (d.success) {
       status.className = 'status info';
-      status.textContent = '✅ Printer added! Redirecting...';
+      status.textContent = 'Printer added! Redirecting...';
       setTimeout(() => { window.location.href = '/'; }, 1500);
     } else {
       status.className = 'status error';
