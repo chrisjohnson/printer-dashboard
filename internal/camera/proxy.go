@@ -53,21 +53,6 @@ func Handler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			return
 		}
 
-		// tutk:// uses TUTK P2P camera sessions managed by CameraManager.
-		if parsedURL.Scheme == "tutk" {
-			serial := parsedURL.Host
-			if mgr != nil {
-				buffer := mgr.TUTKBuffer(serial)
-				if buffer != nil {
-					serveFromBuffer(w, r, buffer)
-					return
-				}
-			}
-			// No active session — serve placeholder
-			servePlaceholder(w)
-			return
-		}
-
 		// rtsps:// uses go2rtc to convert to HTTP MJPEG, then proxy.
 		if parsedURL.Scheme == "rtsps" {
 			if rtspMgr == nil {
@@ -78,7 +63,9 @@ func Handler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			}
 			// Start go2rtc instance for this RTSPS URL.
 			// Use host:port as the stream key for deduplication.
-			streamKey := parsedURL.Host // e.g., "192.168.1.100:322"
+			// Use Hostname()+Port() to ensure credentials are never included
+			// (matching the format used by server.go for pre-connect).
+			streamKey := parsedURL.Hostname() + ":" + parsedURL.Port() // e.g., "192.168.1.100:322"
 			mjpegURL, err := rtspMgr.Start(r.Context(), streamKey, rawURL)
 			if err != nil {
 				writeJSON(w, http.StatusBadGateway, map[string]string{
@@ -123,7 +110,7 @@ func Handler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 		// Unknown scheme check: reject anything that isn't http or https.
 		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 			writeJSON(w, http.StatusNotImplemented, map[string]string{
-				"error": fmt.Sprintf("unsupported camera URL scheme: %s (supported: http, https, bambus, tutk, rtsps)", parsedURL.Scheme),
+				"error": fmt.Sprintf("unsupported camera URL scheme: %s (supported: http, https, bambus, rtsps)", parsedURL.Scheme),
 			})
 			return
 		}
@@ -317,31 +304,12 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			return
 		}
 
-		if parsedURL.Scheme == "tutk" {
-			serial := parsedURL.Host
-			var frame []byte
-			if mgr != nil {
-				buffer := mgr.TUTKBuffer(serial)
-				if buffer != nil {
-					frame = buffer.Latest()
-				}
-			}
-			if frame == nil {
-				frame = placeholderJPEG
-			}
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Content-Length", strconv.Itoa(len(frame)))
-			w.Write(frame)
-			return
-		}
-
 		if parsedURL.Scheme == "rtsps" {
 			if rtspMgr == nil {
 				servePlaceholder(w)
 				return
 			}
-			streamKey := parsedURL.Host
+			streamKey := parsedURL.Hostname() + ":" + parsedURL.Port()
 			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
 				servePlaceholder(w)
 				return

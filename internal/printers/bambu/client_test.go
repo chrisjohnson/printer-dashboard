@@ -228,8 +228,8 @@ func TestClient_CameraStreams_H2S_ConfigFallback(t *testing.T) {
 	c := New(cfg, nil)
 
 	streams := c.CameraStreams()
-	if len(streams) != 3 {
-		t.Fatalf("CameraStreams() returned %d streams; want 3 (RTSPS x2 + bambus fallback)", len(streams))
+	if len(streams) != 2 {
+		t.Fatalf("CameraStreams() returned %d streams; want 2 (RTSPS x2)", len(streams))
 	}
 
 	// BirdsEye camera (live/1)
@@ -249,15 +249,6 @@ func TestClient_CameraStreams_H2S_ConfigFallback(t *testing.T) {
 	}
 	if streams[1].Label != "Toolhead Camera" {
 		t.Errorf("streams[1].Label = %q; want %q", streams[1].Label, "Toolhead Camera")
-	}
-
-	// Fallback bambus:// camera (port 6000, works without LAN mode)
-	expectedBambus := "bambus://10.0.0.50:6000?token=d5a78d50"
-	if streams[2].URL != expectedBambus {
-		t.Errorf("streams[2].URL = %q; want %q", streams[2].URL, expectedBambus)
-	}
-	if streams[2].Label != "Camera (TCP)" {
-		t.Errorf("streams[2].Label = %q; want %q", streams[2].Label, "Camera (TCP)")
 	}
 }
 
@@ -407,8 +398,8 @@ func TestClient_CameraStreams_H2DSeries(t *testing.T) {
 		c := New(cfg, nil)
 
 		streams := c.CameraStreams()
-		if len(streams) != 3 {
-			t.Errorf("Model %q: CameraStreams() returned %d streams; want 3 (RTSPS x2 + bambus fallback)", model, len(streams))
+		if len(streams) != 2 {
+			t.Errorf("Model %q: CameraStreams() returned %d streams; want 2 (RTSPS x2)", model, len(streams))
 			continue
 		}
 		if !strings.Contains(streams[0].URL, "live/1") {
@@ -416,9 +407,6 @@ func TestClient_CameraStreams_H2DSeries(t *testing.T) {
 		}
 		if !strings.Contains(streams[1].URL, "live/2") {
 			t.Errorf("Model %q: streams[1].URL = %q; want live/2", model, streams[1].URL)
-		}
-		if !strings.Contains(streams[2].URL, "bambus://") {
-			t.Errorf("Model %q: streams[2].URL = %q; want bambus://", model, streams[2].URL)
 		}
 	}
 }
@@ -1450,17 +1438,14 @@ func TestClient_SetModel(t *testing.T) {
 	c2.SetModel("H2S")
 
 	streams := c2.CameraStreams()
-	if len(streams) != 3 {
-		t.Fatalf("After SetModel(H2S): CameraStreams() returned %d streams; want 3 (RTSPS x2 + bambus fallback)", len(streams))
+	if len(streams) != 2 {
+		t.Fatalf("After SetModel(H2S): CameraStreams() returned %d streams; want 2 (RTSPS x2)", len(streams))
 	}
 	if !strings.Contains(streams[0].URL, "live/1") {
 		t.Errorf("streams[0].URL = %q; want live/1", streams[0].URL)
 	}
 	if !strings.Contains(streams[1].URL, "live/2") {
 		t.Errorf("streams[1].URL = %q; want live/2", streams[1].URL)
-	}
-	if !strings.Contains(streams[2].URL, "bambus://") {
-		t.Errorf("streams[2].URL = %q; want bambus://", streams[2].URL)
 	}
 }
 

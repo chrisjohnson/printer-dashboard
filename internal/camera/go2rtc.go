@@ -134,8 +134,8 @@ func (m *Go2RTCManager) Start(ctx context.Context, streamKey, rtspsURL string) (
 		configPath: configPath,
 	}
 
-	// Wait up to 5 seconds for go2rtc's HTTP API to become responsive.
-	ready, err := m.waitForReady(ctx, inst, 5*time.Second)
+	// Wait up to 10 seconds for go2rtc's HTTP API to become responsive.
+	ready, err := m.waitForReady(ctx, inst, 10*time.Second)
 	if err != nil {
 		cmd.Process.Signal(syscall.SIGTERM)
 		time.Sleep(100 * time.Millisecond)
@@ -150,7 +150,7 @@ func (m *Go2RTCManager) Start(ctx context.Context, streamKey, rtspsURL string) (
 		cmd.Process.Kill()
 		cancel()
 		os.Remove(configPath)
-		return "", fmt.Errorf("go2rtc: stream %s did not become ready within 5s", streamKey)
+		return "", fmt.Errorf("go2rtc: stream %s did not become ready within 10s", streamKey)
 	}
 
 	// Store the instance. Double-check in case another goroutine started the

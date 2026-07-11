@@ -24,7 +24,6 @@ type Client struct {
 	mqttClient  mqtt.Client
 	camIPCamURL string
 	model       string // printer model (e.g., "H2S", "P1S", "X1C") from config or cloud API
-	tutkCreds  *TTCodeInfo // TUTK P2P camera credentials, set externally when TTCode is fetched
 
 	// StatusCh is an optional channel that receives the full printer status
 	// after each report parse. If nil, no status updates are emitted.
@@ -56,13 +55,6 @@ func (c *Client) SetModel(model string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.model = model
-}
-
-// SetTTCode stores TUTK credentials for remote P2P camera access.
-func (c *Client) SetTTCode(tt *TTCodeInfo) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.tutkCreds = tt
 }
 
 // ID returns the printer's unique identifier.
@@ -118,14 +110,6 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 				Label: "Toolhead Camera",
 			})
 		}
-		// TUTK P2P camera stream for remote access
-		if c.tutkCreds != nil {
-			streams = append(streams, printers.CameraStream{
-				URL:   fmt.Sprintf("tutk://%s", c.cfg.Serial),
-				Type:  "internal",
-				Label: "Camera (P2P)",
-			})
-		}
 		return streams
 	}
 
@@ -143,13 +127,6 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 				Type:  "internal",
 				Label: "Toolhead Camera",
 			})
-			// Fallback: bambus:// binary TLS protocol on port 6000 works without
-			// LAN mode (only provides a single camera, not toolhead).
-			streams = append(streams, printers.CameraStream{
-				URL:   fmt.Sprintf("bambus://%s:6000?token=%s", c.cfg.Host, c.cfg.AccessCode),
-				Type:  "internal",
-				Label: "Camera (TCP)",
-			})
 		} else {
 			// P1S, A1, X1 series use bambus:// binary TLS protocol on port 6000.
 			streams = append(streams, printers.CameraStream{
@@ -158,24 +135,7 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 				Label: "Camera",
 			})
 		}
-		// TUTK P2P camera stream for remote access
-		if c.tutkCreds != nil {
-			streams = append(streams, printers.CameraStream{
-				URL:   fmt.Sprintf("tutk://%s", c.cfg.Serial),
-				Type:  "internal",
-				Label: "Camera (P2P)",
-			})
-		}
 		return streams
-	}
-
-	// TUTK P2P camera stream for remote access (available when TTCode credentials are set)
-	if c.tutkCreds != nil {
-		streams = append(streams, printers.CameraStream{
-			URL:   fmt.Sprintf("tutk://%s", c.cfg.Serial),
-			Type:  "internal",
-			Label: "Camera (P2P)",
-		})
 	}
 
 	return nil

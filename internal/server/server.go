@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/chrisjohnson/printer-dashboard/internal/camera"
-	"github.com/chrisjohnson/printer-dashboard/internal/camera/tutk"
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers/bambu"
@@ -92,42 +91,9 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 			if _, err := s.rtspMgr.Start(context.Background(), streamKey, rtspsURL); err != nil {
 				log.Printf("camera: failed to pre-connect H2S camera %s via RTSPS: %v", pdef.Name, err)
 			}
-			// Also start bambus:// fallback on port 6000 (works without LAN mode).
-			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
 		} else {
 			// P1S/A1/X1 series: use bambus:// binary protocol on port 6000
 			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
-		}
-	}
-
-	// Pre-connect TUTK P2P sessions for H2S printers (works without LAN mode).
-	// This provides remote camera access via Bambu's TUTK cloud relay.
-	if s.bambuCloud != nil && s.bambuCloud.TokenValid() {
-		for _, pdef := range cfg.Printers {
-			if pdef.Type != "bambu" || !bambu.IsH2S(pdef.Model) || pdef.Serial == "" {
-				continue
-			}
-			ttCode, err := s.bambuCloud.GetTTCode(pdef.Serial)
-			if err != nil {
-				log.Printf("camera: failed to get TTCode for %s: %v", pdef.Name, err)
-				continue
-			}
-			creds := tutk.Credentials{
-				TTCode:  ttCode.TTCode,
-				AuthKey: ttCode.AuthKey,
-				Passwd:  ttCode.Passwd,
-				Region:  ttCode.Region,
-				Serial:  pdef.Serial,
-			}
-			s.cameraMgr.StartTUTK(pdef.Serial, creds)
-			log.Printf("camera: started TUTK P2P session for %s", pdef.Name)
-
-			// Set TTCode on the client so CameraStreams() includes tutk:// URL.
-			s.mu.RLock()
-			if bp, ok := s.printers[pdef.ID].(*bambu.Client); ok {
-				bp.SetTTCode(ttCode)
-			}
-			s.mu.RUnlock()
 		}
 	}
 
