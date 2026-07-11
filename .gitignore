@@ -35,3 +35,6 @@ test-results/
 
 # Playwright MCP
 .playwright-mcp/
+
+# Claude Code orchestrator local state
+.claude/
