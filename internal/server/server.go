@@ -551,7 +551,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // --- Web UI ---
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
 	printerCount := len(s.printers)
+	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
@@ -561,9 +563,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Show the dashboard
+	// Show the dashboard. SkeletonCards lets the template render N
+	// placeholder cards server-side (matching the real printer count) so the
+	// client-side innerHTML swap in loadPrinters() doesn't change page
+	// height/layout once real data arrives.
 	renderTemplate(w, indexDashboardTemplate, map[string]any{
-		"HasPrinters": true,
+		"HasPrinters":   true,
+		"SkeletonCards": make([]struct{}, printerCount),
 	})
 }
 

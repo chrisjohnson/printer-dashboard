@@ -1,5 +1,30 @@
 listen: ":8080"
 auth:
   enabled: false
-printers: []
+bambu_account:
+  email: "test@example.com"
+  password: "test-password"
+  region: "global"
+printers:
+  - id: p1s
+    name: "Bambu P1S"
+    type: bambu
+    serial: "SERIAL000000000001"
+    host: 192.168.1.100
+    access_code: "12345678"
+
+  - id: h2s
+    name: "Bambu H2S"
+    type: bambu
+    model: H2S
+    serial: "SERIAL000000000002"
+    host: 192.168.1.101
+    access_code: "12345678"
+
+  - id: u1
+    name: "Snapmaker U1"
+    type: snapmaker
+    host: 192.168.1.10
+    port: 80
+    access_code: ""
 cameras: []

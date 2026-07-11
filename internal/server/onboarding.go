@@ -412,22 +412,22 @@ const indexOnboardingTemplate = `<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 20px;
+    background: #111; color: #eee; padding: 24px;
     display: flex; justify-content: center; align-items: center; min-height: 100vh;
   }
   .onboarding {
     text-align: center; max-width: 520px;
   }
-  h1 { font-size: 2rem; margin-bottom: 8px; }
-  p { color: #999; margin-bottom: 32px; font-size: 1.05rem; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 8px; }
+  p { color: #8a8a8a; margin-bottom: 24px; font-size: 1.125rem; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 10px;
+    display: inline-block; padding: 14px 32px; border-radius: 6px;
     font-size: 1rem; font-weight: 600; cursor: pointer;
-    text-decoration: none; border: none; transition: background 0.2s;
+    text-decoration: none; border: none;
     background: #0071e3; color: #fff;
   }
   .btn:hover { background: #0064cc; }
-  .step-list { text-align: left; margin: 24px 0; color: #bbb; font-size: 0.9rem; }
+  .step-list { text-align: left; margin: 24px 0; color: #bbb; font-size: 0.875rem; }
   .step-list li { margin: 8px 0; }
 </style>
 </head>
@@ -454,91 +454,96 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #111; color: #eee; padding: 12px;
+      background: #111; color: #eee; padding: 16px;
     }
-    h1 { font-size: 1.3rem; margin-bottom: 12px; color: #fff; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    h1 .count { color: #666; font-size: 0.85rem; font-weight: 400; }
+    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 16px; color: #fff; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    h1 .count { color: #8a8a8a; font-size: 0.8125rem; font-weight: 500; }
     .header-actions { margin-left: auto; display: flex; gap: 8px; }
 
     /* Printer grid — mobile first: single column */
-    .printers { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .printers { display: grid; grid-template-columns: 1fr; gap: 12px; }
 
     /* Card — compact on mobile, expands on desktop */
     .card {
-      background: #1e1e1e; border: 1px solid #333; border-radius: 10px; padding: 12px;
-      display: flex; flex-direction: column; gap: 6px;
+      background: #1e1e1e; border: 1px solid #333; border-radius: 12px; padding: 12px;
+      display: flex; flex-direction: column; gap: 8px;
     }
     .card-header {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
-    .card-header h2 { font-size: 1rem; font-weight: 600; }
+    .card-header h2 { font-size: 1rem; font-weight: 700; letter-spacing: -0.01em; }
     .tag {
-      display: inline-block; padding: 2px 8px; border-radius: 4px;
-      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
-      letter-spacing: 0.03em;
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
-    .tag.printing { background: #2d7d46; color: #fff; }
-    .tag.paused { background: #b8860b; color: #fff; }
-    .tag.idle { background: #555; color: #ddd; }
-    .tag.error { background: #c0392b; color: #fff; }
-    .tag.complete { background: #1a5a3a; color: #90ee90; }
-    .tag.unknown { background: #444; color: #aaa; }
-    .tag.offline { background: #333; color: #666; }
+    .tag.printing { background: #1f8b4c; color: #fff; }
+    .tag.paused { background: #c8850f; color: #fff; }
+    .tag.idle { background: #4a4a52; color: #d8d8de; }
+    .tag.error { background: #d93838; color: #fff; }
+    .tag.complete { background: #1f6b45; color: #8be3ab; }
+    .tag.unknown { background: #4a4a52; color: #b8b8c0; }
+    .tag.offline { background: #333338; color: #9a9aa2; }
 
-    .card-online { font-size: 0.7rem; color: #444; margin-left: auto; }
-    .card-online.yes { color: #2d7d46; }
+    .card-online { font-size: 0.6875rem; color: #555; margin-left: auto; }
+    .card-online.yes { color: #2fa860; }
 
     .error-banner {
       background: #7f1d1d; color: #fecaca;
-      padding: 6px 10px; border-radius: 6px;
-      font-size: 0.8rem; line-height: 1.3;
+      padding: 8px 12px; border-radius: 8px;
+      font-size: 0.8125rem; line-height: 1.4;
       word-break: break-word;
     }
 
     /* Progress bar — always visible */
-    .progress-section { margin: 2px 0; }
-    .progress-bar { background: #2a2a2a; height: 6px; border-radius: 3px; overflow: hidden; }
-    .progress-bar .fill { background: #2d7d46; height: 100%; transition: width 0.5s; }
-    .progress-text { font-size: 0.8rem; color: #aaa; display: flex; justify-content: space-between; }
+    .progress-section { margin: 4px 0; }
+    .progress-bar { background: #2a2a2a; height: 6px; border-radius: 999px; overflow: hidden; }
+    .progress-bar .fill { background: #2fa860; height: 100%; border-radius: 999px; }
+    .progress-text { font-size: 0.8125rem; color: #aaa; display: flex; justify-content: space-between; margin-top: 4px; }
 
     /* Temperature row — compact on mobile, expanded on desktop */
     .temps {
-      display: flex; flex-direction: column; gap: 2px;
-      font-size: 0.78rem; color: #aaa;
+      display: flex; flex-direction: column; gap: 4px;
+      font-size: 0.75rem; color: #aaa;
       padding: 4px 0;
     }
-    .temps .label { color: #666; display: flex; align-items: center; gap: 3px; }
-    .temps .val { color: #ddd; font-variant-numeric: tabular-nums; }
+    .temps .label { color: #8a8a8a; font-weight: 500; display: flex; align-items: center; gap: 4px; }
+    .temps .val { color: #ddd; font-weight: 600; font-variant-numeric: tabular-nums; }
     .temps .target { color: #888; }
-    .temp-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 1px 0; }
-    .temp-icon { width: 14px; text-align: center; font-size: 0.7rem; line-height: 1; }
-    .temp-values { display: flex; gap: 6px; }
+    .temp-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 2px 0; }
+    .temp-icon { width: 14px; text-align: center; font-size: 0.6875rem; line-height: 1; }
+    .temp-values { display: flex; gap: 8px; }
 
-    /* File name — only on desktop */
-    .filename { display: none; font-size: 0.75rem; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* File name — hidden on mobile, shown on desktop (see media query below).
+       Always rendered in the markup (with a "—" placeholder when no file is
+       printing) so its row height is reserved from first paint; a later WS
+       update swapping in a real filename never changes card height. */
+    .filename { display: none; font-size: 0.75rem; color: #8a8a8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Controls — always visible but less buttons on mobile */
-    .controls { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
     .controls button {
       flex: 1; min-width: 0;
-      background: #333; color: #fff; border: 1px solid #555;
-      padding: 4px 10px; border-radius: 5px; cursor: pointer;
-      font-size: 0.75rem; transition: background 0.15s;
+      background: #2c2c2c; color: #eee; border: 1px solid #444;
+      padding: 6px 10px; border-radius: 6px; cursor: pointer;
+      font-size: 0.75rem; font-weight: 600;
     }
-    .controls button:hover { background: #444; }
-    .controls button:disabled { opacity: 0.3; cursor: not-allowed; }
-    .controls button.danger { border-color: #8b3a3a; color: #f88; }
-    .controls button.danger:hover { background: #5a2222; }
+    .controls button:hover:not(:disabled) { background: #383838; border-color: #555; }
+    .controls button:disabled { opacity: 0.35; cursor: not-allowed; }
+    .controls button.danger { border-color: #7a3636; color: #f88; }
+    .controls button.danger:hover:not(:disabled) { background: #4a2424; border-color: #8b3a3a; }
     /* Hide skip + resume on mobile */
     .btn-skip, .btn-resume { display: none; }
 
-    /* Layer info — desktop only */
-    .layer-info { display: none; font-size: 0.75rem; color: #666; }
+    /* Layer info — desktop only (see media query below). Always rendered
+       (with a "—" placeholder when no layer data yet) for the same
+       reserved-height reason as .filename above. */
+    .layer-info { display: none; font-size: 0.75rem; color: #8a8a8a; }
 
     .add-printer {
-      display: inline-block; margin-top: 10px; padding: 8px 16px;
+      display: inline-block; margin-top: 12px; padding: 8px 16px;
       background: #0071e3; color: #fff; border-radius: 8px;
-      text-decoration: none; font-size: 0.85rem; font-weight: 500;
+      text-decoration: none; font-size: 0.8125rem; font-weight: 600;
     }
     .add-printer:hover { background: #0064cc; }
 
@@ -548,8 +553,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       h1 { font-size: 1.5rem; }
       .printers { grid-template-columns: repeat(auto-fill, minmax(500px, 1fr)); gap: 16px; }
       .card { padding: 16px; gap: 8px; }
-      .card-header h2 { font-size: 1.1rem; }
-      .temps { font-size: 0.85rem; gap: 6px 20px; }
+      .card-header h2 { font-size: 1.125rem; }
+      .temps { font-size: 0.8125rem; gap: 8px 20px; }
       .filename { display: block; }
       .layer-info { display: block; }
       .btn-skip, .btn-resume { display: inline-block; }
@@ -558,12 +563,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     /* Camera section */
     .camera-section {
-      display: flex; gap: 8px; margin: 6px 0;
+      display: flex; gap: 8px; margin: 8px 0;
       overflow: hidden; align-items: stretch;
     }
     .camera-slot {
       flex: 1; position: relative; min-width: 0; min-height: 300px;
-      background: #0a0a0a; border-radius: 6px; overflow: hidden;
+      background: #0a0a0a; border-radius: 12px; overflow: hidden;
       display: flex; flex-direction: column;
       visibility: hidden;
     }
@@ -577,33 +582,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .camera-nav {
       display: flex; align-items: center; justify-content: space-between;
-      padding: 4px 6px; background: #1a1a1a; flex-shrink: 0;
+      padding: 4px 8px; background: #1a1a1a; flex-shrink: 0;
     }
     .camera-nav button {
       background: none; border: 1px solid #444; color: #ccc;
-      border-radius: 4px; cursor: pointer; padding: 1px 10px;
-      font-size: 1rem; line-height: 1.4; transition: background 0.15s;
+      border-radius: 6px; cursor: pointer; padding: 1px 10px;
+      font-size: 1rem; line-height: 1.4;
     }
-    .camera-nav button:hover { background: #333; }
-    .camera-nav .cam-label { font-size: 0.7rem; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .camera-nav button:hover { background: #333; border-color: #555; }
+    .camera-nav .cam-label { font-size: 0.6875rem; color: #8a8a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .camera-placeholder {
       display: flex; align-items: center; justify-content: center;
       width: 100%; min-height: 80px;
-      background: #1a1a1a; border-radius: 6px;
-      color: #555; font-size: 0.75rem; font-style: italic;
+      background: #1a1a1a; border-radius: 12px;
+      color: #666; font-size: 0.75rem; font-style: italic;
       padding: 16px;
     }
     .cam-error {
       display: none; align-items: center; justify-content: center;
       width: 100%; aspect-ratio: 3/2;
-      background: #1a1a1a; border-radius: 6px;
-      color: #c0392b; font-size: 0.8rem;
+      background: #1a1a1a; border-radius: 12px;
+      color: #e05252; font-size: 0.8125rem;
     }
     /* ─── Wide desktop (>=1200px) ─── */
     @media (min-width: 1200px) {
       .printers { grid-template-columns: repeat(auto-fill, minmax(600px, 1fr)); }
       .card { padding: 20px; }
-      .temps { font-size: 0.9rem; gap: 8px 28px; }
+      .temps { font-size: 0.875rem; gap: 8px 28px; }
     }
   </style>
 </head>
@@ -616,7 +621,52 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     </span>
   </h1>
   <div class="printers" id="printer-list">
-    <p style="color:#666;padding:20px;">Loading printers...</p>
+    {{range .SkeletonCards}}
+    <div class="card">
+      <div class="card-header">
+        <h2>&nbsp;</h2>
+        <span class="tag unknown">&nbsp;</span>
+        <span class="card-online">&nbsp;</span>
+      </div>
+      <div class="progress-section">
+        <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
+        <div class="progress-text"><span>&nbsp;</span><span>&nbsp;</span></div>
+      </div>
+      <div class="camera-section">
+        <div class="camera-slot">
+          <div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>
+          <div class="camera-nav">
+            <button class="cam-prev" disabled>‹</button>
+            <span class="cam-label">&nbsp;</span>
+            <button class="cam-next" disabled>›</button>
+          </div>
+        </div>
+      </div>
+      <div class="temps">
+        <span class="temp-row">
+          <span class="label"><span class="temp-icon">🔥</span>BED:</span>
+          <span class="temp-values"><span class="val">--°C</span><span class="target">→--°C</span></span>
+        </span>
+        <span class="temp-row">
+          <span class="label"><span class="temp-icon">▾</span>NOZ1:</span>
+          <span class="temp-values"><span class="val">--°C</span><span class="target">→--°C</span></span>
+        </span>
+        <span class="temp-row">
+          <span class="label"><span class="temp-icon">◻</span>CHAMBER:</span>
+          <span class="temp-values"><span class="val">--°C</span></span>
+        </span>
+      </div>
+      <div class="filename">&nbsp;</div>
+      <div class="layer-info">&nbsp;</div>
+      <div class="error-banner" style="display:none;"></div>
+      <div class="controls">
+        <button disabled>⏸ Pause</button>
+        <button class="btn-resume" disabled>▶ Resume</button>
+        <button class="danger" disabled>⏹ Cancel</button>
+        <button class="btn-skip" disabled>⏭ Skip</button>
+      </div>
+    </div>
+    {{end}}
   </div>
   <script>
     window._printerCache = {};
@@ -724,21 +774,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         }
       }
 
-      // 6. File name
+      // 6. File name — row is always present (see renderCard); only swap the
+      // text so a job starting/finishing never changes the card's height.
       const fileEl = card.querySelector('.filename');
-      if (fileEl) {
-        if (p.current_file) { fileEl.textContent = escapeHtml(p.current_file); fileEl.style.display = ''; }
-        else fileEl.style.display = 'none';
-      }
+      if (fileEl) fileEl.textContent = p.current_file ? escapeHtml(p.current_file) : '—';
 
-      // 7. Layer info
+      // 7. Layer info — same always-present pattern as file name.
       const layerEl = card.querySelector('.layer-info');
-      if (layerEl) {
-        if (p.total_layers > 0) { layerEl.textContent = 'Layer ' + p.current_layer + ' / ' + p.total_layers; layerEl.style.display = ''; }
-        else layerEl.style.display = 'none';
-      }
+      if (layerEl) layerEl.textContent = (p.total_layers > 0) ? ('Layer ' + p.current_layer + ' / ' + p.total_layers) : '—';
 
-      // 8. Error banner
+      // 8. Error banner — always present in the DOM (see renderCard); entering
+      // or leaving error state is real new information, so unlike filename/
+      // layer-info it's allowed to change card height here.
       const errorEl = card.querySelector('.error-banner');
       if (errorEl && st === 'error' && p.error_msg) {
         errorEl.textContent = escapeHtml(p.error_msg);
@@ -760,7 +807,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     function loadPrinters() {
       fetch('/api/printers')
-        .then(r => r.json())
+        .then(r => {
+          if (!r.ok) throw new Error('Failed to load printers');
+          return r.json();
+        })
         .then(data => {
           const container = document.getElementById('printer-list');
           const count = document.getElementById('printer-count');
@@ -810,14 +860,23 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // Online indicator
       const onlineDot = p.online ? '<span class="card-online yes">●</span>' : '<span class="card-online">○ Offline</span>';
 
-      // File name (desktop only)
-      const fileHtml = p.current_file ? '<div class="filename">' + escapeHtml(p.current_file) + '</div>' : '';
+      // File name (desktop only). Always rendered — with a "—" placeholder
+      // when no file is printing — so the row's height is reserved from
+      // first paint and a later WS update can't shift the card's height.
+      const fileHtml = '<div class="filename">' + (p.current_file ? escapeHtml(p.current_file) : '—') + '</div>';
 
-      // Layer info (desktop only)
-      const layerHtml = (p.total_layers > 0) ? '<div class="layer-info">Layer ' + p.current_layer + ' / ' + p.total_layers + '</div>' : '';
+      // Layer info (desktop only). Same always-rendered/placeholder pattern.
+      const layerHtml = '<div class="layer-info">' + (p.total_layers > 0 ? ('Layer ' + p.current_layer + ' / ' + p.total_layers) : '—') + '</div>';
 
-      // Error banner — shown when state is "error" and error_msg is non-empty
-      const errorHtml = (st === 'error' && p.error_msg) ? '<div class="error-banner">' + escapeHtml(p.error_msg) + '</div>' : '';
+      // Error banner — shown when state is "error" and error_msg is non-empty.
+      // Unlike .filename/.layer-info, this reflects genuinely new information
+      // (an actual error), so it's fine for it to change card height when it
+      // appears/disappears — that's a real state transition, not a loading
+      // artifact. The element is still always present in the DOM (hidden via
+      // display:none rather than omitted) so renderCard() and updateCard()
+      // agree on shape, and a later WS error update can find and show it
+      // without a full card rebuild.
+      const errorHtml = '<div class="error-banner"' + ((st === 'error' && p.error_msg) ? '' : ' style="display:none;"') + '>' + escapeHtml(p.error_msg || '') + '</div>';
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1012,28 +1071,27 @@ const onboardingStartTemplate = `<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 20px;
+    background: #111; color: #eee; padding: 40px 24px;
   }
   .container { max-width: 600px; margin: 0 auto; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  .subtitle { color: #999; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
   .option {
     background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
-    padding: 20px; margin-bottom: 12px; cursor: pointer;
-    transition: border-color 0.2s;
+    padding: 16px; margin-bottom: 12px; cursor: pointer;
     display: block; text-decoration: none; color: inherit;
   }
   .option:hover { border-color: #0071e3; }
-  .option h3 { font-size: 1.1rem; margin-bottom: 4px; }
-  .option p { color: #999; font-size: 0.9rem; }
+  .option h3 { font-size: 1.125rem; font-weight: 700; margin-bottom: 4px; }
+  .option p { color: #8a8a8a; font-size: 0.875rem; }
   .option .tag {
     display: inline-block; background: #2d7d46; color: #fff;
-    padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;
+    padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;
     margin-left: 8px; vertical-align: middle;
   }
   .option .tag-coming {
-    display: inline-block; background: #b8860b; color: #fff;
-    padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;
+    display: inline-block; background: #805a0a; color: #fff;
+    padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;
     margin-left: 8px; vertical-align: middle;
   }
   .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
@@ -1081,28 +1139,28 @@ const bambuLoginTemplate = `<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 20px;
+    background: #111; color: #eee; padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 460px; width: 100%; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  .subtitle { color: #999; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
   .card {
     background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
     padding: 24px; margin-bottom: 16px;
   }
-  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.9rem; font-weight: 500; }
+  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.875rem; font-weight: 500; }
   .card input[type="email"],
   .card input[type="password"] {
     width: 100%; padding: 12px; background: #000; color: #eee;
-    border: 1px solid #333; border-radius: 8px;
+    border: 1px solid #333; border-radius: 6px;
     font-size: 1rem; margin-bottom: 16px;
   }
   .card input:focus { outline: none; border-color: #0071e3; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 10px;
+    display: inline-block; padding: 14px 32px; border-radius: 6px;
     font-size: 1rem; font-weight: 600; cursor: pointer;
-    text-decoration: none; border: none; transition: background 0.2s;
+    text-decoration: none; border: none;
     width: 100%;
   }
   .btn-primary { background: #0071e3; color: #fff; }
@@ -1111,7 +1169,7 @@ const bambuLoginTemplate = `<!DOCTYPE html>
   .btn-secondary { background: #333; color: #eee; border: 1px solid #555; }
   .btn-secondary:hover { background: #444; }
   .status {
-    display: none; padding: 16px; border-radius: 8px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
     font-weight: 500; text-align: center;
   }
   .status.error { display: block; background: #7f1d1d; color: #fecaca; }
@@ -1191,42 +1249,42 @@ const bambuCodeTemplate = `<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 20px;
+    background: #111; color: #eee; padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 460px; width: 100%; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  .subtitle { color: #999; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
   .card {
     background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
     padding: 24px; margin-bottom: 16px;
   }
-  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.9rem; font-weight: 500; }
+  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.875rem; font-weight: 500; }
   .card input[type="text"] {
     width: 100%; padding: 12px; background: #000; color: #eee;
-    border: 1px solid #333; border-radius: 8px;
+    border: 1px solid #333; border-radius: 6px;
     font-size: 1.5rem; text-align: center; letter-spacing: 8px;
     margin-bottom: 16px; font-family: monospace;
   }
   .card input:focus { outline: none; border-color: #0071e3; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 10px;
+    display: inline-block; padding: 14px 32px; border-radius: 6px;
     font-size: 1rem; font-weight: 600; cursor: pointer;
-    text-decoration: none; border: none; transition: background 0.2s;
+    text-decoration: none; border: none;
     width: 100%;
   }
   .btn-primary { background: #0071e3; color: #fff; }
   .btn-primary:hover { background: #0064cc; }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .status {
-    display: none; padding: 16px; border-radius: 8px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
     font-weight: 500; text-align: center;
   }
   .status.error { display: block; background: #7f1d1d; color: #fecaca; }
   .status.info { display: block; background: #1e3a5f; color: #bfdbfe; }
   .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
   .back:hover { text-decoration: underline; }
-  .email-info { color: #6ee7b7; font-size: 0.9rem; margin-bottom: 16px; text-align: center; }
+  .email-info { color: #6ee7b7; font-size: 0.875rem; font-weight: 600; margin-bottom: 16px; text-align: center; }
 </style>
 </head>
 <body>
@@ -1305,17 +1363,16 @@ const onboardingSelectTemplate = `<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 20px;
+    background: #111; color: #eee; padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 600px; width: 100%; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  .subtitle { color: #999; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
   .printer-item {
     background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
     padding: 16px; margin-bottom: 12px;
     display: flex; align-items: center; gap: 12px;
-    transition: border-color 0.2s;
   }
   .printer-item:hover { border-color: #555; }
   .printer-item input[type="checkbox"] {
@@ -1323,29 +1380,29 @@ const onboardingSelectTemplate = `<!DOCTYPE html>
   }
   .printer-info { flex: 1; }
   .printer-info .name { font-weight: 600; font-size: 1rem; }
-  .printer-info .detail { color: #999; font-size: 0.85rem; margin-top: 2px; }
-  .printer-info .online { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 0.75rem; }
+  .printer-info .detail { color: #8a8a8a; font-size: 0.8125rem; margin-top: 2px; }
+  .printer-info .online { display: inline-block; padding: 1px 6px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; }
   .printer-info .online.yes { background: #2d7d46; color: #fff; }
   .printer-info .online.no { background: #555; color: #ddd; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 10px;
+    display: inline-block; padding: 14px 32px; border-radius: 6px;
     font-size: 1rem; font-weight: 600; cursor: pointer;
-    text-decoration: none; border: none; transition: background 0.2s;
+    text-decoration: none; border: none;
   }
   .btn-primary { background: #0071e3; color: #fff; width: 100%; }
   .btn-primary:hover { background: #0064cc; }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-  .empty { color: #999; text-align: center; padding: 40px; }
+  .empty { color: #8a8a8a; text-align: center; padding: 40px; }
   .back { display: inline-block; margin-top: 16px; color: #0071e3; text-decoration: none; }
   .back:hover { text-decoration: underline; }
   .status {
-    display: none; padding: 16px; border-radius: 8px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
     font-weight: 500; text-align: center;
   }
   .status.saving { display: block; background: #1e3a5f; color: #bfdbfe; }
   .status.done { display: block; background: #065f46; color: #d1fae5; }
   .status.error { display: block; background: #7f1d1d; color: #fecaca; }
-  .user-badge { color: #6ee7b7; font-size: 0.85rem; margin-bottom: 16px; }
+  .user-badge { color: #6ee7b7; font-size: 0.8125rem; font-weight: 600; margin-bottom: 16px; }
 </style>
 </head>
 <body>
@@ -1354,7 +1411,7 @@ const onboardingSelectTemplate = `<!DOCTYPE html>
   <p class="subtitle">
     Select the printers to add to your dashboard.
     {{if .HasDevices}}
-      <span style="color:#6ee7b7;">{{len .Devices}} printer(s) found on your account.</span>
+      <span style="color:#6ee7b7;font-weight:600;">{{len .Devices}} printer(s) found on your account.</span>
     {{end}}
   </p>
   <div class="user-badge">User ID: {{.UserID}}</div>
@@ -1378,17 +1435,17 @@ const onboardingSelectTemplate = `<!DOCTYPE html>
       </div>
       {{end}}
 
-      <div style="margin-top: 8px; color: #666; font-size: 0.85rem;">
+      <div style="margin-top: 8px; color: #8a8a8a; font-size: 0.8125rem;">
         You can add LAN IP and access code later for camera access.
       </div>
 
-      <button type="submit" class="btn btn-primary" style="margin-top: 20px;">
+      <button type="submit" class="btn btn-primary" style="margin-top: 24px;">
         + Add Selected Printers
       </button>
     {{else}}
       <div class="empty">
         <p>No printers are bound to this Bambu account.</p>
-        <p style="margin-top: 8px; font-size: 0.9rem;">
+        <p style="margin-top: 8px; font-size: 0.875rem;">
           Make sure you've added printers to your account in Bambu Handy or Bambu Studio.
         </p>
         <p style="margin-top: 16px;">
@@ -1449,36 +1506,36 @@ const snapmakerFormTemplate = `<!DOCTYPE html>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #111; color: #eee; padding: 40px 20px;
+    background: #111; color: #eee; padding: 40px 24px;
     display: flex; justify-content: center;
   }
   .container { max-width: 460px; width: 100%; }
-  h1 { font-size: 1.5rem; margin-bottom: 4px; }
-  .subtitle { color: #999; margin-bottom: 24px; }
+  h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #8a8a8a; margin-bottom: 24px; }
   .card {
     background: #1e1e1e; border: 1px solid #333; border-radius: 12px;
     padding: 24px; margin-bottom: 16px;
   }
-  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.9rem; font-weight: 500; }
+  .card label { display: block; margin-bottom: 6px; color: #ccc; font-size: 0.875rem; font-weight: 500; }
   .card input[type="text"],
   .card input[type="number"] {
     width: 100%; padding: 12px; background: #000; color: #eee;
-    border: 1px solid #333; border-radius: 8px;
+    border: 1px solid #333; border-radius: 6px;
     font-size: 1rem; margin-bottom: 16px;
   }
   .card input:focus { outline: none; border-color: #0071e3; }
-  .card .hint { color: #666; font-size: 0.8rem; margin-top: -12px; margin-bottom: 16px; }
+  .card .hint { color: #8a8a8a; font-size: 0.75rem; margin-top: -12px; margin-bottom: 16px; }
   .btn {
-    display: inline-block; padding: 14px 32px; border-radius: 10px;
+    display: inline-block; padding: 14px 32px; border-radius: 6px;
     font-size: 1rem; font-weight: 600; cursor: pointer;
-    text-decoration: none; border: none; transition: background 0.2s;
+    text-decoration: none; border: none;
     width: 100%;
   }
   .btn-primary { background: #0071e3; color: #fff; }
   .btn-primary:hover { background: #0064cc; }
   .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
   .status {
-    display: none; padding: 16px; border-radius: 8px; margin-top: 16px;
+    display: none; padding: 16px; border-radius: 6px; margin-top: 16px;
     font-weight: 500; text-align: center;
   }
   .status.error { display: block; background: #7f1d1d; color: #fecaca; }
