@@ -1,1 +1,1 @@
-../agents/.claude/worktrees/tingly-marinating-feather/AGENTS.md
+../agents/AGENTS.md
