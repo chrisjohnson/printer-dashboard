@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chrisjohnson/printer-dashboard/internal/camera"
+	"github.com/chrisjohnson/printer-dashboard/internal/camera/tutk"
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers/bambu"
@@ -34,6 +35,7 @@ type Server struct {
 	configPath string                   // path to config.yaml for saving
 	printersCtx context.CancelFunc      // cancel for printer connection goroutines
 	cameraMgr  *camera.CameraManager    // persistent Bambu camera connections
+	rtspMgr    *camera.Go2RTCManager    // go2rtc subprocess manager for RTSPS cameras
 
 	// Onboarding provisional state (single-user, set during wizard)
 	onboardingMu        sync.Mutex
@@ -65,19 +67,67 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	// Initialize persistent camera connection manager.
 	s.cameraMgr = camera.NewCameraManager(context.Background())
 
+	// Initialize go2rtc manager for RTSPS camera streams (H2S, etc.)
+	s.rtspMgr = camera.NewGo2RTCManager("", 0)
+
 	// Initialize WebSocket hub for real-time status updates
 	s.wsHub = ws.NewHub()
 	go s.wsHub.Run()
 
 	s.initBambuCloud()
 	s.initPrinters()
+	s.migratePrinterModels() // backfill model for printers added before model field existed
 
-	// Pre-connect Bambu cameras eagerly on startup so frames are already
+	// Pre-connect camera streams eagerly on startup so frames are already
 	// buffered before the first browser page load. This eliminates the
 	// broken-image flash when the dashboard initially renders.
 	for _, pdef := range cfg.Printers {
-		if pdef.Type == "bambu" && pdef.Host != "" && pdef.AccessCode != "" {
+		if pdef.Type != "bambu" || pdef.Host == "" || pdef.AccessCode == "" {
+			continue
+		}
+		if bambu.IsH2S(pdef.Model) {
+			// H2-series: try RTSPS streams (port 322, requires LAN mode).
+			streamKey := pdef.Host + ":322"
+			rtspsURL := fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", pdef.AccessCode, pdef.Host)
+			if _, err := s.rtspMgr.Start(context.Background(), streamKey, rtspsURL); err != nil {
+				log.Printf("camera: failed to pre-connect H2S camera %s via RTSPS: %v", pdef.Name, err)
+			}
+			// Also start bambus:// fallback on port 6000 (works without LAN mode).
 			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
+		} else {
+			// P1S/A1/X1 series: use bambus:// binary protocol on port 6000
+			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
+		}
+	}
+
+	// Pre-connect TUTK P2P sessions for H2S printers (works without LAN mode).
+	// This provides remote camera access via Bambu's TUTK cloud relay.
+	if s.bambuCloud != nil && s.bambuCloud.TokenValid() {
+		for _, pdef := range cfg.Printers {
+			if pdef.Type != "bambu" || !bambu.IsH2S(pdef.Model) || pdef.Serial == "" {
+				continue
+			}
+			ttCode, err := s.bambuCloud.GetTTCode(pdef.Serial)
+			if err != nil {
+				log.Printf("camera: failed to get TTCode for %s: %v", pdef.Name, err)
+				continue
+			}
+			creds := tutk.Credentials{
+				TTCode:  ttCode.TTCode,
+				AuthKey: ttCode.AuthKey,
+				Passwd:  ttCode.Passwd,
+				Region:  ttCode.Region,
+				Serial:  pdef.Serial,
+			}
+			s.cameraMgr.StartTUTK(pdef.Serial, creds)
+			log.Printf("camera: started TUTK P2P session for %s", pdef.Name)
+
+			// Set TTCode on the client so CameraStreams() includes tutk:// URL.
+			s.mu.RLock()
+			if bp, ok := s.printers[pdef.ID].(*bambu.Client); ok {
+				bp.SetTTCode(ttCode)
+			}
+			s.mu.RUnlock()
 		}
 	}
 
@@ -175,6 +225,9 @@ func (s *Server) initPrinters() {
 				continue
 			}
 			bp := bambu.New(pdef, s.bambuCloud)
+			if pdef.Model != "" {
+				bp.SetModel(pdef.Model)
+			}
 			if s.wsHub != nil {
 				// Set up a buffered channel for real-time status updates.
 				// The broadcast goroutine is started in connectAllPrinters
@@ -197,6 +250,43 @@ func (s *Server) initPrinters() {
 		}
 		s.printers[pdef.ID] = p
 		log.Printf("Registered printer: %s (%s)", pdef.Name, pdef.Type)
+	}
+}
+
+// migratePrinterModels backfills the Model field for printers that were added
+// to config.yaml before the model field existed (e.g., via older onboarding code).
+// It queries the Bambu cloud API and persists any discovered models.
+func (s *Server) migratePrinterModels() {
+	if s.bambuCloud == nil {
+		return
+	}
+	devices, err := s.bambuCloud.GetDevices()
+	if err != nil {
+		log.Printf("migrate models: could not fetch device list: %v", err)
+		return
+	}
+	modelBySerial := make(map[string]string, len(devices))
+	for _, d := range devices {
+		modelBySerial[d.DevID] = d.DevModelName
+	}
+
+	changed := false
+	for i, p := range s.cfg.Printers {
+		if p.Type != "bambu" || p.Model != "" {
+			continue
+		}
+		if model, ok := modelBySerial[p.Serial]; ok && model != "" {
+			s.cfg.Printers[i].Model = model
+			changed = true
+			log.Printf("migrate models: set model %q for printer %q (%s)", model, p.Name, p.Serial)
+		}
+	}
+	if changed {
+		if err := s.cfg.Save(); err != nil {
+			log.Printf("migrate models: failed to save config: %v", err)
+		} else {
+			log.Printf("migrate models: config saved with backfilled model fields")
+		}
 	}
 }
 
@@ -226,6 +316,10 @@ func (s *Server) Start(ctx context.Context) error {
 		err := s.http.Shutdown(shutdownCtx)
 		if s.cameraMgr != nil {
 			s.cameraMgr.Stop()
+		}
+		if s.rtspMgr != nil {
+			s.rtspMgr.StopAll()
+			log.Println("Stopped all go2rtc instances")
 		}
 		return err
 	case err := <-errCh:
@@ -353,8 +447,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/skip", s.handleSkipObject)
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
-	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr))
-	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandler(s.cameraMgr))
+	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr, s.rtspMgr))
+	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandler(s.cameraMgr, s.rtspMgr))
 }
 
 // renderTemplate is a helper that executes a Go template and writes to the response.

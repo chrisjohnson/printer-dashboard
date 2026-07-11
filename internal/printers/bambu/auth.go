@@ -62,6 +62,26 @@ type preferenceResponse struct {
 	UserID json.Number `json:"uid"`
 }
 
+// ttCodeResponse is the response from the TTCode API endpoint.
+// Returns TUTK P2P camera credentials for remote camera access.
+type ttCodeResponse struct {
+	Message     string  `json:"message"`
+	Code        *string `json:"code"`
+	Error       *string `json:"error"`
+	TTCode      string  `json:"ttcode"`
+	AuthKey     string  `json:"authkey"`
+	Passwd      string  `json:"passwd"`
+	Region      string  `json:"region"`
+	Type        string  `json:"type"`
+	Streams     *string `json:"streams"`
+	Peers       *string `json:"peers"`
+	StreamKey   string  `json:"stream_key"`
+	StreamSalt  string  `json:"stream_salt"`
+	ChannelName string  `json:"channel_name"`
+	AppID       string  `json:"app_id"`
+	RTM         *string `json:"rtm"`
+}
+
 // --- JWT token payload (for reading expiry) ---
 
 type jwtPayload struct {
@@ -584,6 +604,37 @@ func (c *BambuCloudClient) GetDevices() ([]DeviceInfo, error) {
 	return devices, nil
 }
 
+// GetTTCode retrieves TUTK P2P camera credentials for a specific device.
+// These credentials can be used for remote camera access via the TUTK P2P protocol.
+// The devID is the printer's serial number (dev_id).
+func (c *BambuCloudClient) GetTTCode(devID string) (*TTCodeInfo, error) {
+	body := map[string]string{"dev_id": devID}
+	data, err := c.doAuthJSON("POST", "/v1/iot-service/api/user/ttcode", body)
+	if err != nil {
+		return nil, fmt.Errorf("get ttcode: %w", err)
+	}
+
+	var resp ttCodeResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("parsing ttcode response: %w", err)
+	}
+
+	if resp.Message != "success" {
+		errMsg := resp.Message
+		if resp.Error != nil && *resp.Error != "" {
+			errMsg = *resp.Error
+		}
+		return nil, fmt.Errorf("ttcode API error: %s", errMsg)
+	}
+
+	return &TTCodeInfo{
+		TTCode:  resp.TTCode,
+		AuthKey: resp.AuthKey,
+		Passwd:  resp.Passwd,
+		Region:  resp.Region,
+	}, nil
+}
+
 // DeviceInfo holds information about a Bambu printer from the cloud API.
 type DeviceInfo struct {
 	DevID          string `json:"dev_id"`
@@ -593,6 +644,15 @@ type DeviceInfo struct {
 	DevModelName   string `json:"dev_model_name"`
 	DevProductName string `json:"dev_product_name"`
 	DevAccessCode  string `json:"dev_access_code"`
+}
+
+// TTCodeInfo holds TUTK P2P camera credentials from the Bambu Cloud API.
+// These are used for remote camera access via the TUTK (ThroughTek) P2P protocol.
+type TTCodeInfo struct {
+	TTCode  string // TUTK P2P UID for camera connection
+	AuthKey string // Authentication key for TUTK protocol
+	Passwd  string // Camera access password (6-character hex)
+	Region  string // Server region (us or cn)
 }
 
 // getUserID fetches the user's numeric ID from the preference endpoint.

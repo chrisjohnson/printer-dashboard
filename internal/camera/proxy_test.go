@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHandler(t *testing.T) {
@@ -40,7 +42,7 @@ func TestHandler(t *testing.T) {
 	}
 
 	t.Run("errors", func(t *testing.T) {
-		handler := Handler(nil)
+		handler := Handler(nil, nil)
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?"+tt.query, nil)
@@ -72,7 +74,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("unreachable upstream", func(t *testing.T) {
 		// Port 1 is almost certainly not listening, so the dial will fail.
-		handler := Handler(nil)
+		handler := Handler(nil, nil)
 		req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?url=http://127.0.0.1:1/nonexistent", nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, req)
@@ -105,7 +107,7 @@ func TestHandler(t *testing.T) {
 		}))
 		defer upstream.Close()
 
-		handler := Handler(nil)
+		handler := Handler(nil, nil)
 		proxyURL := "/api/camera/proxy?url=" + url.QueryEscape(upstream.URL)
 		req := httptest.NewRequest(http.MethodGet, proxyURL, nil)
 		w := httptest.NewRecorder()
@@ -138,7 +140,7 @@ func TestHandler(t *testing.T) {
 		}))
 		defer upstream.Close()
 
-		handler := Handler(nil)
+		handler := Handler(nil, nil)
 		proxyURL := "/api/camera/proxy?url=" + url.QueryEscape(upstream.URL)
 		req := httptest.NewRequest(http.MethodGet, proxyURL, nil)
 		w := httptest.NewRecorder()
@@ -159,4 +161,252 @@ func TestHandler(t *testing.T) {
 			t.Errorf("body = %q; want %q", strings.TrimSpace(string(gotBody)), "not found")
 		}
 	})
+}
+
+func TestHandler_RTSPS_NoGo2RTC(t *testing.T) {
+	handler := Handler(nil, nil) // rtspMgr is nil
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?url="+url.QueryEscape("rtsps://192.168.1.100:322/live"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d; want 501", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q; want application/json", ct)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding JSON body: %v", err)
+	}
+	if !strings.Contains(body["error"], "go2rtc") {
+		t.Errorf(`body["error"] = %q; want message mentioning go2rtc`, body["error"])
+	}
+}
+
+func TestHandler_UnknownScheme(t *testing.T) {
+	handler := Handler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?url="+url.QueryEscape("unknown://some.host/stream"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d; want 501", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q; want application/json", ct)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decoding JSON body: %v", err)
+	}
+	if !strings.Contains(body["error"], "unknown") {
+		t.Errorf(`body["error"] = %q; want message mentioning unknown scheme`, body["error"])
+	}
+}
+
+func TestHandler_RTSPS_WithGo2RTC(t *testing.T) {
+	// Start a mock HTTP server that mimics go2rtc's API.
+	wantBody := "mock-mjpeg-data"
+	mockGo2RTC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// go2rtc's /api/frames endpoint is used for health polling.
+		if strings.Contains(r.URL.Path, "/api/frames") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		// go2rtc's /api/stream.mjpeg endpoint serves the MJPEG stream.
+		if strings.Contains(r.URL.Path, "/api/stream.mjpeg") {
+			w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+			w.WriteHeader(http.StatusOK)
+			io.WriteString(w, wantBody)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mockGo2RTC.Close()
+
+	mockURL, _ := url.Parse(mockGo2RTC.URL)
+	mockPort, _ := strconv.Atoi(mockURL.Port())
+
+	// Create a Go2RTCManager and inject a pre-registered instance pointing to
+	// the mock server so that Start() returns early without exec'ing a binary.
+	rtspMgr := NewGo2RTCManager("", 0)
+	streamKey := "192.168.1.100:322"
+	rtspMgr.mu.Lock()
+	rtspMgr.instances[streamKey] = &go2rtcInstance{
+		streamKey: streamKey,
+		rtspsURL:  "rtsps://192.168.1.100:322/live",
+		localPort: mockPort,
+		startedAt: time.Now(),
+	}
+	rtspMgr.mu.Unlock()
+
+	handler := Handler(nil, rtspMgr)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/proxy?url="+url.QueryEscape("rtsps://192.168.1.100:322/live"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200", resp.StatusCode)
+	}
+
+	gotBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	if string(gotBody) != wantBody {
+		t.Errorf("body = %q; want %q", string(gotBody), wantBody)
+	}
+}
+
+func TestFrameHandler_RTSPS_NoGo2RTC(t *testing.T) {
+	handler := FrameHandler(nil, nil) // rtspMgr is nil
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape("rtsps://192.168.1.100:322/live"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	// Without a Go2RTCManager, FrameHandler should serve the placeholder JPEG.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200 (placeholder)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q; want image/jpeg", ct)
+	}
+
+	// Should be the placeholder JPEG.
+	gotBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	if len(gotBody) != len(placeholderJPEG) {
+		t.Errorf("body length = %d; want %d (placeholder JPEG)", len(gotBody), len(placeholderJPEG))
+	}
+}
+
+func TestFrameHandler_UnknownScheme(t *testing.T) {
+	handler := FrameHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape("unknown://some.host/stream"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	// Unknown schemes should also serve a placeholder.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200 (placeholder)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q; want image/jpeg", ct)
+	}
+
+	gotBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	if len(gotBody) != len(placeholderJPEG) {
+		t.Errorf("body length = %d; want %d (placeholder JPEG)", len(gotBody), len(placeholderJPEG))
+	}
+}
+
+func TestFrameHandler_RTSPS_WithGo2RTC(t *testing.T) {
+	// Start a mock HTTP server that mimics go2rtc's frame API.
+	mockGo2RTC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/frames") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/frame.jpeg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.WriteHeader(http.StatusOK)
+			// Return a minimal valid JPEG (SOI + EOI markers) that is longer
+			// than the placeholder so we can distinguish them.
+			jpeg := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9}
+			w.Write(jpeg)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mockGo2RTC.Close()
+
+	mockURL, _ := url.Parse(mockGo2RTC.URL)
+	mockPort, _ := strconv.Atoi(mockURL.Port())
+
+	rtspMgr := NewGo2RTCManager("", 0)
+	streamKey := "192.168.1.100:322"
+	rtspMgr.mu.Lock()
+	rtspMgr.instances[streamKey] = &go2rtcInstance{
+		streamKey: streamKey,
+		rtspsURL:  "rtsps://192.168.1.100:322/live",
+		localPort: mockPort,
+		startedAt: time.Now(),
+	}
+	rtspMgr.mu.Unlock()
+
+	handler := FrameHandler(nil, rtspMgr)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape("rtsps://192.168.1.100:322/live"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q; want image/jpeg", ct)
+	}
+
+	gotBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	// Verify we got the frame from the mock, not the placeholder.
+	if string(gotBody) == string(placeholderJPEG) {
+		t.Errorf("body is placeholder JPEG; expected frame from mock go2rtc")
+	}
+	// Verify it's a JPEG (starts with FF D8).
+	if len(gotBody) < 2 || gotBody[0] != 0xff || gotBody[1] != 0xd8 {
+		t.Errorf("body does not start with JPEG SOI marker; got %x", gotBody[:2])
+	}
+
+	// Clean up: stop the go2rtc instance (it doesn't have a real cmd, so
+	// just delete it from the map).
+	rtspMgr.mu.Lock()
+	delete(rtspMgr.instances, streamKey)
+	rtspMgr.mu.Unlock()
+}
+
+func TestFrameHandler_Bambus_WithMgr(t *testing.T) {
+	// Basic test to verify FrameHandler still works with bambus scheme.
+	handler := FrameHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape("bambus://192.168.1.100:6000/?token=test123"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	// Without a CameraManager, bambus should return the placeholder.
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200 (placeholder)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q; want image/jpeg", ct)
+	}
 }

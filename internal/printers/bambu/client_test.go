@@ -3,6 +3,7 @@ package bambu
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,6 +208,244 @@ func TestClient_CameraStreams_NoAccessCode(t *testing.T) {
 	streams := c.CameraStreams()
 	if len(streams) != 0 {
 		t.Errorf("CameraStreams() returned %d streams; want 0", len(streams))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CameraStreams — H2S multi-camera tests
+// ---------------------------------------------------------------------------
+
+func TestClient_CameraStreams_H2S_ConfigFallback(t *testing.T) {
+	cfg := config.PrinterDef{
+		ID:         "h2s-config",
+		Name:       "H2S Config",
+		Type:       "bambu",
+		Serial:     "SERIAL-H2S-1",
+		Host:       "10.0.0.50",
+		AccessCode: "d5a78d50",
+		Model:      "H2S",
+	}
+	c := New(cfg, nil)
+
+	streams := c.CameraStreams()
+	if len(streams) != 3 {
+		t.Fatalf("CameraStreams() returned %d streams; want 3 (RTSPS x2 + bambus fallback)", len(streams))
+	}
+
+	// BirdsEye camera (live/1)
+	if streams[0].URL != "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/1" {
+		t.Errorf("streams[0].URL = %q; want rtsps URL for live/1", streams[0].URL)
+	}
+	if streams[0].Label != "BirdsEye Camera" {
+		t.Errorf("streams[0].Label = %q; want %q", streams[0].Label, "BirdsEye Camera")
+	}
+	if streams[0].Type != "internal" {
+		t.Errorf("streams[0].Type = %q; want %q", streams[0].Type, "internal")
+	}
+
+	// Toolhead camera (live/2)
+	if streams[1].URL != "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/2" {
+		t.Errorf("streams[1].URL = %q; want rtsps URL for live/2", streams[1].URL)
+	}
+	if streams[1].Label != "Toolhead Camera" {
+		t.Errorf("streams[1].Label = %q; want %q", streams[1].Label, "Toolhead Camera")
+	}
+
+	// Fallback bambus:// camera (port 6000, works without LAN mode)
+	expectedBambus := "bambus://10.0.0.50:6000?token=d5a78d50"
+	if streams[2].URL != expectedBambus {
+		t.Errorf("streams[2].URL = %q; want %q", streams[2].URL, expectedBambus)
+	}
+	if streams[2].Label != "Camera (TCP)" {
+		t.Errorf("streams[2].Label = %q; want %q", streams[2].Label, "Camera (TCP)")
+	}
+}
+
+func TestClient_CameraStreams_H2S_MQTTCamURL(t *testing.T) {
+	cfg := config.PrinterDef{
+		ID:         "h2s-mqtt",
+		Name:       "H2S MQTT",
+		Type:       "bambu",
+		Serial:     "SERIAL-H2S-2",
+		Host:       "10.0.0.50",
+		AccessCode: "d5a78d50",
+		Model:      "H2S",
+	}
+	c := New(cfg, nil)
+
+	// Simulate MQTT reporting ipcam_url ending with /streaming/live/1
+	c.mu.Lock()
+	c.camIPCamURL = "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/1"
+	c.mu.Unlock()
+
+	streams := c.CameraStreams()
+	if len(streams) != 2 {
+		t.Fatalf("CameraStreams() returned %d streams; want 2 (Camera + derived Toolhead)", len(streams))
+	}
+
+	// First stream is the MQTT URL directly
+	if streams[0].URL != "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/1" {
+		t.Errorf("streams[0].URL = %q; want MQTT URL", streams[0].URL)
+	}
+	if streams[0].Label != "Camera" {
+		t.Errorf("streams[0].Label = %q; want %q", streams[0].Label, "Camera")
+	}
+
+	// Second stream is derived from the MQTT URL (live/1 → live/2)
+	expectedToolhead := "rtsps://bblp:d5a78d50@10.0.0.50:322/streaming/live/2"
+	if streams[1].URL != expectedToolhead {
+		t.Errorf("streams[1].URL = %q; want %q", streams[1].URL, expectedToolhead)
+	}
+	if streams[1].Label != "Toolhead Camera" {
+		t.Errorf("streams[1].Label = %q; want %q", streams[1].Label, "Toolhead Camera")
+	}
+}
+
+func TestClient_CameraStreams_H2S_MQTTCamURL_NoLive1(t *testing.T) {
+	// If the MQTT URL doesn't contain /streaming/live/1, we should NOT
+	// derive a second stream even for H2S.
+	cfg := config.PrinterDef{
+		ID:         "h2s-nolive1",
+		Name:       "H2S NoLive1",
+		Type:       "bambu",
+		Serial:     "SERIAL-H2S-3",
+		Model:      "H2S",
+	}
+	c := New(cfg, nil)
+
+	c.mu.Lock()
+	c.camIPCamURL = "rtsps://bblp:x@10.0.0.50:322/something/else"
+	c.mu.Unlock()
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1 (no derivation from non-live/1 URL)", len(streams))
+	}
+	if streams[0].URL != "rtsps://bblp:x@10.0.0.50:322/something/else" {
+		t.Errorf("streams[0].URL = %q; want MQTT URL", streams[0].URL)
+	}
+}
+
+func TestClient_CameraStreams_P1S_SingleCamera(t *testing.T) {
+	cfg := config.PrinterDef{
+		ID:         "p1s-config",
+		Name:       "P1S",
+		Type:       "bambu",
+		Serial:     "SERIAL-P1S-1",
+		Host:       "10.0.0.10",
+		AccessCode: "abcdef",
+		Model:      "P1S",
+	}
+	c := New(cfg, nil)
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
+	}
+	if streams[0].URL != "bambus://10.0.0.10:6000?token=abcdef" {
+		t.Errorf("streams[0].URL = %q; want bambus:// URL", streams[0].URL)
+	}
+	if streams[0].Label != "Camera" {
+		t.Errorf("streams[0].Label = %q; want %q", streams[0].Label, "Camera")
+	}
+}
+
+func TestClient_CameraStreams_UnknownModel_DefaultsToP1S(t *testing.T) {
+	cfg := config.PrinterDef{
+		ID:         "unknown-model",
+		Name:       "Unknown Model",
+		Type:       "bambu",
+		Serial:     "SERIAL-UNK-1",
+		Host:       "10.0.0.20",
+		AccessCode: "111111",
+		Model:      "SomeUnknownPrinter",
+	}
+	c := New(cfg, nil)
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1 (default to P1S behavior)", len(streams))
+	}
+	if streams[0].URL != "bambus://10.0.0.20:6000?token=111111" {
+		t.Errorf("streams[0].URL = %q; want bambus:// URL (P1S default)", streams[0].URL)
+	}
+}
+
+func TestClient_CameraStreams_EmptyModel_DefaultsToP1S(t *testing.T) {
+	// No model set — should default to P1S single-camera behavior
+	cfg := config.PrinterDef{
+		ID:         "no-model",
+		Name:       "No Model",
+		Type:       "bambu",
+		Serial:     "SERIAL-NM-1",
+		Host:       "10.0.0.30",
+		AccessCode: "222222",
+	}
+	c := New(cfg, nil)
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
+	}
+	if streams[0].URL != "bambus://10.0.0.30:6000?token=222222" {
+		t.Errorf("streams[0].URL = %q; want bambus:// URL", streams[0].URL)
+	}
+}
+
+func TestClient_CameraStreams_H2DSeries(t *testing.T) {
+	// Verify all H2-series models get multi-camera behavior
+	for _, model := range []string{"H2S", "H2D", "H2C", "H2D PRO", "P2S", "X2D"} {
+		cfg := config.PrinterDef{
+			ID:         "h2-series",
+			Name:       model + " Test",
+			Type:       "bambu",
+			Serial:     "SERIAL-H2-1",
+			Host:       "10.0.0.99",
+			AccessCode: "testac",
+			Model:      model,
+		}
+		c := New(cfg, nil)
+
+		streams := c.CameraStreams()
+		if len(streams) != 3 {
+			t.Errorf("Model %q: CameraStreams() returned %d streams; want 3 (RTSPS x2 + bambus fallback)", model, len(streams))
+			continue
+		}
+		if !strings.Contains(streams[0].URL, "live/1") {
+			t.Errorf("Model %q: streams[0].URL = %q; want live/1", model, streams[0].URL)
+		}
+		if !strings.Contains(streams[1].URL, "live/2") {
+			t.Errorf("Model %q: streams[1].URL = %q; want live/2", model, streams[1].URL)
+		}
+		if !strings.Contains(streams[2].URL, "bambus://") {
+			t.Errorf("Model %q: streams[2].URL = %q; want bambus://", model, streams[2].URL)
+		}
+	}
+}
+
+func TestClient_CameraStreams_IPCamURLTakesPriority_OverConfig(t *testing.T) {
+	// Even with config fallback available, MQTT ipcam_url should win.
+	cfg := config.PrinterDef{
+		ID:         "pref-test",
+		Name:       "Pref Test",
+		Type:       "bambu",
+		Serial:     "SERIAL-PREF-1",
+		Host:       "10.0.0.1",
+		AccessCode: "1234",
+		Model:      "P1S",
+	}
+	c := New(cfg, nil)
+
+	c.mu.Lock()
+	c.camIPCamURL = "rtsp://mqtt-priority/stream"
+	c.mu.Unlock()
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
+	}
+	if streams[0].URL != "rtsp://mqtt-priority/stream" {
+		t.Errorf("streams[0].URL = %q; want MQTT ipcam_url", streams[0].URL)
 	}
 }
 
@@ -1173,5 +1412,107 @@ func TestClient_Name(t *testing.T) {
 	c := newTestPrinterClient(nil)
 	if name := c.Name(); name != "Test Printer" {
 		t.Errorf("Name() = %q; want %q", name, "Test Printer")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SetModel tests
+// ---------------------------------------------------------------------------
+
+func TestClient_SetModel(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Initially model is empty (testPrinterClientConfig has no Model)
+	c.mu.RLock()
+	if c.model != "" {
+		t.Errorf("initial model = %q; want empty", c.model)
+	}
+	c.mu.RUnlock()
+
+	c.SetModel("H2S")
+
+	c.mu.RLock()
+	if c.model != "H2S" {
+		t.Errorf("after SetModel: model = %q; want %q", c.model, "H2S")
+	}
+	c.mu.RUnlock()
+
+	// Verify the model affects CameraStreams behavior
+	cfg := config.PrinterDef{
+		ID:         "setmodel-cam",
+		Name:       "SetModel Cam",
+		Type:       "bambu",
+		Serial:     "SERIAL-SM-1",
+		Host:       "10.0.0.5",
+		AccessCode: "pass123",
+	}
+	c2 := New(cfg, nil)
+	c2.SetModel("H2S")
+
+	streams := c2.CameraStreams()
+	if len(streams) != 3 {
+		t.Fatalf("After SetModel(H2S): CameraStreams() returned %d streams; want 3 (RTSPS x2 + bambus fallback)", len(streams))
+	}
+	if !strings.Contains(streams[0].URL, "live/1") {
+		t.Errorf("streams[0].URL = %q; want live/1", streams[0].URL)
+	}
+	if !strings.Contains(streams[1].URL, "live/2") {
+		t.Errorf("streams[1].URL = %q; want live/2", streams[1].URL)
+	}
+	if !strings.Contains(streams[2].URL, "bambus://") {
+		t.Errorf("streams[2].URL = %q; want bambus://", streams[2].URL)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// isH2S tests
+// ---------------------------------------------------------------------------
+
+func TestIsH2S(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"H2S", true},
+		{"h2s", true},
+		{"H2D", true},
+		{"H2C", true},
+		{"H2D PRO", true},
+		{"P2S", true},
+		{"X2D", true},
+		{"O1S", true},   // Bambu Cloud API internal code for H2S
+		{"P1S", false},
+		{"A1", false},
+		{"X1C", false},
+		{"X1E", false},
+		{"", false},
+		{"SomeUnknown", false},
+		{"h2d pro", true}, // case-insensitive
+	}
+
+	for _, tt := range tests {
+		got := IsH2S(tt.model)
+		if got != tt.want {
+			t.Errorf("IsH2S(%q) = %v; want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestNew_PrepopulatesModelFromConfig(t *testing.T) {
+	cfg := config.PrinterDef{
+		ID:     "model-pop",
+		Name:   "Model Pop",
+		Type:   "bambu",
+		Serial: "SERIAL-MP-1",
+		Model:  "H2S",
+	}
+	c := New(cfg, nil)
+
+	c.mu.RLock()
+	got := c.model
+	c.mu.RUnlock()
+
+	if got != "H2S" {
+		t.Errorf("New() model = %q; want %q (should pre-populate from config)", got, "H2S")
 	}
 }

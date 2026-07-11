@@ -242,6 +242,7 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 			Name:   dev.Name,
 			Type:   "bambu",
 			Serial: dev.DevID,
+			Model:  dev.DevModelName, // persist model (e.g. "H2S", "P1S") for camera routing
 			// Host and AccessCode are optional — user can add later for camera
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,8 @@ type Client struct {
 	status      printers.PrinterStatus
 	mqttClient  mqtt.Client
 	camIPCamURL string
+	model       string // printer model (e.g., "H2S", "P1S", "X1C") from config or cloud API
+	tutkCreds  *TTCodeInfo // TUTK P2P camera credentials, set externally when TTCode is fetched
 
 	// StatusCh is an optional channel that receives the full printer status
 	// after each report parse. If nil, no status updates are emitted.
@@ -43,7 +46,23 @@ func New(cfg config.PrinterDef, cloud *BambuCloudClient) *Client {
 		cfg:    cfg,
 		cloud:  cloud,
 		status: status,
+		model:  cfg.Model, // pre-populate from config if available
 	}
+}
+
+// SetModel sets the printer model name (e.g., "H2S", "P1S", "X1C").
+// This is used for camera URL format detection when ipcam_url is not available.
+func (c *Client) SetModel(model string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.model = model
+}
+
+// SetTTCode stores TUTK credentials for remote P2P camera access.
+func (c *Client) SetTTCode(tt *TTCodeInfo) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tutkCreds = tt
 }
 
 // ID returns the printer's unique identifier.
@@ -81,19 +100,85 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	var internalURL string
+	var streams []printers.CameraStream
+
 	if c.camIPCamURL != "" {
-		internalURL = c.camIPCamURL
-	} else if c.cfg.Host != "" && c.cfg.AccessCode != "" {
-		internalURL = fmt.Sprintf("bambus://%s:6000?token=%s", c.cfg.Host, c.cfg.AccessCode)
+		// Use the URL from MQTT report — it already has the right format.
+		streams = append(streams, printers.CameraStream{
+			URL:   c.camIPCamURL,
+			Type:  "internal",
+			Label: "Camera",
+		})
+		// For H2S-series printers, if the MQTT URL ends with /live/1,
+		// derive the toolhead stream from /live/2.
+		if IsH2S(c.model) && strings.Contains(c.camIPCamURL, "/streaming/live/1") {
+			streams = append(streams, printers.CameraStream{
+				URL:   strings.Replace(c.camIPCamURL, "/streaming/live/1", "/streaming/live/2", 1),
+				Type:  "internal",
+				Label: "Toolhead Camera",
+			})
+		}
+		// TUTK P2P camera stream for remote access
+		if c.tutkCreds != nil {
+			streams = append(streams, printers.CameraStream{
+				URL:   fmt.Sprintf("tutk://%s", c.cfg.Serial),
+				Type:  "internal",
+				Label: "Camera (P2P)",
+			})
+		}
+		return streams
 	}
 
-	if internalURL == "" {
-		return nil
+	// Fallback: construct URL from config (host + access code)
+	if c.cfg.Host != "" && c.cfg.AccessCode != "" {
+		if IsH2S(c.model) {
+			// RTSPS streams on port 322 (requires LAN mode enabled on printer).
+			streams = append(streams, printers.CameraStream{
+				URL:   fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", c.cfg.AccessCode, c.cfg.Host),
+				Type:  "internal",
+				Label: "BirdsEye Camera",
+			})
+			streams = append(streams, printers.CameraStream{
+				URL:   fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/2", c.cfg.AccessCode, c.cfg.Host),
+				Type:  "internal",
+				Label: "Toolhead Camera",
+			})
+			// Fallback: bambus:// binary TLS protocol on port 6000 works without
+			// LAN mode (only provides a single camera, not toolhead).
+			streams = append(streams, printers.CameraStream{
+				URL:   fmt.Sprintf("bambus://%s:6000?token=%s", c.cfg.Host, c.cfg.AccessCode),
+				Type:  "internal",
+				Label: "Camera (TCP)",
+			})
+		} else {
+			// P1S, A1, X1 series use bambus:// binary TLS protocol on port 6000.
+			streams = append(streams, printers.CameraStream{
+				URL:   fmt.Sprintf("bambus://%s:6000?token=%s", c.cfg.Host, c.cfg.AccessCode),
+				Type:  "internal",
+				Label: "Camera",
+			})
+		}
+		// TUTK P2P camera stream for remote access
+		if c.tutkCreds != nil {
+			streams = append(streams, printers.CameraStream{
+				URL:   fmt.Sprintf("tutk://%s", c.cfg.Serial),
+				Type:  "internal",
+				Label: "Camera (P2P)",
+			})
+		}
+		return streams
 	}
-	return []printers.CameraStream{
-		{URL: internalURL, Type: "internal", Label: "Camera"},
+
+	// TUTK P2P camera stream for remote access (available when TTCode credentials are set)
+	if c.tutkCreds != nil {
+		streams = append(streams, printers.CameraStream{
+			URL:   fmt.Sprintf("tutk://%s", c.cfg.Serial),
+			Type:  "internal",
+			Label: "Camera (P2P)",
+		})
 	}
+
+	return nil
 }
 
 // Connect establishes the cloud MQTT connection and begins listening for reports.
@@ -205,9 +290,15 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	}
 
 	// Capture camera URL from camera reports (even without print data)
-	if r.Camera != nil && r.Camera.IPCamURL != "" {
+	if r.Camera != nil {
 		c.mu.Lock()
-		c.camIPCamURL = r.Camera.IPCamURL
+		if r.Camera.IPCamURL != "" {
+			c.camIPCamURL = r.Camera.IPCamURL
+			log.Printf("bambu %s: MQTT camera report: ipcam_url=%s", c.cfg.ID, r.Camera.IPCamURL)
+		}
+		if r.Camera.TimelapseURL != "" {
+			log.Printf("bambu %s: MQTT camera report: timelapse_url=%s", c.cfg.ID, r.Camera.TimelapseURL)
+		}
 		c.mu.Unlock()
 	}
 
@@ -312,3 +403,15 @@ func (c *Client) SkipObject(ctx context.Context) error {
 
 // Ensure Client satisfies the Printer interface.
 var _ printers.Printer = (*Client)(nil)
+
+// IsH2S returns true if the model name indicates an H2-series (or similar)
+// printer with multiple cameras and RTSPS protocol.
+// It matches both marketing names (e.g. "H2S") and Bambu Cloud API internal
+// model codes (e.g. "O1S").
+func IsH2S(model string) bool {
+	switch strings.ToUpper(model) {
+	case "H2S", "H2D", "H2C", "H2D PRO", "P2S", "X2D", "O1S":
+		return true
+	}
+	return false
+}

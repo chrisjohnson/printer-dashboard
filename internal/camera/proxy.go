@@ -3,6 +3,7 @@ package camera
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -25,7 +26,7 @@ const ConnectTimeout = 5 * time.Second
 //
 // A custom transport with a short dial timeout is used so that unreachable cameras
 // fail fast without affecting the long-lived streaming connection.
-func Handler(mgr *CameraManager) http.HandlerFunc {
+func Handler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: ConnectTimeout,
@@ -49,6 +50,81 @@ func Handler(mgr *CameraManager) http.HandlerFunc {
 		// Dispatch by URL scheme: bambus:// uses the Bambu Lab binary TLS protocol.
 		if parsedURL.Scheme == "bambus" {
 			BambuCameraHandler(mgr).ServeHTTP(w, r)
+			return
+		}
+
+		// tutk:// uses TUTK P2P camera sessions managed by CameraManager.
+		if parsedURL.Scheme == "tutk" {
+			serial := parsedURL.Host
+			if mgr != nil {
+				buffer := mgr.TUTKBuffer(serial)
+				if buffer != nil {
+					serveFromBuffer(w, r, buffer)
+					return
+				}
+			}
+			// No active session — serve placeholder
+			servePlaceholder(w)
+			return
+		}
+
+		// rtsps:// uses go2rtc to convert to HTTP MJPEG, then proxy.
+		if parsedURL.Scheme == "rtsps" {
+			if rtspMgr == nil {
+				writeJSON(w, http.StatusNotImplemented, map[string]string{
+					"error": "RTSPS camera support requires go2rtc (install with: brew install go2rtc or download from github.com/AlexxIT/go2rtc)",
+				})
+				return
+			}
+			// Start go2rtc instance for this RTSPS URL.
+			// Use host:port as the stream key for deduplication.
+			streamKey := parsedURL.Host // e.g., "192.168.1.100:322"
+			mjpegURL, err := rtspMgr.Start(r.Context(), streamKey, rawURL)
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{
+					"error": fmt.Sprintf("RTSPS camera unavailable: %v", err),
+				})
+				return
+			}
+			// Re-issue the request as an HTTP request to go2rtc's MJPEG endpoint.
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, mjpegURL, nil)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				return
+			}
+
+			transport := &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout: ConnectTimeout,
+				}).DialContext,
+			}
+			client := &http.Client{Transport: transport}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				writeJSON(w, http.StatusBadGateway, map[string]string{"error": "RTSPS stream unreachable"})
+				return
+			}
+			defer resp.Body.Close()
+
+			for key, vals := range resp.Header {
+				for _, v := range vals {
+					w.Header().Add(key, v)
+				}
+			}
+			w.WriteHeader(resp.StatusCode)
+
+			if _, err := io.Copy(w, resp.Body); err != nil {
+				log.Printf("camera proxy: RTSPS streaming error for %s: %v", rawURL, err)
+			}
+			return
+		}
+
+		// Unknown scheme check: reject anything that isn't http or https.
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{
+				"error": fmt.Sprintf("unsupported camera URL scheme: %s (supported: http, https, bambus, tutk, rtsps)", parsedURL.Scheme),
+			})
 			return
 		}
 
@@ -183,7 +259,7 @@ func readFirstJPEGFromMJPEG(r io.Reader) []byte {
 // it serves a placeholder JPEG to avoid browser flicker.
 //
 // Expected query parameter: url (the target camera URL, must be absolute).
-func FrameHandler(mgr *CameraManager) http.HandlerFunc {
+func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: ConnectTimeout,
@@ -238,6 +314,78 @@ func FrameHandler(mgr *CameraManager) http.HandlerFunc {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Content-Length", strconv.Itoa(len(frame)))
 			w.Write(frame)
+			return
+		}
+
+		if parsedURL.Scheme == "tutk" {
+			serial := parsedURL.Host
+			var frame []byte
+			if mgr != nil {
+				buffer := mgr.TUTKBuffer(serial)
+				if buffer != nil {
+					frame = buffer.Latest()
+				}
+			}
+			if frame == nil {
+				frame = placeholderJPEG
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Content-Length", strconv.Itoa(len(frame)))
+			w.Write(frame)
+			return
+		}
+
+		if parsedURL.Scheme == "rtsps" {
+			if rtspMgr == nil {
+				servePlaceholder(w)
+				return
+			}
+			streamKey := parsedURL.Host
+			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
+				servePlaceholder(w)
+				return
+			}
+			frameURL, ok := rtspMgr.FrameURL(streamKey)
+			if !ok {
+				servePlaceholder(w)
+				return
+			}
+
+			transport := &http.Transport{
+				DialContext: (&net.Dialer{
+					Timeout: ConnectTimeout,
+				}).DialContext,
+			}
+			client := &http.Client{Transport: transport}
+
+			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, frameURL, nil)
+			if err != nil {
+				servePlaceholder(w)
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				servePlaceholder(w)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+			if err != nil {
+				servePlaceholder(w)
+				return
+			}
+
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.Write(body)
+			return
+		}
+
+		if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+			servePlaceholder(w)
 			return
 		}
 

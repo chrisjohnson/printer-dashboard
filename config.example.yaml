@@ -58,6 +58,7 @@ printers:
   - id: p1s
     name: "Bambu P1S"
     type: bambu
+    # model: P1S            # optional — when set, enables model-specific camera support
     serial: "SERIAL000000000001"    # dev_id from Bambu Cloud / printer label
     host: 192.168.1.100             # LAN IP (for camera, optional)
     access_code: "12345678"         # from printer screen (for camera, optional)
@@ -65,6 +66,7 @@ printers:
   - id: h2s
     name: "Bambu H2S"
     type: bambu
+    model: H2S              # optional, enables H2S multi-camera + RTSPS
     serial: "SERIAL000000000002"
     host: 192.168.1.101
     access_code: "12345678"

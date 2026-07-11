@@ -917,6 +917,108 @@ func TestGetDevices(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: GetTTCode
+// ---------------------------------------------------------------------------
+
+func TestGetTTCode(t *testing.T) {
+	t.Run("successful response", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/iot-service/api/user/ttcode" {
+				t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+			}
+			if r.Method != "POST" {
+				t.Errorf("method = %s; want POST", r.Method)
+			}
+			if r.Header.Get("Authorization") != "Bearer ttcode-test-token" {
+				t.Errorf("Authorization = %q; want %q", r.Header.Get("Authorization"), "Bearer ttcode-test-token")
+			}
+			// Verify request body
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("failed to decode request body: %v", err)
+			}
+			if body["dev_id"] != "TEST001" {
+				t.Errorf("dev_id = %q; want %q", body["dev_id"], "TEST001")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(ttCodeResponse{
+				Message: "success",
+				TTCode:  "A1B2C3D4",
+				AuthKey: "auth-key-123",
+				Passwd:  "abcdef",
+				Region:  "us",
+			})
+		}))
+		defer srv.Close()
+
+		c := newTestClient(srv.URL)
+		c.token = "ttcode-test-token"
+
+		info, err := c.GetTTCode("TEST001")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if info.TTCode != "A1B2C3D4" {
+			t.Errorf("TTCode = %q; want %q", info.TTCode, "A1B2C3D4")
+		}
+		if info.AuthKey != "auth-key-123" {
+			t.Errorf("AuthKey = %q; want %q", info.AuthKey, "auth-key-123")
+		}
+		if info.Passwd != "abcdef" {
+			t.Errorf("Passwd = %q; want %q", info.Passwd, "abcdef")
+		}
+		if info.Region != "us" {
+			t.Errorf("Region = %q; want %q", info.Region, "us")
+		}
+	})
+
+	t.Run("API error response", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			errMsg := "device not found"
+			json.NewEncoder(w).Encode(ttCodeResponse{
+				Message: "error",
+				Error:   &errMsg,
+			})
+		}))
+		defer srv.Close()
+
+		c := newTestClient(srv.URL)
+		c.token = "ttcode-test-token"
+
+		_, err := c.GetTTCode("NONEXISTENT")
+		if err == nil {
+			t.Fatal("expected error for API error response")
+		}
+		if !strings.Contains(err.Error(), "device not found") {
+			t.Errorf("error = %q; want 'device not found'", err.Error())
+		}
+	})
+
+	t.Run("HTTP 500 error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"error":"internal server error"}`))
+		}))
+		defer srv.Close()
+
+		c := newTestClient(srv.URL)
+		c.token = "ttcode-test-token"
+
+		_, err := c.GetTTCode("TEST001")
+		if err == nil {
+			t.Fatal("expected error for HTTP 500")
+		}
+		if !strings.Contains(err.Error(), "get ttcode") {
+			t.Errorf("error = %q; want 'get ttcode'", err.Error())
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
 // Test: NewBambuCloudClient
 // ---------------------------------------------------------------------------
 

@@ -117,9 +117,22 @@ func NewBambuStreamReader(ctx context.Context, host string, port int, accessCode
 		return nil, fmt.Errorf("bambu camera: tcp dial %s: %w", addr, err)
 	}
 
-	// TLS handshake with self-signed cert (same as MQTT client)
+	// TLS handshake with self-signed cert (same as MQTT client).
+	// Note: H2S/O1S printers only support TLS_RSA_WITH_AES_256_GCM_SHA384 (a
+	// static-RSA cipher excluded from Go's defaults), so we must list it explicitly.
 	tlsConn := tls.Client(rawConn, &tls.Config{
 		InsecureSkipVerify: true,
+		CipherSuites: []uint16{
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384, // required by H2S/O1S on port 6000
+			// Go's default TLS 1.2 cipher suites (replicated explicitly so we can
+			// include the RSA cipher above without losing forward-secrecy ciphers):
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+		},
 	})
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
 		rawConn.Close()

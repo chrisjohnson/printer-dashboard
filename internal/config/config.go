@@ -46,6 +46,7 @@ type PrinterDef struct {
 	Port       int    `yaml:"port,omitempty"`       // Not used for cloud MQTT
 	AccessCode string `yaml:"access_code,omitempty"` // Bambu access code (for camera, optional without LAN mode)
 	Serial     string `yaml:"serial"`                // Bambu device serial number (dev_id)
+	Model      string `yaml:"model,omitempty"`       // e.g., "H2S", "P1S", "X1C" — used for camera URL format
 }
 
 // CameraDef describes an external camera.
