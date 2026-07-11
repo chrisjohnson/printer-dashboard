@@ -38,3 +38,4 @@ test-results/
 
 # Claude Code orchestrator local state
 .claude/
+.agent/
