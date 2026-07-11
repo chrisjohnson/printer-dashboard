@@ -17,10 +17,21 @@ RUN mkdir -p /out && \
       echo "WARNING: Could not find Bambu plugin download URL — TUTK camera feature unavailable"; \
     fi || echo "WARNING: Bambu plugin stage failed — TUTK camera feature unavailable"
 
-# Stage 2: Build printer-dashboard
+# Stage 2: Download go2rtc pre-built binary for RTSPS camera streaming support
+# (independent of source/deps, so it stays cached across app rebuilds)
+FROM alpine:latest AS go2rtc
+RUN apk add --no-cache curl jq
+RUN mkdir -p /out && \
+    GO2RTC_VERSION=$(curl -sf "https://api.github.com/repos/AlexxIT/go2rtc/releases/latest" | jq -r '.tag_name' | sed 's/^v//') && \
+    curl -sfL "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_arm64" \
+      -o /out/go2rtc && \
+    chmod +x /out/go2rtc && \
+    echo "go2rtc ${GO2RTC_VERSION} downloaded successfully"
+
+# Stage 3: Build printer-dashboard
 FROM golang:1.26-bookworm AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev jq curl ca-certificates && \
+RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -33,14 +44,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/printer-dashboard .
 
-# Download go2rtc pre-built binary for RTSPS camera streaming support
-RUN GO2RTC_VERSION=$(curl -sf "https://api.github.com/repos/AlexxIT/go2rtc/releases/latest" | jq -r '.tag_name' | sed 's/^v//') && \
-    curl -sfL "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_arm64" \
-      -o /go/bin/go2rtc && \
-    chmod +x /go/bin/go2rtc && \
-    echo "go2rtc ${GO2RTC_VERSION} downloaded successfully"
-
-# Stage 3: Runtime
+# Stage 4: Runtime
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -59,7 +63,7 @@ WORKDIR /app
 COPY --from=builder --chown=app:app /app/printer-dashboard .
 
 # Copy go2rtc binary
-COPY --from=builder /go/bin/go2rtc /usr/local/bin/go2rtc
+COPY --from=go2rtc /out/go2rtc /usr/local/bin/go2rtc
 
 # Copy Bambu network plugin (if downloaded)
 COPY --from=bambu-plugin --chown=app:app /out/ /app/
