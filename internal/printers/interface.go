@@ -23,8 +23,9 @@ type PrinterStatus struct {
 	BedTargetTemp    *float64         `json:"bed_target_temp"`
 	NozzleTemp       *float64         `json:"nozzle_temp"`
 	NozzleTargetTemp *float64         `json:"nozzle_target_temp"`
-	ChamberTemp      *float64         `json:"chamber_temp"`
-	CurrentLayer     int              `json:"current_layer"`
+	ChamberTemp       *float64         `json:"chamber_temp"`
+	ChamberTargetTemp *float64         `json:"chamber_target_temp"`
+	CurrentLayer      int              `json:"current_layer"`
 	TotalLayers      int              `json:"total_layers"`
 	ErrorMsg         string           `json:"error_msg,omitempty"`
 	NozzleTemps      []NozzleTempEntry `json:"nozzle_temps,omitempty"`

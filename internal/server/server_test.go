@@ -290,6 +290,136 @@ func TestHandleListPrinters(t *testing.T) {
 		}
 	})
 
+	t.Run("active printers before inactive", func(t *testing.T) {
+		pIdle := &MockPrinter{
+			id:   "idle1",
+			name: "alpha",
+			stat: printers.PrinterStatus{ID: "idle1", Name: "alpha", State: "idle"},
+		}
+		pPrinting := &MockPrinter{
+			id:   "print1",
+			name: "delta",
+			stat: printers.PrinterStatus{ID: "print1", Name: "delta", State: "printing"},
+		}
+		pPaused := &MockPrinter{
+			id:   "pause1",
+			name: "bravo",
+			stat: printers.PrinterStatus{ID: "pause1", Name: "bravo", State: "paused"},
+		}
+		s := newTestServer(map[string]printers.Printer{
+			"idle1":  pIdle,
+			"print1": pPrinting,
+			"pause1": pPaused,
+		})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers")
+		defer resp.Body.Close()
+
+		var body map[string]any
+		decodeBody(t, resp, &body)
+
+		list := body["printers"].([]any)
+		if len(list) != 3 {
+			t.Fatalf("expected 3 printers, got %d", len(list))
+		}
+
+		// Active printers (printing, paused) come first sorted A-Z,
+		// then inactive printers sorted A-Z.
+		expected := []string{"bravo", "delta", "alpha"}
+		for i, want := range expected {
+			got := list[i].(map[string]any)["name"].(string)
+			if got != want {
+				t.Errorf("position %d: expected %q, got %q", i, want, got)
+			}
+		}
+	})
+
+	t.Run("all inactive same as alphabetical", func(t *testing.T) {
+		pC := &MockPrinter{
+			id:   "c",
+			name: "charlie",
+			stat: printers.PrinterStatus{ID: "c", Name: "charlie", State: "idle"},
+		}
+		pA := &MockPrinter{
+			id:   "a",
+			name: "alpha",
+			stat: printers.PrinterStatus{ID: "a", Name: "alpha", State: "idle"},
+		}
+		pB := &MockPrinter{
+			id:   "b",
+			name: "bravo",
+			stat: printers.PrinterStatus{ID: "b", Name: "bravo", State: "complete"},
+		}
+		s := newTestServer(map[string]printers.Printer{
+			"c": pC,
+			"a": pA,
+			"b": pB,
+		})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers")
+		defer resp.Body.Close()
+
+		var body map[string]any
+		decodeBody(t, resp, &body)
+
+		list := body["printers"].([]any)
+		if len(list) != 3 {
+			t.Fatalf("expected 3 printers, got %d", len(list))
+		}
+
+		// No active printers — purely alphabetical.
+		expected := []string{"alpha", "bravo", "charlie"}
+		for i, want := range expected {
+			got := list[i].(map[string]any)["name"].(string)
+			if got != want {
+				t.Errorf("position %d: expected %q, got %q", i, want, got)
+			}
+		}
+	})
+
+	t.Run("active sorted alphabetically within group", func(t *testing.T) {
+		pA := &MockPrinter{
+			id:   "a",
+			name: "zebra",
+			stat: printers.PrinterStatus{ID: "a", Name: "zebra", State: "printing"},
+		}
+		pB := &MockPrinter{
+			id:   "b",
+			name: "alpha",
+			stat: printers.PrinterStatus{ID: "b", Name: "alpha", State: "paused"},
+		}
+		s := newTestServer(map[string]printers.Printer{
+			"a": pA,
+			"b": pB,
+		})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers")
+		defer resp.Body.Close()
+
+		var body map[string]any
+		decodeBody(t, resp, &body)
+
+		list := body["printers"].([]any)
+		if len(list) != 2 {
+			t.Fatalf("expected 2 printers, got %d", len(list))
+		}
+
+		// Both active — sorted A-Z within the active group.
+		expected := []string{"alpha", "zebra"}
+		for i, want := range expected {
+			got := list[i].(map[string]any)["name"].(string)
+			if got != want {
+				t.Errorf("position %d: expected %q, got %q", i, want, got)
+			}
+		}
+	})
+
 	t.Run("status json format", func(t *testing.T) {
 		stat := printers.PrinterStatus{
 			ID:               "fmt-1",
@@ -335,7 +465,7 @@ func TestHandleListPrinters(t *testing.T) {
 		requiredKeys := []string{
 			"id", "name", "type", "online", "state", "progress",
 			"remaining_time", "current_file", "bed_temp", "bed_target_temp",
-			"nozzle_temp", "nozzle_target_temp", "chamber_temp",
+			"nozzle_temp", "nozzle_target_temp", "chamber_temp", "chamber_target_temp",
 			"current_layer", "total_layers",
 		}
 		for _, key := range requiredKeys {

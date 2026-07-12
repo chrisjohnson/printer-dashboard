@@ -303,6 +303,9 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 				c.cfg.ID, *p.Info.Temp, temp)
 		}
 	}
+	if p.ChamberTargetTemper != nil {
+		s.ChamberTargetTemp = p.ChamberTargetTemper
+	}
 
 	if p.McPercent != nil {
 		s.Progress = float64(*p.McPercent) / 100.0

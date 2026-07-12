@@ -35,6 +35,7 @@ func TestParseReport(t *testing.T) {
 					"nozzle_temper": 210.0,
 					"nozzle_target_temper": 220.0,
 					"chamber_temper": 30.0,
+					"chamber_target_temper": 45.0,
 					"layer_num": 5,
 					"total_layer_num": 100,
 					"wifi_signal": "good",
@@ -53,23 +54,24 @@ func TestParseReport(t *testing.T) {
 			}`,
 			want: &report{
 				Print: &printStatus{
-					GcodeState:      "RUNNING",
-					GcodeFile:       stringPtr("model.gcode"),
-					McPercent:       intPtr(50),
-					McRemainingTime: intPtr(3600),
-					BedTemper:       float64Ptr(55.5),
-					BedTarget:       float64Ptr(60.0),
-					NozzleTemper:    float64Ptr(210.0),
-					NozzleTarget:    float64Ptr(220.0),
-					ChamberTemper:   float64Ptr(30.0),
-					LayerNum:        intPtr(5),
-					TotalLayerNum:   intPtr(100),
-					WifiSignal:      stringPtr("good"),
-					HomeFlag:        1,
-					StgCur:          intPtr(2),
-					StgTotal:        intPtr(10),
-					PrintError:      intPtr(0),
-					Lifecycle:       stringPtr("printing"),
+					GcodeState:          "RUNNING",
+					GcodeFile:           stringPtr("model.gcode"),
+					McPercent:           intPtr(50),
+					McRemainingTime:     intPtr(3600),
+					BedTemper:           float64Ptr(55.5),
+					BedTarget:           float64Ptr(60.0),
+					NozzleTemper:        float64Ptr(210.0),
+					NozzleTarget:        float64Ptr(220.0),
+					ChamberTemper:       float64Ptr(30.0),
+					ChamberTargetTemper: float64Ptr(45.0),
+					LayerNum:            intPtr(5),
+					TotalLayerNum:       intPtr(100),
+					WifiSignal:          stringPtr("good"),
+					HomeFlag:            1,
+					StgCur:              intPtr(2),
+					StgTotal:            intPtr(10),
+					PrintError:          intPtr(0),
+					Lifecycle:           stringPtr("printing"),
 				},
 				Camera: &cameraStatus{
 					IPCamURL:     "rtsp://camera",
@@ -271,6 +273,7 @@ func comparePrintStatus(t *testing.T, want, got *printStatus) {
 	compareFloat64Ptr(t, "NozzleTemper", want.NozzleTemper, got.NozzleTemper)
 	compareFloat64Ptr(t, "NozzleTarget", want.NozzleTarget, got.NozzleTarget)
 	compareFloat64Ptr(t, "ChamberTemper", want.ChamberTemper, got.ChamberTemper)
+	compareFloat64Ptr(t, "ChamberTargetTemper", want.ChamberTargetTemper, got.ChamberTargetTemper)
 
 	// String pointer fields.
 	compareStringPtr(t, "WifiSignal", want.WifiSignal, got.WifiSignal)

@@ -587,8 +587,13 @@ func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RUnlock()
 
-	// Sort by name (case-insensitive) for consistent ordering
+	// Active states: "printing" or "paused" appear first, then alphabetical.
 	sort.Slice(printerList, func(i, j int) bool {
+		iActive := printerList[i].State == "printing" || printerList[i].State == "paused"
+		jActive := printerList[j].State == "printing" || printerList[j].State == "paused"
+		if iActive != jActive {
+			return iActive
+		}
 		return strings.ToLower(printerList[i].Name) < strings.ToLower(printerList[j].Name)
 	})
 

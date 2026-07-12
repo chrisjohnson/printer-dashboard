@@ -12,6 +12,8 @@ type printCommand struct {
 	// Optional sequence ID for operations like skip
 	SequenceID string `json:"sequence_id,omitempty"`
 	Param      string `json:"param,omitempty"`
+	CTTVal     *int   `json:"ctt_val,omitempty"`
+	TemperCheck *bool  `json:"temper_check,omitempty"`
 }
 
 // pauseCommand returns the JSON payload to pause a print.
@@ -39,6 +41,15 @@ func skipObjectCommand() []byte {
 	}})
 }
 
+// setCTTCommand returns the JSON payload to set the chamber target temperature.
+func setCTTCommand(temp int) []byte {
+	return mustMarshal(command{Print: printCommand{
+		Command:      "set_ctt",
+		CTTVal:       &temp,
+		TemperCheck:  boolPtr(true),
+	}})
+}
+
 func mustMarshal(v any) []byte {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -46,3 +57,5 @@ func mustMarshal(v any) []byte {
 	}
 	return data
 }
+
+func boolPtr(v bool) *bool { return &v }

@@ -790,6 +790,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (newCard) {
           // Camera slot is rendered inside the card — no further setup needed
         }
+        reorderCard(p.id);
         return;
       }
 
@@ -865,6 +866,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (lastRow) {
           const val = lastRow.querySelector('.val');
           if (val) val.textContent = chamberVal + '\u00b0C';
+          setTargetInput(lastRow, p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '?');
         }
       }
 
@@ -897,6 +899,43 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (resumeBtn) resumeBtn.disabled = st !== 'paused';
       if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
       if (skipBtn) skipBtn.disabled = st !== 'printing';
+
+      reorderCard(p.id);
+    }
+
+    function reorderCard(printerId) {
+      const container = document.getElementById('printer-list');
+      if (!container) return;
+      const card = document.getElementById('printer-' + printerId);
+      if (!card) return;
+
+      const tag = card.querySelector('.tag');
+      const state = tag ? tag.textContent.trim() : '';
+      const isActive = state === 'printing' || state === 'paused';
+      const cardName = (card.querySelector('h2') || {}).textContent || '';
+
+      const siblings = Array.from(container.querySelectorAll('.card'));
+      // Find the correct insertion point: active cards before inactive,
+      // alphabetical within each group.
+      let insertBefore = null;
+      for (const sib of siblings) {
+        if (sib === card) continue;
+        const sibTag = sib.querySelector('.tag');
+        const sibState = sibTag ? sibTag.textContent.trim() : '';
+        const sibActive = sibState === 'printing' || sibState === 'paused';
+        const sibName = (sib.querySelector('h2') || {}).textContent || '';
+
+        if (isActive && !sibActive) { insertBefore = sib; break; }
+        if (isActive && sibActive && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
+        if (!isActive && !sibActive && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
+      }
+
+      if (insertBefore) {
+        container.insertBefore(card, insertBefore);
+      } else {
+        // Move to end if no earlier sibling fits
+        container.appendChild(card);
+      }
     }
 
     function loadPrinters() {
@@ -1132,7 +1171,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           // Chamber
           '<span class="temp-row">' +
             '<span class="label"><span class="temp-icon chamber">' + svgChamber() + '</span>Chamber:</span>' +
-            '<span class="temp-values"><span class="val">' + chamberVal + '°C</span></span>' +
+            '<span class="temp-values"><span class="val">' + chamberVal + '°C</span>' + (p.chamber_target_temp != null ? targetInput(p.id, 'chamber', p.chamber_target_temp.toFixed(1)) : '') + '</span>' +
           '</span>' +
         '</div>' +
         fileHtml +

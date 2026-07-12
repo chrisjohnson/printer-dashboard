@@ -22,7 +22,8 @@ type printStatus struct {
 	BedTarget        *float64 `json:"bed_target_temper"`
 	NozzleTemper     *float64 `json:"nozzle_temper"`
 	NozzleTarget     *float64 `json:"nozzle_target_temper"`
-	ChamberTemper    *float64 `json:"chamber_temper"`
+	ChamberTemper       *float64 `json:"chamber_temper"`
+	ChamberTargetTemper *float64 `json:"chamber_target_temper"`
 	Info             *infoData `json:"info"`
 	LayerNum         *int     `json:"layer_num"`
 	TotalLayerNum    *int     `json:"total_layer_num"`
