@@ -817,7 +817,8 @@ func TestHandleReport_MultipleUpdates(t *testing.T) {
 func TestHandleReport_StateDefaultIdle(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// Empty gcode_state should map to "idle".
+	// Empty gcode_state should NOT overwrite state — it preserves whatever
+	// was set before. On a fresh client the initial state is "".
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "",
@@ -829,8 +830,8 @@ func TestHandleReport_StateDefaultIdle(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
-	if s.State != "idle" {
-		t.Errorf("State = %q; want %q (empty gcode_state maps to idle)", s.State, "idle")
+	if s.State != "" {
+		t.Errorf("State = %q; want %q (empty gcode_state should not change state)", s.State, "")
 	}
 }
 
@@ -950,7 +951,8 @@ func TestHandleReport_BootSequenceFlicker(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
 	// P1S boot sequence: empty → SUCCESS → IDLE
-	// Step 1: first heartbeat, no meaningful gcode_state
+	// Step 1: first heartbeat, no meaningful gcode_state.
+	// State should remain empty (not "idle") since gcode_state is empty.
 	payload1 := []byte(`{
 		"print": {
 			"gcode_state": "",
@@ -961,8 +963,8 @@ func TestHandleReport_BootSequenceFlicker(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload1))
 	s1 := c.Status()
 
-	if s1.State != "idle" {
-		t.Errorf("After empty gcode_state: State = %q; want %q", s1.State, "idle")
+	if s1.State != "" {
+		t.Errorf("After empty gcode_state: State = %q; want %q", s1.State, "")
 	}
 	if !s1.Online {
 		t.Error("After empty gcode_state: Online = false; want true")
@@ -1161,6 +1163,207 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 	}
 	if s6.ErrorMsg != "" {
 		t.Errorf("Step 6: ErrorMsg = %q; want empty", s6.ErrorMsg)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// K-059: Heartbeat-style reports with empty gcode_state should not clobber state
+// ---------------------------------------------------------------------------
+
+func TestHandleReport_HeartbeatPreservesPrintingState(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: printer is actively printing.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "model.gcode",
+			"mc_percent": 50,
+			"mc_remaining_time": 3600
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.State != "printing" {
+		t.Fatalf("After RUNNING: State = %q; want %q", s1.State, "printing")
+	}
+
+	// Second report: heartbeat with empty gcode_state but temperature data
+	// (typical H2S heartbeat during active print).
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "",
+			"bed_temper": 55.0,
+			"nozzle_temper": 210.0,
+			"mc_percent": 55
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "printing" {
+		t.Errorf("After heartbeat (empty gcode_state): State = %q; want %q (should preserve previous)",
+			s2.State, "printing")
+	}
+	// Other fields should still update
+	if s2.Progress != 0.55 {
+		t.Errorf("After heartbeat: Progress = %f; want 0.55", s2.Progress)
+	}
+	if s2.BedTemp == nil || *s2.BedTemp != 55.0 {
+		t.Errorf("After heartbeat: BedTemp = %v; want 55.0", s2.BedTemp)
+	}
+}
+
+func TestHandleReport_HeartbeatPreservesPausedState(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: paused.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "PAUSE",
+			"mc_percent": 50
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	// Second report: heartbeat with empty gcode_state.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "",
+			"mc_percent": 50
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s := c.Status()
+
+	if s.State != "paused" {
+		t.Errorf("After heartbeat (empty gcode_state): State = %q; want %q (should preserve paused)",
+			s.State, "paused")
+	}
+}
+
+func TestHandleReport_ExplicitIdleStillWorks(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Set state to printing.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "model.gcode"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	if c.Status().State != "printing" {
+		t.Fatalf("setup: State = %q; want %q", c.Status().State, "printing")
+	}
+
+	// Explicit IDLE should transition back to idle.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s := c.Status()
+
+	if s.State != "idle" {
+		t.Errorf("After explicit IDLE: State = %q; want %q", s.State, "idle")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// K-059: H2S info.temp scaling — 3932184 → 39.3°C
+// ---------------------------------------------------------------------------
+
+func TestHandleReport_InfoTempScaledToCelsius(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// H2S report with info.temp as scaled integer (3932184 = 39.32184°C).
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "test.gcode",
+			"nozzle_temper": 200.0,
+			"info": {
+				"temp": 3932184
+			}
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.ChamberTemp == nil {
+		t.Fatal("ChamberTemp = nil; want ~39.32")
+	}
+	if *s.ChamberTemp < 39.3 || *s.ChamberTemp > 39.4 {
+		t.Errorf("ChamberTemp = %f; want ~39.32 (3932184 / 100000)", *s.ChamberTemp)
+	}
+}
+
+func TestHandleReport_InfoTempDirectCelsius(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// info.temp already in °C (small value, no scaling needed).
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "test.gcode",
+			"info": {
+				"temp": 28.5
+			}
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.ChamberTemp == nil || *s.ChamberTemp != 28.5 {
+		t.Errorf("ChamberTemp = %v; want 28.5 (direct °C, no scaling)", s.ChamberTemp)
+	}
+}
+
+func TestHandleReport_InfoTempOutOfRangeIgnored(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// info.temp value that doesn't make sense even after scaling.
+	// 50000000 / 100000 = 500°C — still out of range for a chamber.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"info": {
+				"temp": 50000000
+			}
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.ChamberTemp != nil {
+		t.Errorf("ChamberTemp = %v; want nil (500°C is out of range after scaling)", s.ChamberTemp)
+	}
+}
+
+func TestHandleReport_InfoTempPreservesPreviousWhenOutOfRange(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Set initial chamber temp.
+	c.mu.Lock()
+	c.status.ChamberTemp = float64Ptr(25.0)
+	c.mu.Unlock()
+
+	// Report with out-of-range info.temp — should not clobber existing value.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"info": {
+				"temp": 50000000
+			}
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.ChamberTemp == nil || *s.ChamberTemp != 25.0 {
+		t.Errorf("ChamberTemp = %v; want 25.0 (should preserve previous when new value is out of range)", s.ChamberTemp)
 	}
 }
 

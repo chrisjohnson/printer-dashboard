@@ -260,8 +260,12 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	s := c.Status()
 	s.Online = true
 
-	// Map states
-	s.State = mapState(p.GcodeState)
+	// Map states. Only update when gcode_state is explicitly provided;
+	// heartbeat-style reports may omit it, and we must not clobber the
+	// last-known state (e.g. "printing") with "idle" in that case.
+	if p.GcodeState != "" {
+		s.State = mapState(p.GcodeState)
+	}
 	if p.GcodeFile != nil && *p.GcodeFile != "" {
 		s.CurrentFile = *p.GcodeFile
 	}
@@ -283,8 +287,21 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	if p.ChamberTemper != nil {
 		s.ChamberTemp = p.ChamberTemper
 	} else if p.Info != nil && p.Info.Temp != nil {
-		// H2S (O1S) reports chamber temp via info.temp instead of chamber_temper
-		s.ChamberTemp = p.Info.Temp
+		// H2S (O1S) may report chamber temp via info.temp. Some firmware
+		// versions send it as a scaled integer (real_temp × 100000) rather
+		// than degrees Celsius. Detect and convert.
+		temp := *p.Info.Temp
+		if temp > 500 {
+			// Likely a raw sensor value — convert to °C.
+			temp /= 100000
+		}
+		// Sanity check: chamber temperature must be in a plausible range.
+		if temp >= -50 && temp <= 100 {
+			s.ChamberTemp = &temp
+		} else {
+			log.Printf("bambu %s: info.temp out of range (raw=%.0f, scaled=%.1f), ignoring",
+				c.cfg.ID, *p.Info.Temp, temp)
+		}
 	}
 
 	if p.McPercent != nil {
