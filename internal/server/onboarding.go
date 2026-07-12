@@ -569,7 +569,6 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .temps .label { color: var(--text-subtle); font-weight: 500; display: flex; align-items: center; gap: 4px; }
     .temps .val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-    .temps .target { color: var(--text-muted); }
     /* Editable target-temp input — soft pill, faint border, accent focus ring. */
     input.target {
       width: 5.5em; padding: 3px 8px;
@@ -740,7 +739,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         </span>
         <span class="temp-row">
           <span class="label"><span class="temp-icon chamber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16"/></svg></span>Chamber:</span>
-          <span class="temp-values"><span class="val">--°C</span></span>
+          <span class="temp-values"><span class="val">--°C</span><input class="target" type="text" inputmode="decimal" value="--" disabled></span>
         </span>
       </div>
       <div class="filename">&nbsp;</div>
@@ -823,9 +822,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const temps = card.querySelector('.temps');
       if (temps) {
         const bed = p.bed_temp !== null ? p.bed_temp.toFixed(1) : '?';
-        const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '?';
+        const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '--';
         const nozzle = p.nozzle_temp !== null ? p.nozzle_temp.toFixed(1) : '?';
-        const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '?';
+        const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '--';
         const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
 
         // Set an input.target's value only when the user isn't editing it, so
@@ -866,7 +865,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (lastRow) {
           const val = lastRow.querySelector('.val');
           if (val) val.textContent = chamberVal + '\u00b0C';
-          setTargetInput(lastRow, p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '?');
+          setTargetInput(lastRow, p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--');
         }
       }
 
@@ -1036,10 +1035,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     // Editable target-temp input. Keeps the .target class so updateCard's
     // selector still finds it. STUB: onchange calls setTargetTemp (no-op for now).
+    // Disabled until setTargetTemp has a real backend call — see setTargetTemp below.
     function targetInput(printerId, sensor, value) {
       return '<input class="target" type="text" inputmode="decimal"' +
-        ' value="' + escapeHtml(String(value)) + '"' +
-        ' onchange="setTargetTemp(\'' + printerId + '\',\'' + sensor + '\',this.value)">';
+        ' value="' + escapeHtml(String(value)) + '" disabled' +
+        ' onchange="setTargetTemp(\'' + escapeJsString(printerId) + '\',\'' + escapeJsString(sensor) + '\',this.value)">';
     }
 
     // STUB: set a new target temperature. Does not POST/apply yet — placeholder
@@ -1056,10 +1056,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
       // Temperatures — null-safe with '---' fallback
       const bed = p.bed_temp !== null ? p.bed_temp.toFixed(1) : '?';
-      const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '?';
+      const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '--';
       const nozzle = p.nozzle_temp !== null ? p.nozzle_temp.toFixed(1) : '?';
-      const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '?';
+      const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '--';
       const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
+      const chamberT = p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--';
 
       // Online indicator
       const onlineDot = p.online
@@ -1172,7 +1173,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           // Chamber
           '<span class="temp-row">' +
             '<span class="label"><span class="temp-icon chamber">' + svgChamber() + '</span>Chamber:</span>' +
-            '<span class="temp-values"><span class="val">' + chamberVal + '°C</span>' + (p.chamber_target_temp != null ? targetInput(p.id, 'chamber', p.chamber_target_temp.toFixed(1)) : '') + '</span>' +
+            '<span class="temp-values"><span class="val">' + chamberVal + '°C</span>' + targetInput(p.id, 'chamber', chamberT) + '</span>' +
           '</span>' +
         '</div>' +
         fileHtml +
@@ -1196,6 +1197,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     function escapeHtml(s) {
       if (!s) return '';
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // Escape a value for safe embedding inside a single-quoted JS string
+    // literal that itself sits inside an HTML attribute (e.g. onchange="...").
+    // Must neutralize both the JS string-literal boundary (backslash, single
+    // quote) and the HTML attribute boundary (&, <, >, ") — values here (like
+    // printer id / sensor name) are not guaranteed quote/backslash-free.
+    function escapeJsString(s) {
+      if (!s) return '';
+      return escapeHtml(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
     }
 
     function cmd(id, action) {
