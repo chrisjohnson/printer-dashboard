@@ -960,11 +960,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           container.innerHTML = list.map(renderCard).join('');
           // Start periodic refresh for camera frames. The browser keeps the
           // old frame visible while the new one loads, so no flicker.
-          // Always retry every image — even errored ones. Previously we
-          // skipped images hidden by onerror (display:none), but that
-          // permanently killed the feed after a single transient failure
-          // (especially on mobile with slow H2S transcoding). The onload
-          // handler now restores display on success.
+          // Always retry every image — even errored ones. The onerror
+          // handler does NOT hide the image (no display:none), so the last
+          // good frame stays visible during transient failures. The 2s
+          // interval keeps retrying until the next frame loads successfully
+          // and replaces it seamlessly.
           if (!window._camInterval) {
             window._camInterval = setInterval(function() {
               document.querySelectorAll('.camera-slot img[data-frame-url]').forEach(function(img) {
@@ -1125,7 +1125,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             if (m) rawCameraUrl = decodeURIComponent(m[1]);
             var frameUrl = '/api/camera/frame?url=' + encodeURIComponent(rawCameraUrl);
             html += '<a href="' + interactiveUrl + '" target="_blank" rel="noopener" title="Open touchscreen in new tab">';
-            html += '<img src="' + frameUrl + '&_t=' + Date.now() + '" class="touchscreen-img" alt="' + label + '" loading="lazy" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\'" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';this.style.display=\'none\';">';
+            html += '<img src="' + frameUrl + '&_t=' + Date.now() + '" class="touchscreen-img" alt="' + label + '" loading="lazy" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\'" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';">';
             html += '</a>';
           } else {
             // Single frame with periodic refresh: no MJPEG streaming.
@@ -1139,7 +1139,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             var m = rawUrl.match(/[?&]url=([^&]+)/);
             if (m) rawCameraUrl = decodeURIComponent(m[1]);
             var frameUrl = '/api/camera/frame?url=' + encodeURIComponent(rawCameraUrl);
-            html += '<img id="cam-' + p.id + '" src="' + frameUrl + '&_t=' + Date.now() + '" alt="' + label + '" style="display:block;width:100%;object-fit:contain;background:#000;" onload="this.style.display=\'\';this.closest(\'.camera-slot\').style.visibility=\'visible\';var e=this.nextElementSibling;if(e&&e.classList.contains(\'cam-error\'))e.style.display=\'none\';" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';" data-frame-url="' + escapeHtml(frameUrl) + '">';
+            html += '<img id="cam-' + p.id + '" src="' + frameUrl + '&_t=' + Date.now() + '" alt="' + label + '" style="display:block;width:100%;object-fit:contain;background:#000;" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\';" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';" data-frame-url="' + escapeHtml(frameUrl) + '">';
           }
           html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
           html += '<div class="camera-nav">';
