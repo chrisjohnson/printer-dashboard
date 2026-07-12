@@ -28,10 +28,10 @@ import (
 type MockPrinter struct {
 	printers.Printer // embed to satisfy interface at compile time
 
-	id         string
-	name       string
-	stat       printers.PrinterStatus
-	mu         sync.Mutex
+	id   string
+	name string
+	stat printers.PrinterStatus
+	mu   sync.Mutex
 
 	pauseErr   error
 	resumeErr  error
@@ -231,6 +231,49 @@ func TestHandleListPrinters(t *testing.T) {
 		}
 		if prt["name"] != "Test Printer" {
 			t.Errorf("expected name 'Test Printer', got %v", prt["name"])
+		}
+	})
+
+	t.Run("has_chamber round-trips in JSON", func(t *testing.T) {
+		pChamber := &MockPrinter{
+			id:   "with-chamber",
+			name: "With Chamber",
+			stat: printers.PrinterStatus{ID: "with-chamber", Name: "With Chamber", HasChamber: true},
+		}
+		pNoChamber := &MockPrinter{
+			id:   "no-chamber",
+			name: "No Chamber",
+			stat: printers.PrinterStatus{ID: "no-chamber", Name: "No Chamber", HasChamber: false},
+		}
+		s := newTestServer(map[string]printers.Printer{
+			"with-chamber": pChamber,
+			"no-chamber":   pNoChamber,
+		})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers")
+		defer resp.Body.Close()
+
+		var body map[string]any
+		decodeBody(t, resp, &body)
+
+		list := body["printers"].([]any)
+		if len(list) != 2 {
+			t.Fatalf("expected 2 printers, got %d", len(list))
+		}
+
+		byID := make(map[string]map[string]any)
+		for _, p := range list {
+			m := p.(map[string]any)
+			byID[m["id"].(string)] = m
+		}
+
+		if got := byID["with-chamber"]["has_chamber"]; got != true {
+			t.Errorf("with-chamber: has_chamber = %v; want true", got)
+		}
+		if got := byID["no-chamber"]["has_chamber"]; got != false {
+			t.Errorf("no-chamber: has_chamber = %v; want false", got)
 		}
 	})
 
@@ -514,11 +557,11 @@ func TestHandleListPrinters(t *testing.T) {
 
 	t.Run("error_msg present when non-empty", func(t *testing.T) {
 		stat := printers.PrinterStatus{
-			ID:        "err-1",
-			Name:      "Error Printer",
-			Type:      "bambu",
-			State:     "error",
-			ErrorMsg:  "Heater anomaly detected",
+			ID:       "err-1",
+			Name:     "Error Printer",
+			Type:     "bambu",
+			State:    "error",
+			ErrorMsg: "Heater anomaly detected",
 		}
 		p := &MockPrinter{
 			id:   "err-1",

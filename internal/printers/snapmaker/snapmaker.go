@@ -68,6 +68,8 @@ func New(cfg config.PrinterDef) *Printer {
 			ID:   cfg.ID,
 			Name: cfg.Name,
 			Type: "snapmaker",
+			// U1 has no chamber heater — unconditionally false.
+			HasChamber: false,
 		},
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
@@ -93,10 +95,10 @@ func (p *Printer) Connect(ctx context.Context) error {
 	// 1. Initial status snapshot.
 	if status, err := p.fetchStatus(ctx); err != nil {
 		p.setStatus(printers.PrinterStatus{
-			ID:   p.cfg.ID,
-			Name: p.cfg.Name,
-			Type: "snapmaker",
-			State: "error",
+			ID:       p.cfg.ID,
+			Name:     p.cfg.Name,
+			Type:     "snapmaker",
+			State:    "error",
 			ErrorMsg: fmt.Sprintf("initial status: %v", err),
 		})
 	} else {

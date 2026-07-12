@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 // Client implements the printers.Printer interface for Bambu Lab printers
@@ -36,9 +36,10 @@ type Client struct {
 // The cloud client must already be authenticated (Login or LoginWithToken called).
 func New(cfg config.PrinterDef, cloud *BambuCloudClient) *Client {
 	status := printers.PrinterStatus{
-		ID:   cfg.ID,
-		Name: cfg.Name,
-		Type: "bambu",
+		ID:         cfg.ID,
+		Name:       cfg.Name,
+		Type:       "bambu",
+		HasChamber: IsH2S(cfg.Model),
 	}
 
 	return &Client{
@@ -51,10 +52,17 @@ func New(cfg config.PrinterDef, cloud *BambuCloudClient) *Client {
 
 // SetModel sets the printer model name (e.g., "H2S", "P1S", "X1C").
 // This is used for camera URL format detection when ipcam_url is not available.
+// It also re-derives the HasChamber capability flag, since SetModel runs
+// after New() in server.go and may change the effective model (e.g. when the
+// config omits Model and it's only learned later via the cloud API).
 func (c *Client) SetModel(model string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.model = model
+	c.mu.Unlock()
+
+	s := c.Status()
+	s.HasChamber = IsH2S(model)
+	c.setStatus(s)
 }
 
 // ID returns the printer's unique identifier.
@@ -161,14 +169,11 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("bambu %s: cloud MQTT connection timeout to %s", c.cfg.ID, broker)
 	}
 	if err := token.Error(); err != nil {
-		c.setStatus(printers.PrinterStatus{
-			ID:     c.cfg.ID,
-			Name:   c.cfg.Name,
-			Type:   "bambu",
-			Online: false,
-			State:  "error",
-			ErrorMsg: fmt.Sprintf("MQTT connect failed: %v", err),
-		})
+		s := c.Status()
+		s.Online = false
+		s.State = "error"
+		s.ErrorMsg = fmt.Sprintf("MQTT connect failed: %v", err)
+		c.setStatus(s)
 		return fmt.Errorf("bambu %s: cloud MQTT connect: %w", c.cfg.ID, err)
 	}
 

@@ -24,9 +24,9 @@ type mockMQTTToken struct {
 	err    error
 }
 
-func (t *mockMQTTToken) Done() <-chan struct{}                { return t.doneCh }
-func (t *mockMQTTToken) Error() error                         { return t.err }
-func (t *mockMQTTToken) Wait() bool                           { <-t.doneCh; return true }
+func (t *mockMQTTToken) Done() <-chan struct{} { return t.doneCh }
+func (t *mockMQTTToken) Error() error          { return t.err }
+func (t *mockMQTTToken) Wait() bool            { <-t.doneCh; return true }
 func (t *mockMQTTToken) WaitTimeout(d time.Duration) bool {
 	timer := time.NewTimer(d)
 	select {
@@ -81,7 +81,7 @@ type mockMQTTMessage struct {
 	retained  bool
 }
 
-func (m *mockMQTTMessage) Duplicate() bool  { return m.duplicate }
+func (m *mockMQTTMessage) Duplicate() bool   { return m.duplicate }
 func (m *mockMQTTMessage) Qos() byte         { return m.qos }
 func (m *mockMQTTMessage) Retained() bool    { return m.retained }
 func (m *mockMQTTMessage) Topic() string     { return m.topic }
@@ -1607,6 +1607,85 @@ func TestClient_SetModel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// HasChamber tests
+// ---------------------------------------------------------------------------
+
+func TestNew_HasChamber(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"H2S", true},
+		{"H2D", true},
+		{"O1S", true},
+		{"P1S", false},
+		{"A1", false},
+		{"X1C", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		cfg := config.PrinterDef{
+			ID:     "haschamber-new",
+			Name:   "HasChamber New",
+			Type:   "bambu",
+			Serial: "SERIAL-HC-1",
+			Model:  tt.model,
+		}
+		c := New(cfg, nil)
+		got := c.Status().HasChamber
+		if got != tt.want {
+			t.Errorf("New() with model %q: Status().HasChamber = %v; want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestSetModel_HasChamber(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"H2S", true},
+		{"H2D", true},
+		{"O1S", true},
+		{"P1S", false},
+		{"A1", false},
+		{"X1C", false},
+	}
+
+	for _, tt := range tests {
+		c := newTestPrinterClient(nil)
+		c.SetModel(tt.model)
+		got := c.Status().HasChamber
+		if got != tt.want {
+			t.Errorf("SetModel(%q): Status().HasChamber = %v; want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestSetModel_HasChamber_RecomputesAfterNew(t *testing.T) {
+	// New() populates HasChamber from cfg.Model; SetModel() runs later
+	// (server.go) and must recompute it, since the effective model can
+	// change (e.g. config omits Model, learned later via cloud API).
+	cfg := config.PrinterDef{
+		ID:     "haschamber-recompute",
+		Name:   "HasChamber Recompute",
+		Type:   "bambu",
+		Serial: "SERIAL-HC-2",
+		// No Model set — New() should produce HasChamber=false.
+	}
+	c := New(cfg, nil)
+	if got := c.Status().HasChamber; got != false {
+		t.Fatalf("New() with no model: Status().HasChamber = %v; want false", got)
+	}
+
+	c.SetModel("H2S")
+	if got := c.Status().HasChamber; got != true {
+		t.Errorf("after SetModel(H2S): Status().HasChamber = %v; want true", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // isH2S tests
 // ---------------------------------------------------------------------------
 
@@ -1622,7 +1701,7 @@ func TestIsH2S(t *testing.T) {
 		{"H2D PRO", true},
 		{"P2S", true},
 		{"X2D", true},
-		{"O1S", true},   // Bambu Cloud API internal code for H2S
+		{"O1S", true}, // Bambu Cloud API internal code for H2S
 		{"P1S", false},
 		{"A1", false},
 		{"X1C", false},

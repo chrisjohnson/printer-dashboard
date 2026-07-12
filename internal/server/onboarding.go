@@ -737,6 +737,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           <span class="label"><span class="temp-icon nozzle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10l-1.5 9H8.5z"/><path d="M10.5 12l1.5 6 1.5-6"/><circle cx="18.5" cy="5.5" r="4.5" fill="var(--bg-card)"/><text x="18.5" y="8" text-anchor="middle" font-size="7" font-weight="700" stroke="none" fill="currentColor" font-family="-apple-system,sans-serif">1</text></svg></span>Nozzle 1:</span>
           <span class="temp-values"><span class="val">--°C</span><input class="target" type="text" inputmode="decimal" value="--" disabled></span>
         </span>
+        <!-- Chamber row is intentionally UNCONDITIONAL here, unlike
+             renderCard() (see its data-chamber comment). SkeletonCards is
+             count-only — it has no per-printer data, so there's nothing to
+             condition a per-printer HasChamber check on — and loadPrinters()
+             replaces this skeleton wholesale via innerHTML on first fetch,
+             so this markup only ever reserves layout height for a single
+             loading cycle, never lands in the live DOM long enough to be
+             wrong for a no-chamber printer. See the sync-trap comment below
+             (~renderCard's SVG icon set) for why this one exception is
+             narrow and documented rather than "fixed" into matching
+             renderCard's conditional. -->
         <span class="temp-row">
           <span class="label"><span class="temp-icon chamber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16"/></svg></span>Chamber:</span>
           <span class="temp-values"><span class="val">--°C</span><input class="target" type="text" inputmode="decimal" value="--" disabled></span>
@@ -860,12 +871,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           extraIdx++;
         });
-        // Last row: chamber
-        const lastRow = rows[rows.length - 1];
-        if (lastRow) {
-          const val = lastRow.querySelector('.val');
+        // Chamber row \u2014 looked up directly via the data-chamber marker
+        // (see renderCard) rather than positionally, since renderCard omits
+        // this row entirely for printers with no chamber heater. A
+        // positional rows[rows.length - 1] lookup would otherwise silently
+        // stomp the last *nozzle* row's value on no-chamber printers.
+        // No-op gracefully when the row isn't present.
+        const chamberRow = temps.querySelector('.temp-row[data-chamber]');
+        if (chamberRow) {
+          const val = chamberRow.querySelector('.val');
           if (val) val.textContent = chamberVal + '\u00b0C';
-          setTargetInput(lastRow, p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--');
+          setTargetInput(chamberRow, p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--');
         }
       }
 
@@ -982,6 +998,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // color via currentColor and is sized by CSS (.temp-icon svg / button svg).
     // The skeleton markup (server-rendered first paint) inlines the SAME strings
     // literally so it matches renderCard byte-for-byte — keep them in sync.
+    // One narrow, deliberate exception: the skeleton's chamber .temp-row is
+    // always present (unconditional), while renderCard's is conditional on
+    // p.has_chamber (see its data-chamber comment). SkeletonCards has no
+    // per-printer data to condition on, and loadPrinters() replaces the
+    // skeleton wholesale via innerHTML on the first fetch, so the mismatch
+    // only ever exists for a single loading cycle before real per-printer
+    // markup takes over — it's not a shape drift that updateCard() or a
+    // later renderCard() call could ever observe. Don't "fix" this into a
+    // bigger change (e.g. threading per-printer capability into
+    // SkeletonCards) without a reason beyond byte-for-byte purity.
     const _svgOpen = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
     // Heated bed: a flat platform bar with heat waves rising beneath it.
     function svgBed() {
@@ -1170,11 +1196,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
               '<span class="temp-values"><span class="val">' + actualStr + '°C</span>' + targetInput(p.id, 'nozzle' + nt.index, targetStr) + '</span>' +
             '</span>';
           }).join('') +
-          // Chamber
-          '<span class="temp-row">' +
-            '<span class="label"><span class="temp-icon chamber">' + svgChamber() + '</span>Chamber:</span>' +
-            '<span class="temp-values"><span class="val">' + chamberVal + '°C</span>' + targetInput(p.id, 'chamber', chamberT) + '</span>' +
-          '</span>' +
+          // Chamber — only rendered for printers with a chamber heater
+          // (p.has_chamber). ChamberTemp being null is not a reliable
+          // signal (it just means "not reported this cycle"), so the
+          // server-side HasChamber capability flag drives this instead.
+          // The data-chamber marker lets updateCard() look this row up
+          // directly rather than positionally.
+          (p.has_chamber ?
+            '<span class="temp-row" data-chamber>' +
+              '<span class="label"><span class="temp-icon chamber">' + svgChamber() + '</span>Chamber:</span>' +
+              '<span class="temp-values"><span class="val">' + chamberVal + '°C</span>' + targetInput(p.id, 'chamber', chamberT) + '</span>' +
+            '</span>'
+          : '') +
         '</div>' +
         fileHtml +
         layerHtml +

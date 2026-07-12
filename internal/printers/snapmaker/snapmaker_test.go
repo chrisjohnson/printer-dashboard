@@ -56,6 +56,24 @@ func TestNewPrinter(t *testing.T) {
 	}
 }
 
+func TestNewPrinter_HasChamber_AlwaysFalse(t *testing.T) {
+	// U1 never has a chamber heater — New() must always report
+	// HasChamber=false, regardless of config.
+	cfg := config.PrinterDef{
+		ID:   "workshop-u1",
+		Name: "Workshop U1",
+		Type: "snapmaker",
+		Host: "192.168.1.100",
+		Port: 8080,
+	}
+
+	p := New(cfg)
+
+	if got := p.Status().HasChamber; got != false {
+		t.Errorf("Status().HasChamber = %v; want false", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Camera URL tests
 // ---------------------------------------------------------------------------
@@ -722,10 +740,10 @@ func TestFetchQueryStatus_Success(t *testing.T) {
 type mockPaxx struct {
 	Server *httptest.Server
 
-	connMu   sync.Mutex
-	wsConn   *websocket.Conn  // client-side WS conn (snapmaker → mock)
-	srvConn  *websocket.Conn  // server-side WS conn (mock handler side)
-	ready    chan struct{}    // closed once wsConn is set
+	connMu  sync.Mutex
+	wsConn  *websocket.Conn // client-side WS conn (snapmaker → mock)
+	srvConn *websocket.Conn // server-side WS conn (mock handler side)
+	ready   chan struct{}   // closed once wsConn is set
 }
 
 // mockSnapmakerServer creates an httptest.Server that acts as a Snapmaker

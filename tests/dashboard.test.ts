@@ -71,4 +71,22 @@ test.describe('Dashboard', () => {
       }
     }
   });
+
+  test('chamber temp row only shown for printers with a chamber heater', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    // p1s has no chamber heater (no Model set → IsH2S("") is false).
+    await expect(
+      page.locator('#printer-p1s .temp-row[data-chamber]'),
+    ).toHaveCount(0);
+    // h2s has a chamber heater (Model: H2S).
+    await expect(
+      page.locator('#printer-h2s .temp-row[data-chamber]'),
+    ).toHaveCount(1);
+    // u1 (Snapmaker) never has a chamber heater.
+    await expect(
+      page.locator('#printer-u1 .temp-row[data-chamber]'),
+    ).toHaveCount(0);
+  });
 });
