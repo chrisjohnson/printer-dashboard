@@ -483,8 +483,8 @@ func TestHandleReport_FullStatusUpdate(t *testing.T) {
 	if s.Progress != 0.75 {
 		t.Errorf("Progress = %f; want 0.75", s.Progress)
 	}
-	if s.RemainingTime != 1800 {
-		t.Errorf("RemainingTime = %d; want 1800", s.RemainingTime)
+	if s.RemainingTime != 108000 {
+		t.Errorf("RemainingTime = %d; want 108000 (1800 minutes * 60)", s.RemainingTime)
 	}
 	if s.BedTemp == nil || *s.BedTemp != 55.5 {
 		t.Errorf("BedTemp = %v; want 55.5", s.BedTemp)
@@ -809,8 +809,8 @@ func TestHandleReport_MultipleUpdates(t *testing.T) {
 	if s2.CurrentLayer != 30 {
 		t.Errorf("After second report: CurrentLayer = %d; want 30", s2.CurrentLayer)
 	}
-	if s2.RemainingTime != 1800 {
-		t.Errorf("After second report: RemainingTime = %d; want 1800", s2.RemainingTime)
+	if s2.RemainingTime != 108000 {
+		t.Errorf("After second report: RemainingTime = %d; want 108000 (1800 minutes * 60)", s2.RemainingTime)
 	}
 }
 
@@ -1047,8 +1047,8 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 	if s2.Progress != 0.10 {
 		t.Errorf("Step 2: Progress = %f; want 0.10", s2.Progress)
 	}
-	if s2.RemainingTime != 3600 {
-		t.Errorf("Step 2: RemainingTime = %d; want 3600", s2.RemainingTime)
+	if s2.RemainingTime != 216000 {
+		t.Errorf("Step 2: RemainingTime = %d; want 216000 (3600 minutes * 60)", s2.RemainingTime)
 	}
 	if s2.CurrentFile != "benchy.gcode" {
 		t.Errorf("Step 2: CurrentFile = %q; want %q", s2.CurrentFile, "benchy.gcode")
@@ -1111,8 +1111,8 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 	if s4.Progress != 0.60 {
 		t.Errorf("Step 4: Progress = %f; want 0.60", s4.Progress)
 	}
-	if s4.RemainingTime != 1400 {
-		t.Errorf("Step 4: RemainingTime = %d; want 1400", s4.RemainingTime)
+	if s4.RemainingTime != 84000 {
+		t.Errorf("Step 4: RemainingTime = %d; want 84000 (1400 minutes * 60)", s4.RemainingTime)
 	}
 	if s4.CurrentLayer != 42 {
 		t.Errorf("Step 4: CurrentLayer = %d; want 42", s4.CurrentLayer)

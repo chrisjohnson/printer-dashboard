@@ -311,7 +311,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		s.Progress = float64(*p.McPercent) / 100.0
 	}
 	if p.McRemainingTime != nil {
-		s.RemainingTime = *p.McRemainingTime
+		s.RemainingTime = *p.McRemainingTime * 60
 	}
 	if p.LayerNum != nil {
 		s.CurrentLayer = *p.LayerNum
