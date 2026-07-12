@@ -14,6 +14,12 @@ import (
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// hmsHealthyStreakThreshold is the number of consecutive reports with a
+// present, healthy gcode_state and an absent "hms" key required before
+// handleReport decays stale HMSErrors/HMSWarnings. See handleReport's HMS
+// block for the full policy and rationale.
+const hmsHealthyStreakThreshold = 2
+
 // Client implements the printers.Printer interface for Bambu Lab printers
 // via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
 type Client struct {
@@ -29,6 +35,14 @@ type Client struct {
 	// after each report parse. If nil, no status updates are emitted.
 	// The channel should be buffered to avoid blocking MQTT processing.
 	StatusCh chan printers.PrinterStatus
+
+	// hmsHealthyStreak counts consecutive reports where gcode_state was
+	// present and mapped to a healthy (non-error, non-FAILED) state while
+	// the "hms" key itself was absent (not refreshed). Used by handleReport
+	// to decay/clear stale HMSErrors/HMSWarnings if firmware simply stops
+	// sending "hms" once a condition resolves, instead of sending an
+	// explicit "hms: []". See handleReport's HMS block for the full policy.
+	hmsHealthyStreak int
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -264,6 +278,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	p := r.Print
 	s := c.Status()
 	s.Online = true
+	hadHMSErrors := len(s.HMSErrors) > 0
 
 	// Map states. Only update when gcode_state is explicitly provided;
 	// heartbeat-style reports may omit it, and we must not clobber the
@@ -312,6 +327,42 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		s.ChamberTargetTemp = p.ChamberTargetTemper
 	}
 
+	// HMS (Health Management System) codes — only update when the "hms" key
+	// is present in this report (p.HMS != nil covers both a populated array
+	// and an explicit empty array []); a heartbeat-style report that omits
+	// "hms" entirely must not wipe previously-reported HMS state on its own.
+	// An empty [] DOES count as present, so it clears both slices — that's
+	// the explicit recovery signal.
+	if p.HMS != nil {
+		s.HMSErrors, s.HMSWarnings = splitHMS(p.HMS)
+		c.hmsHealthyStreak = 0
+	} else if p.GcodeState != "" && isHealthyGcodeState(p.GcodeState) {
+		// Staleness decay: some firmware simply stops sending "hms" once a
+		// condition resolves, instead of sending an explicit "hms: []". If
+		// we only ever cleared on an explicit empty array, a printer that
+		// never sends that empty array again would stay latched in
+		// State="error" forever regardless of how healthy gcode_state looks.
+		//
+		// Require hmsHealthyStreakThreshold CONSECUTIVE reports with a
+		// present, healthy gcode_state and no "hms" key before decaying —
+		// not just one. A single such report is deliberately NOT enough
+		// (see TestHandleReport_HMS_AbsentFieldDoesNotWipeExisting): one
+		// heartbeat missing "hms" is common and unremarkable, so treating it
+		// as an instant clear would be too eager and could paper over a
+		// real, still-active fault the printer just didn't re-report yet.
+		// Multiple consecutive ones alongside a healthy state machine is a
+		// much stronger signal the condition actually resolved.
+		c.hmsHealthyStreak++
+		if c.hmsHealthyStreak >= hmsHealthyStreakThreshold {
+			s.HMSErrors = nil
+			s.HMSWarnings = nil
+		}
+	} else {
+		// gcode_state absent, or present but not healthy (e.g. FAILED) —
+		// doesn't count toward the decay streak either way.
+		c.hmsHealthyStreak = 0
+	}
+
 	if p.McPercent != nil {
 		s.Progress = float64(*p.McPercent) / 100.0
 	}
@@ -325,13 +376,36 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		s.TotalLayers = *p.TotalLayerNum
 	}
 
-	// Check for error state
-	if p.GcodeState == "FAILED" || p.PrintError != nil && *p.PrintError != 0 {
+	// Check for error state. HMS errors (severity fatal/serious) trip this
+	// independently of print_error/gcode_state — this is the channel a
+	// cover-off event on a P1S (no door sensor) actually surfaces through,
+	// since print_error can stay 0 the whole time.
+	if p.GcodeState == "FAILED" || (p.PrintError != nil && *p.PrintError != 0) || len(s.HMSErrors) > 0 {
 		s.State = "error"
-		if p.PrintError != nil {
+		if p.PrintError != nil && *p.PrintError != 0 {
+			// print_error message takes precedence (backward compat).
 			s.ErrorMsg = fmt.Sprintf("print_error=%d", *p.PrintError)
+		} else if len(s.HMSErrors) > 0 {
+			// Fallback: only HMS tripped it — summarize the HMS codes.
+			codes := make([]string, len(s.HMSErrors))
+			for i, e := range s.HMSErrors {
+				codes[i] = e.Code
+			}
+			s.ErrorMsg = strings.Join(codes, "; ")
 		}
 	} else if s.State != "error" {
+		s.ErrorMsg = ""
+	} else if hadHMSErrors && p.GcodeState == "" {
+		// Secondary un-latch case: HMS errors existed before this report and
+		// are gone now (explicit "hms: []" above, or decayed via the
+		// staleness streak), print_error/gcode_state=FAILED aren't tripping
+		// it either — but this same report also omitted gcode_state, so the
+		// normal "if p.GcodeState != {}" reassignment a few lines up never
+		// ran and s.State is still latched to the stale "error" value. HMS
+		// was the only thing keeping it there, and HMS no longer agrees, so
+		// fall back to "idle" (mapState's own convention for an absent
+		// gcode_state) rather than leaving it stuck on "error" indefinitely.
+		s.State = "idle"
 		s.ErrorMsg = ""
 	}
 

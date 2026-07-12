@@ -906,6 +906,409 @@ func TestHandleReport_ErrorPreservedOnSubsequentError(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// HMS handling tests
+// ---------------------------------------------------------------------------
+
+func TestHandleReport_HMS_WarningOnly_StateStaysHealthy(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// severity "common" (code>>16 == 3) — module byte 0x0C (xcam), matches
+	// the pybambu oracle sample used in parser_test.go.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "print.gcode",
+			"print_error": 0,
+			"hms": [{"attr": 201327360, "code": 196615}]
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q (HMS warning-only must not trip error)", s.State, "printing")
+	}
+	if len(s.HMSErrors) != 0 {
+		t.Errorf("HMSErrors = %+v; want empty", s.HMSErrors)
+	}
+	if len(s.HMSWarnings) != 1 {
+		t.Fatalf("HMSWarnings len = %d; want 1", len(s.HMSWarnings))
+	}
+	if s.HMSWarnings[0].Severity != "common" {
+		t.Errorf("HMSWarnings[0].Severity = %q; want %q", s.HMSWarnings[0].Severity, "common")
+	}
+	if s.HMSWarnings[0].Module != "xcam" {
+		t.Errorf("HMSWarnings[0].Module = %q; want %q", s.HMSWarnings[0].Module, "xcam")
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty", s.ErrorMsg)
+	}
+}
+
+func TestHandleReport_HMS_FatalTripsError_PrintErrorZero(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// severity "fatal" (code>>16 == 1), module byte 0x05 (mainboard).
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "print.gcode",
+			"print_error": 0,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.State != "error" {
+		t.Errorf("State = %q; want %q", s.State, "error")
+	}
+	if len(s.HMSErrors) != 1 {
+		t.Fatalf("HMSErrors len = %d; want 1", len(s.HMSErrors))
+	}
+	if s.HMSErrors[0].Severity != "fatal" {
+		t.Errorf("HMSErrors[0].Severity = %q; want %q", s.HMSErrors[0].Severity, "fatal")
+	}
+	if s.ErrorMsg != s.HMSErrors[0].Code {
+		t.Errorf("ErrorMsg = %q; want HMS code %q (fallback since print_error is 0)", s.ErrorMsg, s.HMSErrors[0].Code)
+	}
+}
+
+func TestHandleReport_HMS_SeriousTripsError(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// severity "serious" (code>>16 == 2), module byte 0x08 (toolhead).
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"hms": [{"attr": 134217728, "code": 131072}]
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.State != "error" {
+		t.Errorf("State = %q; want %q", s.State, "error")
+	}
+	if len(s.HMSErrors) != 1 || s.HMSErrors[0].Severity != "serious" {
+		t.Fatalf("HMSErrors = %+v; want one serious entry", s.HMSErrors)
+	}
+}
+
+// TestHandleReport_HMS_CoverOffScenario reproduces the actual failure mode
+// this card is about: print_error stays 0, gcode_state stays RUNNING
+// throughout, but an HMS fatal/serious entry shows up mid-stream (e.g. a
+// force/vibration-disturbance code on a P1S with no door sensor). The
+// dashboard must flip to State="error" from the HMS channel alone.
+func TestHandleReport_HMS_CoverOffScenario(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Healthy reports first, print_error=0 and gcode_state=RUNNING throughout.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "benchy.gcode",
+			"print_error": 0,
+			"mc_percent": 40
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.State != "printing" {
+		t.Fatalf("Before HMS: State = %q; want %q", s1.State, "printing")
+	}
+
+	// Mid-stream: HMS fatal entry appears, print_error and gcode_state
+	// unchanged (both still "healthy").
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "benchy.gcode",
+			"print_error": 0,
+			"mc_percent": 41,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "error" {
+		t.Errorf("After HMS fatal: State = %q; want %q (print_error=0, gcode_state=RUNNING should not matter)", s2.State, "error")
+	}
+	if len(s2.HMSErrors) != 1 {
+		t.Fatalf("After HMS fatal: HMSErrors len = %d; want 1", len(s2.HMSErrors))
+	}
+	if s2.ErrorMsg == "" {
+		t.Error("After HMS fatal: ErrorMsg is empty; want HMS-derived summary")
+	}
+}
+
+func TestHandleReport_HMS_PrintErrorPrecedenceOverHMS(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Both print_error (nonzero) and an HMS fatal entry present simultaneously
+	// — print_error's message must win (backward compat), HMS summary is
+	// only the fallback when print_error itself produced no message.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 503,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.State != "error" {
+		t.Errorf("State = %q; want %q", s.State, "error")
+	}
+	if s.ErrorMsg != "print_error=503" {
+		t.Errorf("ErrorMsg = %q; want %q (print_error takes precedence over HMS summary)", s.ErrorMsg, "print_error=503")
+	}
+	if len(s.HMSErrors) != 1 {
+		t.Errorf("HMSErrors len = %d; want 1 (still populated even though ErrorMsg came from print_error)", len(s.HMSErrors))
+	}
+}
+
+func TestHandleReport_HMS_AbsentFieldDoesNotWipeExisting(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: HMS fatal entry present, trips error.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if len(s1.HMSErrors) != 1 {
+		t.Fatalf("After first report: HMSErrors len = %d; want 1", len(s1.HMSErrors))
+	}
+
+	// Second report: a heartbeat-style report with the "hms" key entirely
+	// absent from the JSON (not an empty array) — must NOT wipe the existing
+	// HMSErrors/HMSWarnings.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"mc_percent": 42
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if len(s2.HMSErrors) != 1 {
+		t.Errorf("After absent hms field: HMSErrors len = %d; want 1 (preserved, not wiped)", len(s2.HMSErrors))
+	}
+	if s2.State != "error" {
+		t.Errorf("After absent hms field: State = %q; want %q (preserved)", s2.State, "error")
+	}
+}
+
+func TestHandleReport_HMS_ClearsOnEmptyPresentArray(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: HMS fatal entry present, trips error.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.State != "error" || len(s1.HMSErrors) != 1 {
+		t.Fatalf("After first report: State=%q HMSErrors=%+v; want error/1 entry", s1.State, s1.HMSErrors)
+	}
+
+	// Second report: hms explicitly present but empty ([]), plus healthy
+	// print_error/gcode_state — this is the recovery signal and must clear
+	// both HMSErrors and HMSWarnings.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"mc_percent": 50,
+			"hms": []
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if len(s2.HMSErrors) != 0 {
+		t.Errorf("After empty-present hms: HMSErrors = %+v; want empty (cleared)", s2.HMSErrors)
+	}
+	if len(s2.HMSWarnings) != 0 {
+		t.Errorf("After empty-present hms: HMSWarnings = %+v; want empty (cleared)", s2.HMSWarnings)
+	}
+	if s2.State != "printing" {
+		t.Errorf("After empty-present hms: State = %q; want %q (recovered)", s2.State, "printing")
+	}
+	if s2.ErrorMsg != "" {
+		t.Errorf("After empty-present hms: ErrorMsg = %q; want empty", s2.ErrorMsg)
+	}
+}
+
+// TestHandleReport_HMS_ResolvedInFirmwareEventuallyUnlatches covers the
+// primary K-072 step 6b regression: firmware simply stops sending the "hms"
+// key at all once a condition resolves (no explicit "hms: []" ever arrives),
+// while gcode_state keeps reporting a healthy value. A single such report
+// must NOT clear state (see TestHandleReport_HMS_AbsentFieldDoesNotWipeExisting),
+// but enough consecutive ones must eventually decay the stale HMSErrors and
+// let State recover — otherwise the dashboard is stuck on "error" forever.
+func TestHandleReport_HMS_ResolvedInFirmwareEventuallyUnlatches(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: HMS fatal entry present, trips error.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.State != "error" || len(s1.HMSErrors) != 1 {
+		t.Fatalf("After first report: State=%q HMSErrors=%+v; want error/1 entry", s1.State, s1.HMSErrors)
+	}
+
+	// Firmware never sends "hms" again — condition resolved, but only via
+	// omission, not an explicit empty array. gcode_state stays healthy.
+	healthyNoHMS := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"mc_percent": 55
+		}
+	}`)
+
+	// One such report is not enough on its own (matches the existing
+	// single-heartbeat protection) — HMSErrors/State must still be latched.
+	c.handleReport(nil, newMockMessage(healthyNoHMS))
+	sAfterOne := c.Status()
+	if len(sAfterOne.HMSErrors) != 1 {
+		t.Fatalf("After 1 healthy/no-hms report: HMSErrors len = %d; want 1 (not yet decayed)", len(sAfterOne.HMSErrors))
+	}
+	if sAfterOne.State != "error" {
+		t.Fatalf("After 1 healthy/no-hms report: State = %q; want %q (not yet decayed)", sAfterOne.State, "error")
+	}
+
+	// A second consecutive healthy/no-hms report crosses the threshold and
+	// must decay the stale HMSErrors, un-latching State.
+	c.handleReport(nil, newMockMessage(healthyNoHMS))
+	sAfterTwo := c.Status()
+	if len(sAfterTwo.HMSErrors) != 0 {
+		t.Errorf("After 2 healthy/no-hms reports: HMSErrors = %+v; want empty (decayed)", sAfterTwo.HMSErrors)
+	}
+	if sAfterTwo.State != "printing" {
+		t.Errorf("After 2 healthy/no-hms reports: State = %q; want %q (recovered)", sAfterTwo.State, "printing")
+	}
+	if sAfterTwo.ErrorMsg != "" {
+		t.Errorf("After 2 healthy/no-hms reports: ErrorMsg = %q; want empty", sAfterTwo.ErrorMsg)
+	}
+}
+
+// TestHandleReport_HMS_UnhealthyGcodeStateDoesNotCountTowardDecay ensures the
+// decay streak only advances on reports where gcode_state is BOTH present and
+// healthy — a report with gcode_state absent, or present but itself
+// unhealthy (e.g. FAILED), must not count toward the threshold, and must
+// reset any streak already in progress.
+func TestHandleReport_HMS_UnhealthyGcodeStateDoesNotCountTowardDecay(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	healthyNoHMS := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0
+		}
+	}`)
+	// First healthy/no-hms report builds streak = 1.
+	c.handleReport(nil, newMockMessage(healthyNoHMS))
+
+	// A report with gcode_state entirely absent resets the streak instead of
+	// advancing it.
+	heartbeatNoGcodeState := []byte(`{
+		"print": {
+			"mc_percent": 60
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(heartbeatNoGcodeState))
+
+	// One more healthy/no-hms report only brings the streak back to 1, not
+	// past the threshold — HMSErrors must still be latched.
+	c.handleReport(nil, newMockMessage(healthyNoHMS))
+	s := c.Status()
+	if len(s.HMSErrors) != 1 {
+		t.Errorf("HMSErrors len = %d; want 1 (streak was reset by the absent-gcode_state report, not yet decayed)", len(s.HMSErrors))
+	}
+	if s.State != "error" {
+		t.Errorf("State = %q; want %q (not yet decayed)", s.State, "error")
+	}
+}
+
+// TestHandleReport_HMS_ExplicitClearWithAbsentGcodeStateUnlatchesState covers
+// the narrower secondary case flagged in K-072 step 6b: firmware DOES send an
+// explicit "hms: []" to clear the condition, but that same report is a
+// heartbeat that also omits gcode_state entirely. Without special handling,
+// the normal "if p.GcodeState != {}" reassignment never runs and State would
+// stay stuck on "error" even though HMSErrors itself is correctly cleared.
+func TestHandleReport_HMS_ExplicitClearWithAbsentGcodeStateUnlatchesState(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"print_error": 0,
+			"hms": [{"attr": 83886080, "code": 65536}]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.State != "error" || len(s1.HMSErrors) != 1 {
+		t.Fatalf("After first report: State=%q HMSErrors=%+v; want error/1 entry", s1.State, s1.HMSErrors)
+	}
+
+	// hms explicitly cleared, but gcode_state is absent this cycle (a
+	// heartbeat-style report).
+	payload2 := []byte(`{
+		"print": {
+			"mc_percent": 61,
+			"hms": []
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if len(s2.HMSErrors) != 0 {
+		t.Errorf("After explicit hms clear: HMSErrors = %+v; want empty", s2.HMSErrors)
+	}
+	if s2.State == "error" {
+		t.Errorf("After explicit hms clear (gcode_state absent this cycle): State = %q; want NOT %q (HMS was the sole cause and is now cleared)", s2.State, "error")
+	}
+	if s2.ErrorMsg != "" {
+		t.Errorf("After explicit hms clear: ErrorMsg = %q; want empty", s2.ErrorMsg)
+	}
+}
+
 func TestHandleReport_ProgressRounding(t *testing.T) {
 	c := newTestPrinterClient(nil)
 

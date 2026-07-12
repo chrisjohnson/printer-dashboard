@@ -555,6 +555,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       word-break: break-word;
     }
 
+    .warning-banner {
+      background: var(--tag-warning-bg); color: var(--tag-warning-text);
+      padding: 8px 12px; border-radius: var(--radius-control);
+      font-size: 0.8125rem; line-height: 1.4;
+      word-break: break-word;
+    }
+
     /* Progress bar — always visible */
     .progress-section { margin: 4px 0; }
     .progress-bar { background: var(--border-subtle); height: 6px; border-radius: var(--radius-pill); overflow: hidden; }
@@ -896,14 +903,19 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
       // 8. Error banner — always present in the DOM (see renderCard); entering
       // or leaving error state is real new information, so unlike filename/
-      // layer-info it's allowed to change card height here.
+      // layer-info it's allowed to change card height here. Uses the shared
+      // toggleBanner() helper so this stays in sync with renderCard()'s
+      // bannerHtml() (see K-053 for the documented history of these two
+      // paths drifting apart — don't repeat that here).
       const errorEl = card.querySelector('.error-banner');
-      if (errorEl && st === 'error' && p.error_msg) {
-        errorEl.textContent = escapeHtml(p.error_msg);
-        errorEl.style.display = '';
-      } else if (errorEl) {
-        errorEl.style.display = 'none';
-      }
+      toggleBanner(errorEl, st === 'error' && !!p.error_msg, p.error_msg);
+
+      // 8b. Warning banner — HMS (Bambu Health Management System) warnings,
+      // independent of error state. Same shared toggleBanner()/hmsSummary()
+      // helpers as the error banner above.
+      const warningEl = card.querySelector('.warning-banner');
+      const hmsWarnings = p.hms_warnings || [];
+      toggleBanner(warningEl, hmsWarnings.length > 0, hmsSummary(hmsWarnings));
 
       // 9. Control buttons
       const pauseBtn = card.querySelector('button[onclick*="pause"]');
@@ -1109,7 +1121,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // display:none rather than omitted) so renderCard() and updateCard()
       // agree on shape, and a later WS error update can find and show it
       // without a full card rebuild.
-      const errorHtml = '<div class="error-banner"' + ((st === 'error' && p.error_msg) ? '' : ' style="display:none;"') + '>' + escapeHtml(p.error_msg || '') + '</div>';
+      const errorHtml = bannerHtml('error-banner', st === 'error' && !!p.error_msg, p.error_msg);
+
+      // Warning banner — shown when HMS (Bambu Health Management System)
+      // warnings are present, regardless of error state. Same
+      // always-in-DOM/hidden-via-display:none pattern as errorHtml (both
+      // built via the shared bannerHtml() helper) so there is no layout
+      // shift, and so updateCard() can find and toggle it without a full
+      // card rebuild. Errors continue to use error-banner/error_msg
+      // unchanged; this is a separate, non-blocking channel.
+      const hmsWarnings = p.hms_warnings || [];
+      const warningHtml = bannerHtml('warning-banner', hmsWarnings.length > 0, hmsSummary(hmsWarnings));
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1212,6 +1234,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         fileHtml +
         layerHtml +
         errorHtml +
+        warningHtml +
         '<div class="controls">' +
           '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
           '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
@@ -1240,6 +1263,37 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     function escapeJsString(s) {
       if (!s) return '';
       return escapeHtml(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
+    }
+
+    // Builds one HTML banner element string. Shared by error-banner and
+    // warning-banner in renderCard() so the two don't drift out of sync (see
+    // K-053 for the documented history of exactly this class of drift).
+    // Always emits the element (hidden via display:none when not visible)
+    // rather than omitting it, so renderCard()/updateCard() agree on shape
+    // and a later WS update can find + toggle it without a full card rebuild.
+    function bannerHtml(cls, visible, text) {
+      return '<div class="' + cls + '"' + (visible ? '' : ' style="display:none;"') + '>' + escapeHtml(text || '') + '</div>';
+    }
+
+    // Shows/hides an already-in-DOM banner element and sets its text. Shared
+    // by the error-banner and warning-banner toggle logic in updateCard().
+    function toggleBanner(el, visible, text) {
+      if (!el) return;
+      if (visible) {
+        el.textContent = escapeHtml(text);
+        el.style.display = '';
+      } else {
+        el.style.display = 'none';
+      }
+    }
+
+    // Joins decoded HMS entries into one summary string. Shared Go-side
+    // equivalent is bambu/client.go's strings.Join(codes, "; ") — same
+    // format, kept independently since it's a different language, but this
+    // is the single JS-side source of truth (was previously duplicated
+    // separately in renderCard() and updateCard()).
+    function hmsSummary(entries) {
+      return entries.map(function(e) { return e.code; }).join('; ');
     }
 
     function cmd(id, action) {

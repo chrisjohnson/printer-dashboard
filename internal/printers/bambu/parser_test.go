@@ -3,14 +3,16 @@ package bambu
 import (
 	"math"
 	"testing"
+
+	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 )
 
 // epsilon is used for floating-point comparisons.
 const epsilon = 1e-9
 
-func float64Ptr(v float64) *float64  { return &v }
-func intPtr(v int) *int              { return &v }
-func stringPtr(v string) *string     { return &v }
+func float64Ptr(v float64) *float64 { return &v }
+func intPtr(v int) *int             { return &v }
+func stringPtr(v string) *string    { return &v }
 
 // ---------------------------------------------------------------------------
 // parseReport tests
@@ -235,6 +237,36 @@ func TestIsErrorState(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// isHealthyGcodeState tests
+// ---------------------------------------------------------------------------
+
+func TestIsHealthyGcodeState(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{input: "RUNNING", want: true},
+		{input: "PAUSE", want: true},
+		{input: "SUCCESS", want: true},
+		{input: "FINISH", want: true},
+		{input: "IDLE", want: true},
+		{input: "PREPARE", want: true},
+		{input: "STANDBY", want: true},
+		{input: "FAILED", want: false},
+		{input: "SOMETHING_ELSE", want: false}, // maps to "unknown" — not confidently healthy
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := isHealthyGcodeState(tt.input)
+			if got != tt.want {
+				t.Errorf("isHealthyGcodeState(%q) = %v; want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -372,5 +404,172 @@ func compareStringPtr(t *testing.T, name string, want, got *string) {
 	}
 	if *got != *want {
 		t.Errorf("%s = %q; want %q", name, *got, *want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HMS decode tests
+// ---------------------------------------------------------------------------
+
+// TestDecodeHMSCode_PybambuOracle validates the bit-math against the real
+// pybambu sample entry {attr: 201327360, code: 196615}, deriving the expected
+// string from the documented formula rather than a guessed literal.
+func TestDecodeHMSCode_PybambuOracle(t *testing.T) {
+	var attr uint32 = 201327360
+	var code uint32 = 196615
+
+	// Derive expected value directly from the spec formula.
+	want := hexPart(attr>>16) + "-" + hexPart(attr&0xFFFF) + "-" + hexPart(code>>16) + "-" + hexPart(code&0xFFFF)
+	want = "HMS_" + want
+
+	got := decodeHMSCode(attr, code)
+	if got != want {
+		t.Errorf("decodeHMSCode(%d, %d) = %q; want %q", attr, code, got, want)
+	}
+}
+
+// hexPart formats a uint32 sub-part as 4-digit uppercase hex, mirroring the
+// %04X verb used by decodeHMSCode, so the oracle test derives its expectation
+// independently rather than hardcoding the formatted string.
+func hexPart(v uint32) string {
+	const hexDigits = "0123456789ABCDEF"
+	b := make([]byte, 4)
+	for i := 3; i >= 0; i-- {
+		b[i] = hexDigits[v&0xF]
+		v >>= 4
+	}
+	return string(b)
+}
+
+func TestDecodeHMSModule(t *testing.T) {
+	tests := []struct {
+		name string
+		attr uint32
+		want string
+	}{
+		{name: "pybambu oracle sample -> xcam", attr: 201327360, want: "xcam"},
+		{name: "mainboard", attr: 0x05 << 24, want: "mainboard"},
+		{name: "ams", attr: 0x07 << 24, want: "ams"},
+		{name: "toolhead", attr: 0x08 << 24, want: "toolhead"},
+		{name: "mc", attr: 0x03 << 24, want: "mc"},
+		{name: "unknown module byte falls back", attr: 0xFF << 24, want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decodeHMSModule(tt.attr)
+			if got != tt.want {
+				t.Errorf("decodeHMSModule(%d) = %q; want %q", tt.attr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecodeHMSSeverity(t *testing.T) {
+	tests := []struct {
+		name string
+		code uint32
+		want string
+	}{
+		{name: "pybambu oracle sample -> common", code: 196615, want: "common"},
+		{name: "fatal", code: 1 << 16, want: "fatal"},
+		{name: "serious", code: 2 << 16, want: "serious"},
+		{name: "common", code: 3 << 16, want: "common"},
+		{name: "info", code: 4 << 16, want: "info"},
+		{name: "unknown severity falls back", code: 99 << 16, want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := decodeHMSSeverity(tt.code)
+			if got != tt.want {
+				t.Errorf("decodeHMSSeverity(%d) = %q; want %q", tt.code, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSplitHMS(t *testing.T) {
+	tests := []struct {
+		name       string
+		items      []hmsItem
+		wantErrors []printers.HMSEntry
+		wantWarn   []printers.HMSEntry
+	}{
+		{
+			name:       "nil input -> nil/empty output, no error",
+			items:      nil,
+			wantErrors: nil,
+			wantWarn:   nil,
+		},
+		{
+			name:       "empty slice input -> nil/empty output, no error",
+			items:      []hmsItem{},
+			wantErrors: nil,
+			wantWarn:   nil,
+		},
+		{
+			name: "fatal buckets into errors",
+			items: []hmsItem{
+				{Attr: 0x05 << 24, Code: 1 << 16},
+			},
+			wantErrors: []printers.HMSEntry{
+				{Code: decodeHMSCode(0x05<<24, 1<<16), Module: "mainboard", Severity: "fatal"},
+			},
+			wantWarn: nil,
+		},
+		{
+			name: "serious buckets into errors",
+			items: []hmsItem{
+				{Attr: 0x08 << 24, Code: 2 << 16},
+			},
+			wantErrors: []printers.HMSEntry{
+				{Code: decodeHMSCode(0x08<<24, 2<<16), Module: "toolhead", Severity: "serious"},
+			},
+			wantWarn: nil,
+		},
+		{
+			name: "common and info bucket into warnings",
+			items: []hmsItem{
+				{Attr: 201327360, Code: 196615}, // pybambu oracle sample, xcam/common
+				{Attr: 0x07 << 24, Code: 4 << 16},
+			},
+			wantErrors: nil,
+			wantWarn: []printers.HMSEntry{
+				{Code: decodeHMSCode(201327360, 196615), Module: "xcam", Severity: "common"},
+				{Code: decodeHMSCode(0x07<<24, 4<<16), Module: "ams", Severity: "info"},
+			},
+		},
+		{
+			name: "unknown module falls back to unknown, still buckets by severity",
+			items: []hmsItem{
+				{Attr: 0xFF << 24, Code: 1 << 16},
+			},
+			wantErrors: []printers.HMSEntry{
+				{Code: decodeHMSCode(0xFF<<24, 1<<16), Module: "unknown", Severity: "fatal"},
+			},
+			wantWarn: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotErrors, gotWarn := splitHMS(tt.items)
+			compareHMSEntries(t, "errors", tt.wantErrors, gotErrors)
+			compareHMSEntries(t, "warnings", tt.wantWarn, gotWarn)
+		})
+	}
+}
+
+func compareHMSEntries(t *testing.T, label string, want, got []printers.HMSEntry) {
+	t.Helper()
+
+	if len(want) != len(got) {
+		t.Fatalf("%s: len = %d; want %d (got=%+v, want=%+v)", label, len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%s[%d] = %+v; want %+v", label, i, got[i], want[i])
+		}
 	}
 }

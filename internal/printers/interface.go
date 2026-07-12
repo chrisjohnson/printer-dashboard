@@ -36,6 +36,21 @@ type PrinterStatus struct {
 	ErrorMsg      string            `json:"error_msg,omitempty"`
 	NozzleTemps   []NozzleTempEntry `json:"nozzle_temps,omitempty"`
 	CameraStreams []CameraStream    `json:"camera_streams,omitempty"`
+	// HMSErrors holds decoded Bambu HMS (Health Management System) events of
+	// fatal/serious severity. These independently trip State="error" — see
+	// bambu/client.go's handleReport, which folds these into ErrorMsg when
+	// print_error itself is 0/nil.
+	HMSErrors []HMSEntry `json:"hms_errors,omitempty"`
+	// HMSWarnings holds decoded Bambu HMS events of common/info/unknown
+	// severity — non-blocking, surfaced in the UI but does not affect State.
+	HMSWarnings []HMSEntry `json:"hms_warnings,omitempty"`
+}
+
+// HMSEntry is one decoded Bambu HMS (Health Management System) event.
+type HMSEntry struct {
+	Code     string `json:"code"`
+	Module   string `json:"module"`
+	Severity string `json:"severity"`
 }
 
 // NozzleTempEntry captures one toolhead's temperature data.
