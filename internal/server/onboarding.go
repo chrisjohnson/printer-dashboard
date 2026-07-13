@@ -1198,9 +1198,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
           html += '<div class="camera-nav">';
-          html += '<button class="cam-prev" onclick="cameraFlip(\'' + p.id + '\',-1)">' + svgChevron('left') + '</button>';
+          html += '<button class="cam-prev" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',-1)">' + svgChevron('left') + '</button>';
           html += '<span class="cam-label">' + label + '</span>';
-          html += '<button class="cam-next" onclick="cameraFlip(\'' + p.id + '\',1)">' + svgChevron('right') + '</button>';
+          html += '<button class="cam-next" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',1)">' + svgChevron('right') + '</button>';
           html += '</div></div>';
           return '<div class="camera-section" id="cam-section-' + p.id + '">' + html + '</div>';
         })() +
@@ -1242,10 +1242,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         errorHtml +
         warningHtml +
         '<div class="controls">' +
-          '<button onclick="cmd(\'' + p.id + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
-          '<button onclick="cmd(\'' + p.id + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
         '</div>' +
       '</div>';
     }
