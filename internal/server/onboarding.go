@@ -597,6 +597,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .temp-icon.chamber { color: var(--temp-chamber); }
     .temp-values { display: flex; gap: 8px; align-items: center; }
 
+    /* Light toggle row — styled like a temp-row but with a CSS switch */
+    .light-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 2px 0; }
+    .light-label { color: var(--text); font-weight: 600; font-size: inherit; font-variant-numeric: tabular-nums; min-width: 2em; text-align: right; }
+    /* iOS-style toggle switch (pure CSS, no JS library) */
+    .toggle { position: relative; width: 40px; height: 22px; display: inline-block; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle .slider { position: absolute; inset: 0; background: #ccc; border-radius: 11px; transition: background 0.2s; cursor: pointer; }
+    .toggle .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: white; border-radius: 50%; transition: transform 0.2s; pointer-events: none; }
+    .toggle input:checked + .slider { background: var(--accent); }
+    .toggle input:checked + .slider::before { transform: translateX(18px); }
+
     /* File name — hidden on mobile, shown on desktop (see media query below).
        Always rendered in the markup (with a "—" placeholder when no file is
        printing) so its row height is reserved from first paint; a later WS
@@ -618,10 +629,6 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
     .controls button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     .controls button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
-    .controls button.btn-light { background: #6b7280; border-color: #6b7280; color: #fff; }
-    .controls button.btn-light:hover:not(:disabled) { background: #4b5563; border-color: #4b5563; }
-    .controls button.btn-light.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
-    .controls button.btn-light.active:hover:not(:disabled) { background: #d97706; border-color: #d97706; }
     /* Hide skip + resume on mobile */
     .btn-skip, .btn-resume { display: none; }
 
@@ -763,6 +770,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           <span class="label"><span class="temp-icon chamber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="16" height="14" rx="1"/><path d="M4 10h16"/></svg></span>Chamber:</span>
           <span class="temp-values"><span class="val">--°C</span><input class="target" type="text" inputmode="decimal" value="--" disabled></span>
         </span>
+        <span class="light-row" data-light>
+          <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></span>Light</span>
+          <span class="temp-values"><label class="toggle"><input type="checkbox"><span class="slider"></span></label><span class="light-label">OFF</span></span>
+        </span>
       </div>
       <div class="filename">&nbsp;</div>
       <div class="layer-info">&nbsp;</div>
@@ -772,7 +783,6 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="btn-resume" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"/></svg>Resume</button>
         <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
         <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip Object</button>
-        <button class="btn-light" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>Light</button>
       </div>
     </div>
     {{end}}
@@ -932,14 +942,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
       if (skipBtn) skipBtn.disabled = st !== 'printing';
 
-      // 10. Light toggle button — add/remove "active" class based on light_on state.
-      const lightBtn = card.querySelector('button[onclick*="toggleLight"]');
-      if (lightBtn) {
-        if (p.light_on === true) {
-          lightBtn.classList.add('active');
-        } else {
-          lightBtn.classList.remove('active');
-        }
+      // 10. Light toggle — update the CSS switch state from data-light row.
+      const lightRow = card.querySelector('[data-light]');
+      if (lightRow) {
+        const toggle = lightRow.querySelector('.toggle input');
+        if (toggle) toggle.checked = p.light_on === true;
+        const label = lightRow.querySelector('.light-label');
+        if (label) label.textContent = p.light_on === true ? 'ON' : 'OFF';
       }
 
       reorderCard(p.id);
@@ -1274,6 +1283,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
               '<span class="temp-values"><span class="val">' + chamberVal + '°C</span>' + targetInput(p.id, 'chamber', chamberT) + '</span>' +
             '</span>'
           : '') +
+          // Light toggle — CSS switch in the temps section (not a button).
+          // The data-light marker lets updateCard() find it directly.
+          '<span class="light-row" data-light>' +
+            '<span class="label"><span class="temp-icon">' + svgLight() + '</span>Light</span>' +
+            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"></span></label><span class="light-label">' + (p.light_on === true ? 'ON' : 'OFF') + '</span></span>' +
+          '</span>' +
         '</div>' +
         fileHtml +
         layerHtml +
@@ -1284,7 +1299,6 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
-          '<button onclick="toggleLight(\'' + escapeJsString(p.id) + '\')" class="btn-light" title="Toggle chamber light">' + svgLight() + 'Light</button>' +
         '</div>' +
       '</div>';
     }
@@ -1357,13 +1371,43 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (!cached) return;
       var currentlyOn = cached.light_on === true;
       var newOn = !currentlyOn;
+
+      // Optimistic UI: immediately toggle the visual state
+      var card = document.getElementById('printer-' + printerId);
+      if (card) {
+        var toggle = card.querySelector('[data-light] .toggle input');
+        if (toggle) toggle.checked = newOn;
+        var label = card.querySelector('[data-light] .light-label');
+        if (label) label.textContent = newOn ? 'ON' : 'OFF';
+      }
+
       fetch('/api/printers/' + printerId + '/light', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ on: newOn })
       }).then(function(r) { return r.json(); })
-        .then(function(d) { if (d.error) console.error('toggleLight error:', d.error); })
-        .catch(function(e) { console.error('toggleLight network error:', e); });
+        .then(function(d) {
+          if (d.error) {
+            // Revert optimistic update
+            if (card) {
+              var toggle = card.querySelector('[data-light] .toggle input');
+              if (toggle) toggle.checked = currentlyOn;
+              var label = card.querySelector('[data-light] .light-label');
+              if (label) label.textContent = currentlyOn ? 'ON' : 'OFF';
+            }
+            alert('Light control failed: ' + d.error);
+          }
+        })
+        .catch(function(e) {
+          // Revert on network error
+          if (card) {
+            var toggle = card.querySelector('[data-light] .toggle input');
+            if (toggle) toggle.checked = currentlyOn;
+            var label = card.querySelector('[data-light] .light-label');
+            if (label) label.textContent = currentlyOn ? 'ON' : 'OFF';
+          }
+          alert('Network error controlling light');
+        });
     }
 
     window._cameraSlots = window._cameraSlots || {};

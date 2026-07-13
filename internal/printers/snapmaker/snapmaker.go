@@ -38,6 +38,13 @@ type Printer struct {
 
 	status printers.PrinterStatus
 
+	// lightOn tracks the last-commanded cavity LED state. Moonraker/Klipper
+	// provides no way to query real LED state for this fixture (the
+	// led object query always returns null), so we track the last state we
+	// successfully commanded instead of polling hardware. nil means unknown
+	// (no SetLight call has succeeded yet). Guarded by mu, same as status.
+	lightOn *bool
+
 	// httpClient is used for all REST API calls to the printer.
 	httpClient *http.Client
 
@@ -377,6 +384,13 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 	current := p.Status()
 	current.Online = true
 
+	// Light state — Moonraker/Klipper cannot report real LED state for this
+	// fixture (the led object query always returns null), so populate from
+	// the last state we successfully commanded via SetLight instead.
+	p.mu.RLock()
+	current.LightOn = p.lightOn
+	p.mu.RUnlock()
+
 	// State
 	if s.State != nil {
 		current.State = mapMoonrakerState(s.State.Text, s.State.Flags)
@@ -570,12 +584,26 @@ func (p *Printer) SetChamberTemp(_ context.Context, _ int) error {
 }
 
 // SetLight turns the cavity LED on or off via Moonraker's GCode endpoint.
+//
+// The cavity_led fixture is RGB-driven (it appears white via R=G=B=1), not
+// white-channel-driven, so all four channels must be set together — setting
+// only WHITE is a no-op on the real hardware.
 func (p *Printer) SetLight(ctx context.Context, on bool) error {
-	script := "SET_LED LED=cavity_led WHITE=1"
+	script := "SET_LED LED=cavity_led RED=1 GREEN=1 BLUE=1 WHITE=1"
 	if !on {
-		script = "SET_LED LED=cavity_led WHITE=0"
+		script = "SET_LED LED=cavity_led RED=0 GREEN=0 BLUE=0 WHITE=0"
 	}
-	return p.sendGCode(ctx, script)
+	if err := p.sendGCode(ctx, script); err != nil {
+		return err
+	}
+
+	// Track the commanded state — Moonraker cannot report real LED state
+	// for this fixture (see lightOn field doc).
+	p.mu.Lock()
+	p.lightOn = &on
+	p.mu.Unlock()
+
+	return nil
 }
 
 // sendGCode sends a GCode command to the printer via Moonraker's
@@ -599,9 +627,16 @@ func (p *Printer) sendGCode(ctx context.Context, script string) error {
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("snapmaker %s: gcode returned HTTP %d: %s", p.cfg.ID, resp.StatusCode, string(respBody))
+	}
+
+	// Moonraker can return HTTP 200 with an embedded error in the JSON body
+	// (e.g. klippy not connected, invalid GCode) — check for that too.
+	if err := parseMoonrakerError(respBody); err != nil {
+		return fmt.Errorf("snapmaker %s: gcode failed: %w", p.cfg.ID, err)
 	}
 	return nil
 }

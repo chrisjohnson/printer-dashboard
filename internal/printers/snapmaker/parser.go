@@ -134,6 +134,36 @@ type moonrakerQueryResponse struct {
 	} `json:"result"`
 }
 
+// --- Types for Moonraker JSON-RPC-style error responses ---
+
+// moonrakerErrorResponse captures the embedded-error shape Moonraker can
+// return alongside an HTTP 200, e.g. {"error": {"message": "Klippy Not
+// Connected"}}. A successful response (e.g. {"result": "ok"}) leaves Error
+// nil.
+type moonrakerErrorResponse struct {
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+// parseMoonrakerError checks a Moonraker HTTP 200 response body for an
+// embedded error field. It returns nil if the body is empty, unparsable, or
+// has no error field — callers should treat those as success. If an error
+// field is present, it returns an error wrapping its message.
+func parseMoonrakerError(data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+	var r moonrakerErrorResponse
+	if err := json.Unmarshal(data, &r); err != nil {
+		return nil
+	}
+	if r.Error != nil {
+		return fmt.Errorf("moonraker error: %s", r.Error.Message)
+	}
+	return nil
+}
+
 // --- Functions ---
 
 // parseAPIReport parses a response from GET /api/printer.

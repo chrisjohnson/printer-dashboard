@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -434,6 +435,9 @@ func mockGCodeServer(t *testing.T, statusCode int) (*httptest.Server, func() map
 		}
 
 		w.WriteHeader(statusCode)
+		if statusCode >= 200 && statusCode < 300 {
+			_, _ = w.Write([]byte(`{"result": "ok"}`))
+		}
 	}))
 
 	captureFn := func() map[string]string {
@@ -461,8 +465,8 @@ func TestSetLight_On(t *testing.T) {
 	if body == nil {
 		t.Fatal("no request body captured")
 	}
-	if body["script"] != "SET_LED LED=cavity_led WHITE=1" {
-		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led WHITE=1")
+	if body["script"] != "SET_LED LED=cavity_led RED=1 GREEN=1 BLUE=1 WHITE=1" {
+		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led RED=1 GREEN=1 BLUE=1 WHITE=1")
 	}
 }
 
@@ -483,8 +487,8 @@ func TestSetLight_Off(t *testing.T) {
 	if body == nil {
 		t.Fatal("no request body captured")
 	}
-	if body["script"] != "SET_LED LED=cavity_led WHITE=0" {
-		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led WHITE=0")
+	if body["script"] != "SET_LED LED=cavity_led RED=0 GREEN=0 BLUE=0 WHITE=0" {
+		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led RED=0 GREEN=0 BLUE=0 WHITE=0")
 	}
 }
 
@@ -509,8 +513,8 @@ func TestSetLight_SendsAccessCode(t *testing.T) {
 	if body == nil {
 		t.Fatal("no request body captured")
 	}
-	if body["script"] != "SET_LED LED=cavity_led WHITE=1" {
-		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led WHITE=1")
+	if body["script"] != "SET_LED LED=cavity_led RED=1 GREEN=1 BLUE=1 WHITE=1" {
+		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led RED=1 GREEN=1 BLUE=1 WHITE=1")
 	}
 }
 
@@ -543,6 +547,132 @@ func TestSetLight_ContextCancelled(t *testing.T) {
 	err := p.SetLight(ctx, true)
 	if err == nil {
 		t.Fatal("expected error for unreachable host, got nil")
+	}
+}
+
+func TestSetLight_TracksCommandedState(t *testing.T) {
+	tests := []struct {
+		name string
+		on   bool
+	}{
+		{"on", true},
+		{"off", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, _ := mockGCodeServer(t, 200)
+			defer ts.Close()
+
+			p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+			p.testBaseURL = ts.URL
+			p.httpClient = ts.Client()
+
+			if err := p.SetLight(context.Background(), tt.on); err != nil {
+				t.Fatalf("SetLight(%v) returned error: %v", tt.on, err)
+			}
+
+			// handleStatusReport should now surface the tracked state,
+			// since Moonraker cannot report real LED state for this fixture.
+			p.handleStatusReport(&apiPrinterResponse{})
+			s := p.Status()
+			if s.LightOn == nil {
+				t.Fatal("LightOn = nil; want non-nil after successful SetLight")
+			}
+			if *s.LightOn != tt.on {
+				t.Errorf("LightOn = %v; want %v", *s.LightOn, tt.on)
+			}
+		})
+	}
+}
+
+func TestSetLight_HTTPError_DoesNotTrackState(t *testing.T) {
+	ts, _ := mockGCodeServer(t, 500)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	if err := p.SetLight(context.Background(), true); err == nil {
+		t.Fatal("expected error for HTTP 500, got nil")
+	}
+
+	p.handleStatusReport(&apiPrinterResponse{})
+	s := p.Status()
+	if s.LightOn != nil {
+		t.Errorf("LightOn = %v; want nil (SetLight failed, state should not be tracked)", *s.LightOn)
+	}
+}
+
+// mockGCodeErrorServer creates an httptest.Server that responds to POST
+// /printer/gcode/script with HTTP 200 and an embedded Moonraker error body,
+// simulating cases like klippy not being connected.
+func mockGCodeErrorServer(t *testing.T, message string) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintf(w, `{"error": {"message": %q}}`, message)
+	}))
+}
+
+func TestSendGCode_200WithResultOK(t *testing.T) {
+	ts, _ := mockGCodeServer(t, 200)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	if err := p.sendGCode(context.Background(), "SET_LED LED=cavity_led"); err != nil {
+		t.Errorf("sendGCode returned error: %v", err)
+	}
+}
+
+func TestSendGCode_200WithEmbeddedError(t *testing.T) {
+	ts := mockGCodeErrorServer(t, "Klippy Not Connected")
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	err := p.sendGCode(context.Background(), "SET_LED LED=cavity_led")
+	if err == nil {
+		t.Fatal("expected error for HTTP 200 with embedded error body, got nil")
+	}
+	if !strings.Contains(err.Error(), "Klippy Not Connected") {
+		t.Errorf("error = %q; want it to contain %q", err.Error(), "Klippy Not Connected")
+	}
+}
+
+func TestSetLight_200WithEmbeddedError_DoesNotTrackState(t *testing.T) {
+	ts := mockGCodeErrorServer(t, "Klippy Not Connected")
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	if err := p.SetLight(context.Background(), true); err == nil {
+		t.Fatal("expected error for HTTP 200 with embedded error body, got nil")
+	}
+
+	p.handleStatusReport(&apiPrinterResponse{})
+	s := p.Status()
+	if s.LightOn != nil {
+		t.Errorf("LightOn = %v; want nil (SetLight failed via embedded error, state should not be tracked)", *s.LightOn)
+	}
+}
+
+func TestHandleStatusReport_LightOnUnknownByDefault(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+
+	p.handleStatusReport(&apiPrinterResponse{})
+	s := p.Status()
+	if s.LightOn != nil {
+		t.Errorf("LightOn = %v; want nil (no SetLight call has succeeded yet)", *s.LightOn)
 	}
 }
 
