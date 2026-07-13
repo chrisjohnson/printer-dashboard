@@ -20,27 +20,36 @@ type infoData struct {
 }
 
 type printStatus struct {
-	GcodeState          string    `json:"gcode_state"`
-	GcodeFile           *string   `json:"gcode_file"`
-	SubtaskName         *string   `json:"subtask_name"`
-	McPercent           *int      `json:"mc_percent"`
-	McRemainingTime     *int      `json:"mc_remaining_time"`
-	BedTemper           *float64  `json:"bed_temper"`
-	BedTarget           *float64  `json:"bed_target_temper"`
-	NozzleTemper        *float64  `json:"nozzle_temper"`
-	NozzleTarget        *float64  `json:"nozzle_target_temper"`
-	ChamberTemper       *float64  `json:"chamber_temper"`
-	ChamberTargetTemper *float64  `json:"chamber_target_temper"`
-	Info                *infoData `json:"info"`
-	LayerNum            *int      `json:"layer_num"`
-	TotalLayerNum       *int      `json:"total_layer_num"`
-	WifiSignal          *string   `json:"wifi_signal"`
-	HomeFlag            int       `json:"home_flag"`
-	StgCur              *int      `json:"stg_cur"` // current stage
-	StgTotal            *int      `json:"stg_total"`
-	PrintError          *int      `json:"print_error"`
-	Lifecycle           *string   `json:"lifecycle,omitempty"`
-	HMS                 []hmsItem `json:"hms,omitempty"`
+	GcodeState          string             `json:"gcode_state"`
+	GcodeFile           *string            `json:"gcode_file"`
+	SubtaskName         *string            `json:"subtask_name"`
+	McPercent           *int               `json:"mc_percent"`
+	McRemainingTime     *int               `json:"mc_remaining_time"`
+	BedTemper           *float64           `json:"bed_temper"`
+	BedTarget           *float64           `json:"bed_target_temper"`
+	NozzleTemper        *float64           `json:"nozzle_temper"`
+	NozzleTarget        *float64           `json:"nozzle_target_temper"`
+	ChamberTemper       *float64           `json:"chamber_temper"`
+	ChamberTargetTemper *float64           `json:"chamber_target_temper"`
+	Info                *infoData          `json:"info"`
+	LayerNum            *int               `json:"layer_num"`
+	TotalLayerNum       *int               `json:"total_layer_num"`
+	WifiSignal          *string            `json:"wifi_signal"`
+	HomeFlag            int                `json:"home_flag"`
+	StgCur              *int               `json:"stg_cur"` // current stage
+	StgTotal            *int               `json:"stg_total"`
+	PrintError          *int               `json:"print_error"`
+	Lifecycle           *string            `json:"lifecycle,omitempty"`
+	HMS                 []hmsItem          `json:"hms,omitempty"`
+	LightsReport        []lightReportEntry `json:"lights_report,omitempty"`
+}
+
+// lightReportEntry is a single entry from the lights_report array in a
+// print report. The chamber light's state is reported as
+// {"node": "chamber_light", "mode": "on"} or "off".
+type lightReportEntry struct {
+	Node string `json:"node"`
+	Mode string `json:"mode"`
 }
 
 // hmsItem is one raw Bambu HMS (Health Management System) wire entry.

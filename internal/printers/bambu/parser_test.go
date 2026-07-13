@@ -208,6 +208,64 @@ func TestParseReport(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "lights_report parsed from print section",
+			input: `{
+				"print": {
+					"gcode_state": "RUNNING",
+					"lights_report": [
+						{"node": "chamber_light", "mode": "on"}
+					]
+				}
+			}`,
+			want: &report{
+				Print: &printStatus{
+					GcodeState: "RUNNING",
+					LightsReport: []lightReportEntry{
+						{Node: "chamber_light", Mode: "on"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "lights_report with multiple entries",
+			input: `{
+				"print": {
+					"gcode_state": "RUNNING",
+					"lights_report": [
+						{"node": "chamber_light", "mode": "off"},
+						{"node": "status_light", "mode": "on"}
+					]
+				}
+			}`,
+			want: &report{
+				Print: &printStatus{
+					GcodeState: "RUNNING",
+					LightsReport: []lightReportEntry{
+						{Node: "chamber_light", Mode: "off"},
+						{Node: "status_light", Mode: "on"},
+					},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "lights_report empty array",
+			input: `{
+				"print": {
+					"gcode_state": "IDLE",
+					"lights_report": []
+				}
+			}`,
+			want: &report{
+				Print: &printStatus{
+					GcodeState:   "IDLE",
+					LightsReport: []lightReportEntry{},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -387,6 +445,18 @@ func comparePrintStatus(t *testing.T, want, got *printStatus) {
 		t.Errorf("Info = nil; want %+v", want.Info)
 	} else if want.Info != nil && got.Info != nil {
 		compareFloat64Ptr(t, "Info.Temp", want.Info.Temp, got.Info.Temp)
+	}
+
+	// LightsReport field.
+	if len(want.LightsReport) != len(got.LightsReport) {
+		t.Errorf("LightsReport len = %d; want %d (got=%+v, want=%+v)",
+			len(got.LightsReport), len(want.LightsReport), got.LightsReport, want.LightsReport)
+	} else {
+		for i := range want.LightsReport {
+			if got.LightsReport[i] != want.LightsReport[i] {
+				t.Errorf("LightsReport[%d] = %+v; want %+v", i, got.LightsReport[i], want.LightsReport[i])
+			}
+		}
 	}
 }
 

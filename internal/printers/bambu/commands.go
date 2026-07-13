@@ -59,9 +59,14 @@ type systemCommand struct {
 }
 
 type systemPayload struct {
-	Command string `json:"command"`
-	LEDNode string `json:"led_node,omitempty"`
-	LEDMode string `json:"led_mode,omitempty"`
+	SequenceID   string `json:"sequence_id"`
+	Command      string `json:"command"`
+	LEDNode      string `json:"led_node,omitempty"`
+	LEDMode      string `json:"led_mode,omitempty"`
+	LEDOnTime    int    `json:"led_on_time"`
+	LEDOffTime   int    `json:"led_off_time"`
+	LoopTimes    int    `json:"loop_times"`
+	IntervalTime int    `json:"interval_time"`
 }
 
 // setBedTempCommand returns the JSON payload to set the bed target temperature
@@ -83,15 +88,22 @@ func setNozzleTempCommand(temp int) []byte {
 }
 
 // setLightCommand returns the JSON payload to turn the chamber light on or off.
+// The Bambu firmware requires all of these fields; without them the command
+// is silently ignored.
 func setLightCommand(on bool) []byte {
 	mode := "off"
 	if on {
 		mode = "on"
 	}
 	return mustMarshal(systemCommand{System: systemPayload{
-		Command: "ledctrl",
-		LEDNode: "chamber_light",
-		LEDMode: mode,
+		SequenceID:   "0",
+		Command:      "ledctrl",
+		LEDNode:      "chamber_light",
+		LEDMode:      mode,
+		LEDOnTime:    500,
+		LEDOffTime:   500,
+		LoopTimes:    0,
+		IntervalTime: 0,
 	}})
 }
 

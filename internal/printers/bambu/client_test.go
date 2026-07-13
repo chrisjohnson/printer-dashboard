@@ -2129,6 +2129,173 @@ func TestHandleReport_SuccessDoesNotClearCurrentFile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Light state tests (lights_report parsing in handleReport)
+// ---------------------------------------------------------------------------
+
+func TestHandleReport_LightState_FromLightsReport_On(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": [
+				{"node": "chamber_light", "mode": "on"}
+			]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.LightOn == nil {
+		t.Fatal("LightOn = nil; want true")
+	}
+	if !*s.LightOn {
+		t.Error("LightOn = false; want true")
+	}
+}
+
+func TestHandleReport_LightState_FromLightsReport_Off(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": [
+				{"node": "chamber_light", "mode": "off"}
+			]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.LightOn == nil {
+		t.Fatal("LightOn = nil; want false")
+	}
+	if *s.LightOn {
+		t.Error("LightOn = true; want false")
+	}
+}
+
+func TestHandleReport_LightState_LightsReportWithMultipleEntries(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Multiple entries — chamber_light is the one we care about.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": [
+				{"node": "status_light", "mode": "on"},
+				{"node": "chamber_light", "mode": "on"}
+			]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.LightOn == nil {
+		t.Fatal("LightOn = nil; want true")
+	}
+	if !*s.LightOn {
+		t.Error("LightOn = false; want true (chamber_light is on)")
+	}
+}
+
+func TestHandleReport_LightState_LightsReportNoChamberLight(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// lights_report present but no chamber_light entry — LightOn unchanged.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": [
+				{"node": "status_light", "mode": "on"}
+			]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.LightOn != nil {
+		t.Errorf("LightOn = %v; want nil (no chamber_light entry)", *s.LightOn)
+	}
+}
+
+func TestHandleReport_LightState_LightsReportEmpty(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Empty lights_report array — LightOn unchanged.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": []
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.LightOn != nil {
+		t.Errorf("LightOn = %v; want nil (empty lights_report)", *s.LightOn)
+	}
+}
+
+func TestHandleReport_LightState_SystemLedCtrlNoLongerSetsLight(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// The old system.ledctrl path should no longer set LightOn.
+	payload := []byte(`{
+		"system": {
+			"ledctrl": {
+				"node": "chamber_light",
+				"mode": "on"
+			}
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.LightOn != nil {
+		t.Errorf("LightOn = %v; want nil (system.ledctrl no longer drives light state)", *s.LightOn)
+	}
+}
+
+func TestHandleReport_LightState_UpdatedAcrossReports(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: light on.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": [
+				{"node": "chamber_light", "mode": "on"}
+			]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.LightOn == nil || !*s1.LightOn {
+		t.Fatalf("After first report: LightOn = %v; want true", s1.LightOn)
+	}
+
+	// Second report: light off.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"lights_report": [
+				{"node": "chamber_light", "mode": "off"}
+			]
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+	if s2.LightOn == nil {
+		t.Fatal("After second report: LightOn = nil; want false")
+	}
+	if *s2.LightOn {
+		t.Error("After second report: LightOn = true; want false")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // publishCommand tests
 // ---------------------------------------------------------------------------
 

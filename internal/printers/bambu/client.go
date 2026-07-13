@@ -271,21 +271,8 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		c.mu.Unlock()
 	}
 
-	// System reports: parse LED state from system.ledctrl. This can arrive
-	// independently of print data, so we handle it before the r.Print nil
-	// check below.
-	if r.System != nil && r.System.LEDCtrl != nil {
-		s := c.Status()
-		switch r.System.LEDCtrl.Mode {
-		case "on":
-			v := true
-			s.LightOn = &v
-		case "off":
-			v := false
-			s.LightOn = &v
-		}
-		c.setStatus(s)
-	}
+	// System reports can carry other fields (e.g. command ACKs) but light
+	// state is reported via print.lights_report, handled below.
 
 	if r.Print == nil {
 		return // not a print status report
@@ -295,6 +282,17 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	s := c.Status()
 	s.Online = true
 	hadHMSErrors := len(s.HMSErrors) > 0
+
+	// Light state — parse from print.lights_report (the actual wire format
+	// for Bambu light state reports). The old system.ledctrl path only
+	// carried command ACKs, not the live state.
+	for _, lr := range p.LightsReport {
+		if lr.Node == "chamber_light" {
+			on := lr.Mode == "on"
+			s.LightOn = &on
+			break
+		}
+	}
 
 	// Map states. Only update when gcode_state is explicitly provided;
 	// heartbeat-style reports may omit it, and we must not clobber the

@@ -114,6 +114,9 @@ func TestSetLightCommand(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected 'system' key: %v", gotMap)
 		}
+		if sys["sequence_id"] != "0" {
+			t.Errorf("sequence_id = %v; want 0", sys["sequence_id"])
+		}
 		if sys["command"] != "ledctrl" {
 			t.Errorf("command = %v; want ledctrl", sys["command"])
 		}
@@ -122,6 +125,18 @@ func TestSetLightCommand(t *testing.T) {
 		}
 		if sys["led_mode"] != "on" {
 			t.Errorf("led_mode = %v; want on", sys["led_mode"])
+		}
+		if sys["led_on_time"] != float64(500) {
+			t.Errorf("led_on_time = %v; want 500", sys["led_on_time"])
+		}
+		if sys["led_off_time"] != float64(500) {
+			t.Errorf("led_off_time = %v; want 500", sys["led_off_time"])
+		}
+		if sys["loop_times"] != float64(0) {
+			t.Errorf("loop_times = %v; want 0", sys["loop_times"])
+		}
+		if sys["interval_time"] != float64(0) {
+			t.Errorf("interval_time = %v; want 0", sys["interval_time"])
 		}
 	})
 
@@ -134,6 +149,12 @@ func TestSetLightCommand(t *testing.T) {
 		sys := gotMap["system"].(map[string]any)
 		if sys["led_mode"] != "off" {
 			t.Errorf("led_mode = %v; want off", sys["led_mode"])
+		}
+		if sys["sequence_id"] != "0" {
+			t.Errorf("sequence_id = %v; want 0", sys["sequence_id"])
+		}
+		if sys["led_on_time"] != float64(500) {
+			t.Errorf("led_on_time = %v; want 500", sys["led_on_time"])
 		}
 	})
 }
