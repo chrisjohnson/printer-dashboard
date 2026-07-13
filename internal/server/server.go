@@ -59,7 +59,7 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 		configPath: configPath,
 		http: &http.Server{
 			Addr:    cfg.Listen,
-			Handler: mux,
+			Handler: noCacheMiddleware(mux),
 		},
 	}
 
@@ -391,6 +391,18 @@ func (s *Server) reloadConfig() error {
 // It allows all origins since the dashboard is a single-user application.
 var wsUpgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+// noCacheMiddleware wraps an http.Handler to set headers that prevent browser
+// caching. This is appropriate for a development/personal-project dashboard
+// where stale content after redeploy is worse than an extra request.
+func noCacheMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) registerRoutes() {

@@ -1455,3 +1455,73 @@ func TestDashboardTemplate_ErrorBanner(t *testing.T) {
 		t.Error("indexDashboardTemplate should define errorHtml in renderCard")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Cache-Control headers (K-051)
+// ---------------------------------------------------------------------------
+
+func TestNoCacheHeaders(t *testing.T) {
+	t.Run("API health endpoint", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(noCacheMiddleware(s.mux))
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/health")
+		defer resp.Body.Close()
+
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Errorf("Cache-Control = %q; want %q", got, "no-cache, no-store, must-revalidate")
+		}
+		if got := resp.Header.Get("Pragma"); got != "no-cache" {
+			t.Errorf("Pragma = %q; want %q", got, "no-cache")
+		}
+		if got := resp.Header.Get("Expires"); got != "0" {
+			t.Errorf("Expires = %q; want %q", got, "0")
+		}
+	})
+
+	t.Run("dashboard index", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(noCacheMiddleware(s.mux))
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/")
+		defer resp.Body.Close()
+
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Errorf("Cache-Control = %q; want %q", got, "no-cache, no-store, must-revalidate")
+		}
+		if got := resp.Header.Get("Pragma"); got != "no-cache" {
+			t.Errorf("Pragma = %q; want %q", got, "no-cache")
+		}
+		if got := resp.Header.Get("Expires"); got != "0" {
+			t.Errorf("Expires = %q; want %q", got, "0")
+		}
+	})
+
+	t.Run("onboarding page", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(noCacheMiddleware(s.mux))
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/onboarding")
+		defer resp.Body.Close()
+
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Errorf("Cache-Control = %q; want %q", got, "no-cache, no-store, must-revalidate")
+		}
+	})
+
+	t.Run("printers API", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(noCacheMiddleware(s.mux))
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers")
+		defer resp.Body.Close()
+
+		if got := resp.Header.Get("Cache-Control"); got != "no-cache, no-store, must-revalidate" {
+			t.Errorf("Cache-Control = %q; want %q", got, "no-cache, no-store, must-revalidate")
+		}
+	})
+}
