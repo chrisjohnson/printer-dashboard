@@ -1939,6 +1939,196 @@ func TestHandleReport_SubtaskNameFallback_NeitherPresent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// K-003: CurrentFile cleared when printer goes idle
+// ---------------------------------------------------------------------------
+
+// TestHandleReport_IdleClearsCurrentFile verifies that when the printer
+// transitions to an idle state, CurrentFile is cleared.
+func TestHandleReport_IdleClearsCurrentFile(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: printer is printing with a file.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "benchy.gcode",
+			"mc_percent": 50
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+	if s1.CurrentFile != "benchy.gcode" {
+		t.Fatalf("After RUNNING: CurrentFile = %q; want %q", s1.CurrentFile, "benchy.gcode")
+	}
+
+	// Second report: printer goes idle (print completed).
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "idle" {
+		t.Fatalf("After IDLE: State = %q; want %q", s2.State, "idle")
+	}
+	if s2.CurrentFile != "" {
+		t.Errorf("After IDLE: CurrentFile = %q; want empty (print finished)", s2.CurrentFile)
+	}
+}
+
+// TestHandleReport_IdleClearsCurrentFile_P1S_SubtaskName covers the P1S
+// path where the filename came from subtask_name (not gcode_file). The
+// same idle-clearing behavior must apply.
+func TestHandleReport_IdleClearsCurrentFile_P1S_SubtaskName(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// P1S-style report with subtask_name.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"subtask_name": "dragon.gcode",
+			"mc_percent": 90
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	if c.Status().CurrentFile != "dragon.gcode" {
+		t.Fatalf("After RUNNING: CurrentFile = %q; want %q", c.Status().CurrentFile, "dragon.gcode")
+	}
+
+	// STANDBY also maps to idle — verify it clears too.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "STANDBY"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "idle" {
+		t.Fatalf("After STANDBY: State = %q; want %q", s2.State, "idle")
+	}
+	if s2.CurrentFile != "" {
+		t.Errorf("After STANDBY: CurrentFile = %q; want empty", s2.CurrentFile)
+	}
+}
+
+// TestHandleReport_HeartbeatEmptyGcodeFilePreservesCurrentFile verifies that
+// a heartbeat report with empty gcode_file while still printing does NOT
+// clear CurrentFile.
+func TestHandleReport_HeartbeatEmptyGcodeFilePreservesCurrentFile(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: printer is printing.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "model.gcode",
+			"mc_percent": 30
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	// Second report: heartbeat with empty gcode_file, but state still RUNNING.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "",
+			"mc_percent": 35
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.CurrentFile != "model.gcode" {
+		t.Errorf("After heartbeat with empty gcode_file: CurrentFile = %q; want %q (preserved)",
+			s2.CurrentFile, "model.gcode")
+	}
+}
+
+// TestHandleReport_NewPrintPopulatesCurrentFile verifies that after a print
+// completes and CurrentFile is cleared, a new print populates it again.
+func TestHandleReport_NewPrintPopulatesCurrentFile(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First print: running.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "first_print.gcode",
+			"mc_percent": 80
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	if c.Status().CurrentFile != "first_print.gcode" {
+		t.Fatalf("After first print: CurrentFile = %q; want %q", c.Status().CurrentFile, "first_print.gcode")
+	}
+
+	// Print completes → idle → CurrentFile cleared.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	if c.Status().CurrentFile != "" {
+		t.Fatalf("After IDLE: CurrentFile = %q; want empty", c.Status().CurrentFile)
+	}
+
+	// Second print starts.
+	payload3 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "second_print.gcode",
+			"mc_percent": 5
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload3))
+	s3 := c.Status()
+
+	if s3.CurrentFile != "second_print.gcode" {
+		t.Errorf("After second print starts: CurrentFile = %q; want %q",
+			s3.CurrentFile, "second_print.gcode")
+	}
+}
+
+// TestHandleReport_SuccessDoesNotClearCurrentFile verifies that SUCCESS
+// (complete) state does NOT clear CurrentFile — only idle does.  The user
+// may still want to see the completed file's name on the dashboard.
+func TestHandleReport_SuccessDoesNotClearCurrentFile(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Printing.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "done.gcode",
+			"mc_percent": 99
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	// SUCCESS — state is "complete", not "idle", so CurrentFile must survive.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"mc_percent": 100
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.State != "complete" {
+		t.Fatalf("After SUCCESS: State = %q; want %q", s2.State, "complete")
+	}
+	if s2.CurrentFile != "done.gcode" {
+		t.Errorf("After SUCCESS: CurrentFile = %q; want %q (complete is not idle, should preserve)",
+			s2.CurrentFile, "done.gcode")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // publishCommand tests
 // ---------------------------------------------------------------------------
 

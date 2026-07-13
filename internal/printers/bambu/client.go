@@ -286,7 +286,14 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	if p.GcodeState != "" {
 		s.State = mapState(p.GcodeState)
 	}
-	if p.GcodeFile != nil && *p.GcodeFile != "" {
+
+	// CurrentFile: set from gcode_file (preferred) or subtask_name (P1S
+	// fallback).  Clear when the printer is explicitly idle — the print has
+	// finished.  Only when gcode_state is explicitly provided to avoid
+	// clobbering on heartbeat-style reports that omit gcode_state.
+	if p.GcodeState != "" && s.State == "idle" {
+		s.CurrentFile = ""
+	} else if p.GcodeFile != nil && *p.GcodeFile != "" {
 		s.CurrentFile = *p.GcodeFile
 	} else if p.SubtaskName != nil && *p.SubtaskName != "" {
 		// P1S uses subtask_name for the current print filename instead of
