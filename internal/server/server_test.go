@@ -414,8 +414,9 @@ func TestHandleListPrinters(t *testing.T) {
 			t.Fatalf("expected 3 printers, got %d", len(list))
 		}
 
-		// No active printers — purely alphabetical.
-		expected := []string{"alpha", "bravo", "charlie"}
+		// "complete" is tier 1 (active), idle printers are tier 2.
+		// Active first (A-Z), then inactive (A-Z).
+		expected := []string{"bravo", "alpha", "charlie"}
 		for i, want := range expected {
 			got := list[i].(map[string]any)["name"].(string)
 			if got != want {
@@ -455,6 +456,69 @@ func TestHandleListPrinters(t *testing.T) {
 
 		// Both active — sorted A-Z within the active group.
 		expected := []string{"alpha", "zebra"}
+		for i, want := range expected {
+			got := list[i].(map[string]any)["name"].(string)
+			if got != want {
+				t.Errorf("position %d: expected %q, got %q", i, want, got)
+			}
+		}
+	})
+
+	t.Run("three-tier sort error active idle", func(t *testing.T) {
+		pIdle1 := &MockPrinter{
+			id:   "idle1",
+			name: "echo",
+			stat: printers.PrinterStatus{ID: "idle1", Name: "echo", State: "idle"},
+		}
+		pError1 := &MockPrinter{
+			id:   "err1",
+			name: "foxtrot",
+			stat: printers.PrinterStatus{ID: "err1", Name: "foxtrot", State: "error"},
+		}
+		pActive1 := &MockPrinter{
+			id:   "act1",
+			name: "delta",
+			stat: printers.PrinterStatus{ID: "act1", Name: "delta", State: "printing"},
+		}
+		pError2 := &MockPrinter{
+			id:   "err2",
+			name: "alpha",
+			stat: printers.PrinterStatus{ID: "err2", Name: "alpha", State: "error"},
+		}
+		pActive2 := &MockPrinter{
+			id:   "act2",
+			name: "bravo",
+			stat: printers.PrinterStatus{ID: "act2", Name: "bravo", State: "paused"},
+		}
+		pIdle2 := &MockPrinter{
+			id:   "idle2",
+			name: "charlie",
+			stat: printers.PrinterStatus{ID: "idle2", Name: "charlie", State: "idle"},
+		}
+		s := newTestServer(map[string]printers.Printer{
+			"err1": pError1,
+			"err2": pError2,
+			"act1": pActive1,
+			"act2": pActive2,
+			"idle1": pIdle1,
+			"idle2": pIdle2,
+		})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers")
+		defer resp.Body.Close()
+
+		var body map[string]any
+		decodeBody(t, resp, &body)
+
+		list := body["printers"].([]any)
+		if len(list) != 6 {
+			t.Fatalf("expected 6 printers, got %d", len(list))
+		}
+
+		// Error first (A-Z), then active (A-Z), then idle (A-Z).
+		expected := []string{"alpha", "foxtrot", "bravo", "delta", "charlie", "echo"}
 		for i, want := range expected {
 			got := list[i].(map[string]any)["name"].(string)
 			if got != want {

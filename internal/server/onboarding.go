@@ -936,25 +936,31 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const card = document.getElementById('printer-' + printerId);
       if (!card) return;
 
+      // Three-tier priority matching server-side sort: error → active → idle.
+      function sortPriority(s) {
+        if (s === 'error') return 0;
+        if (s === 'idle') return 2;
+        return 1;
+      }
+
       const tag = card.querySelector('.tag');
       const state = tag ? tag.textContent.trim() : '';
-      const isActive = state === 'printing' || state === 'paused';
+      const cardPriority = sortPriority(state);
       const cardName = (card.querySelector('h2') || {}).textContent || '';
 
       const siblings = Array.from(container.querySelectorAll('.card'));
-      // Find the correct insertion point: active cards before inactive,
-      // alphabetical within each group.
+      // Find the correct insertion point: error cards first, then active,
+      // then idle. Alphabetical within each tier.
       let insertBefore = null;
       for (const sib of siblings) {
         if (sib === card) continue;
         const sibTag = sib.querySelector('.tag');
         const sibState = sibTag ? sibTag.textContent.trim() : '';
-        const sibActive = sibState === 'printing' || sibState === 'paused';
+        const sibPriority = sortPriority(sibState);
         const sibName = (sib.querySelector('h2') || {}).textContent || '';
 
-        if (isActive && !sibActive) { insertBefore = sib; break; }
-        if (isActive && sibActive && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
-        if (!isActive && !sibActive && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
+        if (cardPriority < sibPriority) { insertBefore = sib; break; }
+        if (cardPriority === sibPriority && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
       }
 
       if (insertBefore) {

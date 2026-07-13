@@ -579,6 +579,22 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 
+// printerSortPriority returns a sort tier for the given printer state:
+//
+//	0 = error/needs attention (sorted first)
+//	1 = active (printing, paused, or any other non-idle, non-error state)
+//	2 = idle/inactive (sorted last)
+func printerSortPriority(state string) int {
+	switch state {
+	case "error":
+		return 0
+	case "idle":
+		return 2
+	default:
+		return 1
+	}
+}
+
 func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	printerList := make([]printers.PrinterStatus, 0, len(s.printers))
@@ -587,12 +603,13 @@ func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RUnlock()
 
-	// Active states: "printing" or "paused" appear first, then alphabetical.
+	// Three-tier sort: error (needs attention) → active (printing/paused/etc.) → idle.
+	// Within each tier, sort A-Z by name (case-insensitive).
 	sort.Slice(printerList, func(i, j int) bool {
-		iActive := printerList[i].State == "printing" || printerList[i].State == "paused"
-		jActive := printerList[j].State == "printing" || printerList[j].State == "paused"
-		if iActive != jActive {
-			return iActive
+		pi := printerSortPriority(printerList[i].State)
+		pj := printerSortPriority(printerList[j].State)
+		if pi != pj {
+			return pi < pj
 		}
 		return strings.ToLower(printerList[i].Name) < strings.ToLower(printerList[j].Name)
 	})
