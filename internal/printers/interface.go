@@ -51,6 +51,11 @@ type HMSEntry struct {
 	Code     string `json:"code"`
 	Module   string `json:"module"`
 	Severity string `json:"severity"`
+	// Message is a human-readable description of the HMS code, looked up
+	// from a vendored code-to-message table (see bambu/hms_messages.go).
+	// Empty if the code isn't found in the table — this is expected for
+	// unrecognized/new codes, not an error condition.
+	Message string `json:"message,omitempty"`
 }
 
 // NozzleTempEntry captures one toolhead's temperature data.

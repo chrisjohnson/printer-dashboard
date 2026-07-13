@@ -97,16 +97,30 @@ func decodeHMSSeverity(code uint32) string {
 	return "unknown"
 }
 
+// hmsEntrySummary formats one decoded HMS entry for display: "<message>
+// (<code>)" when a human-readable message was found, or just "<code>" when
+// it wasn't (message not in the vendored table — expected for uncovered
+// codes, not an error).
+func hmsEntrySummary(e printers.HMSEntry) string {
+	if e.Message != "" {
+		return fmt.Sprintf("%s (%s)", e.Message, e.Code)
+	}
+	return e.Code
+}
+
 // splitHMS decodes each raw HMS wire entry and buckets it into errors
 // (severity fatal/serious) or warnings (everything else — common/info/
 // unknown). A nil or empty items slice yields nil/empty output slices, no
-// error.
-func splitHMS(items []hmsItem) (errors, warnings []printers.HMSEntry) {
+// error. model is the printer model (e.g. "H2S", "P1S") used to prefer a
+// model-specific human-readable message over the universal default; pass ""
+// if the model isn't known yet.
+func splitHMS(items []hmsItem, model string) (errors, warnings []printers.HMSEntry) {
 	for _, item := range items {
 		entry := printers.HMSEntry{
 			Code:     decodeHMSCode(item.Attr, item.Code),
 			Module:   decodeHMSModule(item.Attr),
 			Severity: decodeHMSSeverity(item.Code),
+			Message:  lookupHMSMessage(item.Attr, item.Code, model),
 		}
 		switch entry.Severity {
 		case "fatal", "serious":

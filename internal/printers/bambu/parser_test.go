@@ -536,7 +536,12 @@ func TestSplitHMS(t *testing.T) {
 			},
 			wantErrors: nil,
 			wantWarn: []printers.HMSEntry{
-				{Code: decodeHMSCode(201327360, 196615), Module: "xcam", Severity: "common"},
+				// The pybambu oracle sample code (201327360, 196615) happens
+				// to be a real entry in the vendored HMS message table (a
+				// first-layer-defect warning) — Message is derived via
+				// lookupHMSMessage rather than hardcoded, so this test
+				// doesn't silently drift if upstream data changes.
+				{Code: decodeHMSCode(201327360, 196615), Module: "xcam", Severity: "common", Message: lookupHMSMessage(201327360, 196615, "")},
 				{Code: decodeHMSCode(0x07<<24, 4<<16), Module: "ams", Severity: "info"},
 			},
 		},
@@ -554,7 +559,7 @@ func TestSplitHMS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotErrors, gotWarn := splitHMS(tt.items)
+			gotErrors, gotWarn := splitHMS(tt.items, "")
 			compareHMSEntries(t, "errors", tt.wantErrors, gotErrors)
 			compareHMSEntries(t, "warnings", tt.wantWarn, gotWarn)
 		})

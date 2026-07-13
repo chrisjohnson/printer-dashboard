@@ -1287,13 +1287,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }
     }
 
-    // Joins decoded HMS entries into one summary string. Shared Go-side
-    // equivalent is bambu/client.go's strings.Join(codes, "; ") — same
-    // format, kept independently since it's a different language, but this
-    // is the single JS-side source of truth (was previously duplicated
-    // separately in renderCard() and updateCard()).
+    // Joins decoded HMS entries into one summary string, preferring each
+    // entry's human-readable message (falling back to the raw code when no
+    // message was found) — "<message> (<code>)" or just "<code>". Shared
+    // Go-side equivalent is bambu/client.go's hmsEntrySummary()/
+    // strings.Join — same format, kept independently since it's a different
+    // language, but this is the single JS-side source of truth (was
+    // previously duplicated separately in renderCard() and updateCard()).
     function hmsSummary(entries) {
-      return entries.map(function(e) { return e.code; }).join('; ');
+      return entries.map(function(e) {
+        return e.message ? (e.message + ' (' + e.code + ')') : e.code;
+      }).join('; ');
     }
 
     function cmd(id, action) {

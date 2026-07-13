@@ -334,7 +334,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// An empty [] DOES count as present, so it clears both slices — that's
 	// the explicit recovery signal.
 	if p.HMS != nil {
-		s.HMSErrors, s.HMSWarnings = splitHMS(p.HMS)
+		s.HMSErrors, s.HMSWarnings = splitHMS(p.HMS, c.model)
 		c.hmsHealthyStreak = 0
 	} else if p.GcodeState != "" && isHealthyGcodeState(p.GcodeState) {
 		// Staleness decay: some firmware simply stops sending "hms" once a
@@ -386,12 +386,14 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 			// print_error message takes precedence (backward compat).
 			s.ErrorMsg = fmt.Sprintf("print_error=%d", *p.PrintError)
 		} else if len(s.HMSErrors) > 0 {
-			// Fallback: only HMS tripped it — summarize the HMS codes.
-			codes := make([]string, len(s.HMSErrors))
+			// Fallback: only HMS tripped it — summarize the HMS entries,
+			// preferring each entry's human-readable message (falling back to
+			// the raw code when no message was found in the vendored table).
+			summaries := make([]string, len(s.HMSErrors))
 			for i, e := range s.HMSErrors {
-				codes[i] = e.Code
+				summaries[i] = hmsEntrySummary(e)
 			}
-			s.ErrorMsg = strings.Join(codes, "; ")
+			s.ErrorMsg = strings.Join(summaries, "; ")
 		}
 	} else if s.State != "error" {
 		s.ErrorMsg = ""
