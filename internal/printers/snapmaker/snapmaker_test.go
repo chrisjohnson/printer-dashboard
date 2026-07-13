@@ -402,6 +402,151 @@ func TestCommand_Unreachable(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SetLight tests
+// ---------------------------------------------------------------------------
+
+// mockGCodeServer creates an httptest.Server that accepts POST
+// /printer/gcode/script requests. It captures the request body so tests can
+// verify the GCode script that was sent.
+func mockGCodeServer(t *testing.T, statusCode int) (*httptest.Server, func() map[string]string) {
+	t.Helper()
+
+	var mu sync.Mutex
+	var captured map[string]string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+
+		if r.URL.Path != "/printer/gcode/script" {
+			t.Errorf("request path = %q; want %q", r.URL.Path, "/printer/gcode/script")
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("request method = %q; want %q", r.Method, http.MethodPost)
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("Content-Type = %q; want %q", ct, "application/json")
+		}
+
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			captured = body
+		}
+
+		w.WriteHeader(statusCode)
+	}))
+
+	captureFn := func() map[string]string {
+		mu.Lock()
+		defer mu.Unlock()
+		return captured
+	}
+	return ts, captureFn
+}
+
+func TestSetLight_On(t *testing.T) {
+	ts, captureBody := mockGCodeServer(t, 200)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	err := p.SetLight(context.Background(), true)
+	if err != nil {
+		t.Errorf("SetLight(true) returned error: %v", err)
+	}
+
+	body := captureBody()
+	if body == nil {
+		t.Fatal("no request body captured")
+	}
+	if body["script"] != "SET_LED LED=cavity_led WHITE=1" {
+		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led WHITE=1")
+	}
+}
+
+func TestSetLight_Off(t *testing.T) {
+	ts, captureBody := mockGCodeServer(t, 200)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	err := p.SetLight(context.Background(), false)
+	if err != nil {
+		t.Errorf("SetLight(false) returned error: %v", err)
+	}
+
+	body := captureBody()
+	if body == nil {
+		t.Fatal("no request body captured")
+	}
+	if body["script"] != "SET_LED LED=cavity_led WHITE=0" {
+		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led WHITE=0")
+	}
+}
+
+func TestSetLight_SendsAccessCode(t *testing.T) {
+	ts, captureBody := mockGCodeServer(t, 200)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{
+		ID:         "test-u1",
+		Name:       "Test U1",
+		AccessCode: "my-secret-code",
+	})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	err := p.SetLight(context.Background(), true)
+	if err != nil {
+		t.Errorf("SetLight(true) returned error: %v", err)
+	}
+
+	body := captureBody()
+	if body == nil {
+		t.Fatal("no request body captured")
+	}
+	if body["script"] != "SET_LED LED=cavity_led WHITE=1" {
+		t.Errorf("script = %q; want %q", body["script"], "SET_LED LED=cavity_led WHITE=1")
+	}
+}
+
+func TestSetLight_HTTPError(t *testing.T) {
+	ts, _ := mockGCodeServer(t, 500)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	err := p.SetLight(context.Background(), true)
+	if err == nil {
+		t.Fatal("expected error for HTTP 500, got nil")
+	}
+}
+
+func TestSetLight_ContextCancelled(t *testing.T) {
+	p := New(config.PrinterDef{
+		ID:   "test-u1",
+		Name: "Test U1",
+		Host: "192.0.2.1", // TEST-NET, guaranteed unreachable
+		Port: 1,
+	})
+	p.httpClient = &http.Client{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10)
+	defer cancel()
+
+	err := p.SetLight(ctx, true)
+	if err == nil {
+		t.Fatal("expected error for unreachable host, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Connect stub tests
 // ---------------------------------------------------------------------------
 

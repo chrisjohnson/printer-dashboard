@@ -4,6 +4,7 @@
 package snapmaker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -568,9 +569,41 @@ func (p *Printer) SetChamberTemp(_ context.Context, _ int) error {
 	return fmt.Errorf("snapmaker %s: set chamber temp not implemented", p.cfg.ID)
 }
 
-// SetLight is not supported on Snapmaker U1.
-func (p *Printer) SetLight(_ context.Context, _ bool) error {
-	return fmt.Errorf("snapmaker %s: set light not implemented", p.cfg.ID)
+// SetLight turns the cavity LED on or off via Moonraker's GCode endpoint.
+func (p *Printer) SetLight(ctx context.Context, on bool) error {
+	script := "SET_LED LED=cavity_led WHITE=1"
+	if !on {
+		script = "SET_LED LED=cavity_led WHITE=0"
+	}
+	return p.sendGCode(ctx, script)
+}
+
+// sendGCode sends a GCode command to the printer via Moonraker's
+// POST /printer/gcode/script endpoint.
+func (p *Printer) sendGCode(ctx context.Context, script string) error {
+	body, err := json.Marshal(map[string]string{"script": script})
+	if err != nil {
+		return fmt.Errorf("snapmaker %s: marshalling gcode: %w", p.cfg.ID, err)
+	}
+
+	req, err := p.buildRequest(http.MethodPost, "/printer/gcode/script", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("snapmaker %s: building gcode request: %w", p.cfg.ID, err)
+	}
+	req = req.WithContext(ctx)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("snapmaker %s: gcode request failed: %w", p.cfg.ID, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("snapmaker %s: gcode returned HTTP %d: %s", p.cfg.ID, resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // CameraStreams returns the available camera/display streams for this printer.
