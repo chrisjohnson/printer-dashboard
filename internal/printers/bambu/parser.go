@@ -11,6 +11,7 @@ import (
 type report struct {
 	Print  *printStatus  `json:"print"`
 	Camera *cameraStatus `json:"camera,omitempty"`
+	System *systemStatus `json:"system,omitempty"`
 }
 
 // infoData captures the H2S-style ambient/chamber temperature at print.info.temp.
@@ -136,6 +137,18 @@ func splitHMS(items []hmsItem, model string) (errors, warnings []printers.HMSEnt
 type cameraStatus struct {
 	IPCamURL     string `json:"ipcam_url"`
 	TimelapseURL string `json:"timelapse_url"`
+}
+
+// systemStatus captures the "system" section of a Bambu report, which carries
+// LED state and other system-level info.
+type systemStatus struct {
+	LEDCtrl *ledStatus `json:"ledctrl,omitempty"`
+}
+
+// ledStatus captures the state of an LED node (e.g. chamber_light).
+type ledStatus struct {
+	Node string `json:"node"`
+	Mode string `json:"mode"`
 }
 
 // parseReport unmarshals a raw Bambu report JSON into the report struct.

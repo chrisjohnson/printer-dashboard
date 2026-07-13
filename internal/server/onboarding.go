@@ -618,6 +618,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
     .controls button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     .controls button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+    .controls button.btn-light { background: #6b7280; border-color: #6b7280; color: #fff; }
+    .controls button.btn-light:hover:not(:disabled) { background: #4b5563; border-color: #4b5563; }
+    .controls button.btn-light.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+    .controls button.btn-light.active:hover:not(:disabled) { background: #d97706; border-color: #d97706; }
     /* Hide skip + resume on mobile */
     .btn-skip, .btn-resume { display: none; }
 
@@ -768,6 +772,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="btn-resume" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"/></svg>Resume</button>
         <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
         <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip Object</button>
+        <button class="btn-light" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg>Light</button>
       </div>
     </div>
     {{end}}
@@ -927,6 +932,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
       if (skipBtn) skipBtn.disabled = st !== 'printing';
 
+      // 10. Light toggle button — add/remove "active" class based on light_on state.
+      const lightBtn = card.querySelector('button[onclick*="toggleLight"]');
+      if (lightBtn) {
+        if (p.light_on === true) {
+          lightBtn.classList.add('active');
+        } else {
+          lightBtn.classList.remove('active');
+        }
+      }
+
       reorderCard(p.id);
     }
 
@@ -1076,20 +1091,43 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         ? _svgOpen.replace('fill="none"', 'fill="currentColor"') + '<circle cx="12" cy="12" r="6"/></svg>'
         : _svgOpen + '<circle cx="12" cy="12" r="6"/></svg>';
     }
+    // Light bulb icon for the chamber light toggle.
+    function svgLight() {
+      return _svgOpen +
+        '<path d="M9 18h6"/>' +
+        '<path d="M10 22h4"/>' +
+        '<path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/>' +
+        '</svg>';
+    }
 
     // Editable target-temp input. Keeps the .target class so updateCard's
-    // selector still finds it. STUB: onchange calls setTargetTemp (no-op for now).
-    // Disabled until setTargetTemp has a real backend call — see setTargetTemp below.
+    // selector still finds it. On change, POSTs to the backend to set the
+    // target temperature.
     function targetInput(printerId, sensor, value) {
       return '<input class="target" type="text" inputmode="decimal"' +
-        ' value="' + escapeHtml(String(value)) + '" disabled' +
+        ' value="' + escapeHtml(String(value)) + '"' +
         ' onchange="setTargetTemp(\'' + escapeJsString(printerId) + '\',\'' + escapeJsString(sensor) + '\',this.value)">';
     }
 
-    // STUB: set a new target temperature. Does not POST/apply yet — placeholder
-    // so the wiring exists for a later real implementation.
+    // Set a new target temperature. POSTs to the backend and the live WS
+    // update will reflect the new target once the printer acknowledges it.
     function setTargetTemp(printerId, sensor, value) {
-      console.log('setTargetTemp (stub):', printerId, sensor, value);
+      var temp = parseInt(value, 10);
+      if (isNaN(temp) || temp < 0 || temp > 350) {
+        console.log('setTargetTemp: invalid temperature', value);
+        return;
+      }
+      var endpoint = '/api/printers/' + printerId + '/';
+      if (sensor === 'bed') endpoint += 'bed-temp';
+      else if (sensor === 'chamber') endpoint += 'chamber-temp';
+      else endpoint += 'nozzle-temp'; // nozzle, nozzle1, nozzle2, etc.
+      fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ temp: temp })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) { if (d.error) console.error('setTargetTemp error:', d.error); })
+        .catch(function(e) { console.error('setTargetTemp network error:', e); });
     }
 
     function renderCard(p) {
@@ -1246,6 +1284,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
+          '<button onclick="toggleLight(\'' + escapeJsString(p.id) + '\')" class="btn-light" title="Toggle chamber light">' + svgLight() + 'Light</button>' +
         '</div>' +
       '</div>';
     }
@@ -1311,6 +1350,20 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .then(r => r.json())
         .then(d => { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
         .catch(() => alert('Network error'));
+    }
+
+    function toggleLight(printerId) {
+      var cached = window._printerCache[printerId];
+      if (!cached) return;
+      var currentlyOn = cached.light_on === true;
+      var newOn = !currentlyOn;
+      fetch('/api/printers/' + printerId + '/light', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: newOn })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) { if (d.error) console.error('toggleLight error:', d.error); })
+        .catch(function(e) { console.error('toggleLight network error:', e); });
     }
 
     window._cameraSlots = window._cameraSlots || {};

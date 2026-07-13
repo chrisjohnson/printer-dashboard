@@ -39,10 +39,20 @@ type MockPrinter struct {
 	skipErr    error
 	connectErr error
 
-	PauseCalled  bool
-	ResumeCalled bool
-	CancelCalled bool
-	SkipCalled   bool
+	setBedTempErr     error
+	setNozzleTempErr  error
+	setChamberTempErr error
+	setLightErr       error
+
+	PauseCalled          bool
+	ResumeCalled         bool
+	CancelCalled         bool
+	SkipCalled           bool
+	SetBedTempCalled     bool
+	SetNozzleTempCalled  bool
+	SetChamberTempCalled bool
+	SetLightCalled       bool
+	LastLightOn          *bool
 }
 
 func (m *MockPrinter) ID() string { return m.id }
@@ -78,6 +88,27 @@ func (m *MockPrinter) SkipObject(_ context.Context) error {
 }
 
 func (m *MockPrinter) CameraStreams() []printers.CameraStream { return nil }
+
+func (m *MockPrinter) SetBedTemp(_ context.Context, _ int) error {
+	m.SetBedTempCalled = true
+	return m.setBedTempErr
+}
+
+func (m *MockPrinter) SetNozzleTemp(_ context.Context, _ int) error {
+	m.SetNozzleTempCalled = true
+	return m.setNozzleTempErr
+}
+
+func (m *MockPrinter) SetChamberTemp(_ context.Context, _ int) error {
+	m.SetChamberTempCalled = true
+	return m.setChamberTempErr
+}
+
+func (m *MockPrinter) SetLight(_ context.Context, on bool) error {
+	m.SetLightCalled = true
+	m.LastLightOn = &on
+	return m.setLightErr
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -496,10 +527,10 @@ func TestHandleListPrinters(t *testing.T) {
 			stat: printers.PrinterStatus{ID: "idle2", Name: "charlie", State: "idle"},
 		}
 		s := newTestServer(map[string]printers.Printer{
-			"err1": pError1,
-			"err2": pError2,
-			"act1": pActive1,
-			"act2": pActive2,
+			"err1":  pError1,
+			"err2":  pError2,
+			"act1":  pActive1,
+			"act2":  pActive2,
 			"idle1": pIdle1,
 			"idle2": pIdle2,
 		})
@@ -1524,4 +1555,261 @@ func TestNoCacheHeaders(t *testing.T) {
 			t.Errorf("Cache-Control = %q; want %q", got, "no-cache, no-store, must-revalidate")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Test helpers — JSON POST
+// ---------------------------------------------------------------------------
+
+// mustPostJSON is a helper that POSTs a JSON body to a URL and returns the response.
+func mustPostJSON(t *testing.T, baseURL, path string, body any) *http.Response {
+	t.Helper()
+	var buf strings.Builder
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		t.Fatalf("encoding JSON body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+path, strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatalf("creating POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("executing POST %s: %v", path, err)
+	}
+	return resp
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/bed-temp
+// ---------------------------------------------------------------------------
+
+func TestHandleSetBedTemp(t *testing.T) {
+	t.Run("found and sets", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/bed-temp", map[string]int{"temp": 60})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		var body map[string]string
+		decodeBody(t, resp, &body)
+		if body["status"] != "ok" {
+			t.Errorf(`expected "status":"ok", got %q`, body["status"])
+		}
+		if !p.SetBedTempCalled {
+			t.Error("expected SetBedTempCalled to be true")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/nonexistent/bed-temp", map[string]int{"temp": 60})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("bad request body", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/bed-temp")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/nozzle-temp
+// ---------------------------------------------------------------------------
+
+func TestHandleSetNozzleTemp(t *testing.T) {
+	t.Run("found and sets", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/nozzle-temp", map[string]int{"temp": 210})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if !p.SetNozzleTempCalled {
+			t.Error("expected SetNozzleTempCalled to be true")
+		}
+	})
+
+	t.Run("error from printer", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", setNozzleTempErr: errors.New("not connected")}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/nozzle-temp", map[string]int{"temp": 210})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", resp.StatusCode)
+		}
+		var body map[string]string
+		decodeBody(t, resp, &body)
+		if body["error"] != "not connected" {
+			t.Errorf(`expected error "not connected", got %q`, body["error"])
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/chamber-temp
+// ---------------------------------------------------------------------------
+
+func TestHandleSetChamberTemp(t *testing.T) {
+	t.Run("found and sets", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/chamber-temp", map[string]int{"temp": 35})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if !p.SetChamberTempCalled {
+			t.Error("expected SetChamberTempCalled to be true")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/nonexistent/chamber-temp", map[string]int{"temp": 35})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/light
+// ---------------------------------------------------------------------------
+
+func TestHandleSetLight(t *testing.T) {
+	t.Run("found and turns on", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/light", map[string]bool{"on": true})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if !p.SetLightCalled {
+			t.Error("expected SetLightCalled to be true")
+		}
+		if p.LastLightOn == nil || !*p.LastLightOn {
+			t.Error("expected LastLightOn to be true")
+		}
+	})
+
+	t.Run("found and turns off", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/light", map[string]bool{"on": false})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if p.LastLightOn == nil || *p.LastLightOn {
+			t.Error("expected LastLightOn to be false")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/nonexistent/light", map[string]bool{"on": true})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("error from printer", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", setLightErr: errors.New("MQTT disconnected")}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/light", map[string]bool{"on": true})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", resp.StatusCode)
+		}
+		var body map[string]string
+		decodeBody(t, resp, &body)
+		if body["error"] != "MQTT disconnected" {
+			t.Errorf(`expected error "MQTT disconnected", got %q`, body["error"])
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Light on/off round-trips in JSON status
+// ---------------------------------------------------------------------------
+
+func TestHandleListPrinters_LightOnRoundTrip(t *testing.T) {
+	on := true
+	p := &MockPrinter{
+		id:   "p1",
+		name: "Light Printer",
+		stat: printers.PrinterStatus{ID: "p1", Name: "Light Printer", LightOn: &on},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1")
+	defer resp.Body.Close()
+
+	var raw map[string]any
+	decodeBody(t, resp, &raw)
+
+	if raw["light_on"] != true {
+		t.Errorf("light_on: expected true, got %v", raw["light_on"])
+	}
 }

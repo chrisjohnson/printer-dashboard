@@ -553,6 +553,26 @@ func (p *Printer) SkipObject(ctx context.Context) error {
 	return nil
 }
 
+// SetBedTemp is not supported on Snapmaker U1.
+func (p *Printer) SetBedTemp(_ context.Context, _ int) error {
+	return fmt.Errorf("snapmaker %s: set bed temp not implemented", p.cfg.ID)
+}
+
+// SetNozzleTemp is not supported on Snapmaker U1.
+func (p *Printer) SetNozzleTemp(_ context.Context, _ int) error {
+	return fmt.Errorf("snapmaker %s: set nozzle temp not implemented", p.cfg.ID)
+}
+
+// SetChamberTemp is not supported on Snapmaker U1 (no chamber heater).
+func (p *Printer) SetChamberTemp(_ context.Context, _ int) error {
+	return fmt.Errorf("snapmaker %s: set chamber temp not implemented", p.cfg.ID)
+}
+
+// SetLight is not supported on Snapmaker U1.
+func (p *Printer) SetLight(_ context.Context, _ bool) error {
+	return fmt.Errorf("snapmaker %s: set light not implemented", p.cfg.ID)
+}
+
 // CameraStreams returns the available camera/display streams for this printer.
 // The U1 has a built-in webcam at /webcam/stream.mjpg on the printer's HTTP port
 // and a touchscreen snapshot endpoint at /screen/snapshot.

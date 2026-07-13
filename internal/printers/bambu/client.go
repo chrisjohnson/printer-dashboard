@@ -271,6 +271,22 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		c.mu.Unlock()
 	}
 
+	// System reports: parse LED state from system.ledctrl. This can arrive
+	// independently of print data, so we handle it before the r.Print nil
+	// check below.
+	if r.System != nil && r.System.LEDCtrl != nil {
+		s := c.Status()
+		switch r.System.LEDCtrl.Mode {
+		case "on":
+			v := true
+			s.LightOn = &v
+		case "off":
+			v := false
+			s.LightOn = &v
+		}
+		c.setStatus(s)
+	}
+
 	if r.Print == nil {
 		return // not a print status report
 	}
@@ -463,6 +479,26 @@ func (c *Client) Cancel(ctx context.Context) error {
 // The skip_objects command with obj_list may also work on newer firmware.
 func (c *Client) SkipObject(ctx context.Context) error {
 	return c.publishCommand(ctx, skipObjectCommand())
+}
+
+// SetBedTemp sets the bed heater target temperature via G-code M140.
+func (c *Client) SetBedTemp(ctx context.Context, temp int) error {
+	return c.publishCommand(ctx, setBedTempCommand(temp))
+}
+
+// SetNozzleTemp sets the primary nozzle target temperature via G-code M104.
+func (c *Client) SetNozzleTemp(ctx context.Context, temp int) error {
+	return c.publishCommand(ctx, setNozzleTempCommand(temp))
+}
+
+// SetChamberTemp sets the chamber heater target temperature via set_ctt.
+func (c *Client) SetChamberTemp(ctx context.Context, temp int) error {
+	return c.publishCommand(ctx, setCTTCommand(temp))
+}
+
+// SetLight turns the chamber light on or off.
+func (c *Client) SetLight(ctx context.Context, on bool) error {
+	return c.publishCommand(ctx, setLightCommand(on))
 }
 
 // Ensure Client satisfies the Printer interface.

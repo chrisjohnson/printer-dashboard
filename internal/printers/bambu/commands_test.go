@@ -69,3 +69,71 @@ func TestMustMarshal_PanicsOnBadValue(t *testing.T) {
 		mustMarshal(make(chan int))
 	})
 }
+
+func TestSetBedTempCommand(t *testing.T) {
+	got := setBedTempCommand(60)
+	var gotMap map[string]any
+	if err := json.Unmarshal(got, &gotMap); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	printSection, ok := gotMap["print"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'print' key: %v", gotMap)
+	}
+	if printSection["command"] != "gcode_line" {
+		t.Errorf("command = %v; want gcode_line", printSection["command"])
+	}
+	if printSection["param"] != "M140 S60\n" {
+		t.Errorf("param = %v; want \"M140 S60\\n\"", printSection["param"])
+	}
+}
+
+func TestSetNozzleTempCommand(t *testing.T) {
+	got := setNozzleTempCommand(210)
+	var gotMap map[string]any
+	if err := json.Unmarshal(got, &gotMap); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	printSection := gotMap["print"].(map[string]any)
+	if printSection["command"] != "gcode_line" {
+		t.Errorf("command = %v; want gcode_line", printSection["command"])
+	}
+	if printSection["param"] != "M104 S210\n" {
+		t.Errorf("param = %v; want \"M104 S210\\n\"", printSection["param"])
+	}
+}
+
+func TestSetLightCommand(t *testing.T) {
+	t.Run("on", func(t *testing.T) {
+		got := setLightCommand(true)
+		var gotMap map[string]any
+		if err := json.Unmarshal(got, &gotMap); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		sys, ok := gotMap["system"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected 'system' key: %v", gotMap)
+		}
+		if sys["command"] != "ledctrl" {
+			t.Errorf("command = %v; want ledctrl", sys["command"])
+		}
+		if sys["led_node"] != "chamber_light" {
+			t.Errorf("led_node = %v; want chamber_light", sys["led_node"])
+		}
+		if sys["led_mode"] != "on" {
+			t.Errorf("led_mode = %v; want on", sys["led_mode"])
+		}
+	})
+
+	t.Run("off", func(t *testing.T) {
+		got := setLightCommand(false)
+		var gotMap map[string]any
+		if err := json.Unmarshal(got, &gotMap); err != nil {
+			t.Fatalf("invalid JSON: %v", err)
+		}
+		sys := gotMap["system"].(map[string]any)
+		if sys["led_mode"] != "off" {
+			t.Errorf("led_mode = %v; want off", sys["led_mode"])
+		}
+	})
+}

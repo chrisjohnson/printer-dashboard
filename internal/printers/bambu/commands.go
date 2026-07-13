@@ -1,6 +1,9 @@
 package bambu
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // command represents a command message sent to the printer.
 type command struct {
@@ -10,9 +13,9 @@ type command struct {
 type printCommand struct {
 	Command string `json:"command"`
 	// Optional sequence ID for operations like skip
-	SequenceID string `json:"sequence_id,omitempty"`
-	Param      string `json:"param,omitempty"`
-	CTTVal     *int   `json:"ctt_val,omitempty"`
+	SequenceID  string `json:"sequence_id,omitempty"`
+	Param       string `json:"param,omitempty"`
+	CTTVal      *int   `json:"ctt_val,omitempty"`
 	TemperCheck *bool  `json:"temper_check,omitempty"`
 }
 
@@ -44,9 +47,51 @@ func skipObjectCommand() []byte {
 // setCTTCommand returns the JSON payload to set the chamber target temperature.
 func setCTTCommand(temp int) []byte {
 	return mustMarshal(command{Print: printCommand{
-		Command:      "set_ctt",
-		CTTVal:       &temp,
-		TemperCheck:  boolPtr(true),
+		Command:     "set_ctt",
+		CTTVal:      &temp,
+		TemperCheck: boolPtr(true),
+	}})
+}
+
+// systemCommand represents a system-level command (e.g. LED control).
+type systemCommand struct {
+	System systemPayload `json:"system"`
+}
+
+type systemPayload struct {
+	Command string `json:"command"`
+	LEDNode string `json:"led_node,omitempty"`
+	LEDMode string `json:"led_mode,omitempty"`
+}
+
+// setBedTempCommand returns the JSON payload to set the bed target temperature
+// via G-code M140.
+func setBedTempCommand(temp int) []byte {
+	return mustMarshal(command{Print: printCommand{
+		Command: "gcode_line",
+		Param:   fmt.Sprintf("M140 S%d\n", temp),
+	}})
+}
+
+// setNozzleTempCommand returns the JSON payload to set the nozzle target
+// temperature via G-code M104.
+func setNozzleTempCommand(temp int) []byte {
+	return mustMarshal(command{Print: printCommand{
+		Command: "gcode_line",
+		Param:   fmt.Sprintf("M104 S%d\n", temp),
+	}})
+}
+
+// setLightCommand returns the JSON payload to turn the chamber light on or off.
+func setLightCommand(on bool) []byte {
+	mode := "off"
+	if on {
+		mode = "on"
+	}
+	return mustMarshal(systemCommand{System: systemPayload{
+		Command: "ledctrl",
+		LEDNode: "chamber_light",
+		LEDMode: mode,
 	}})
 }
 

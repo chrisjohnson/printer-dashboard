@@ -25,24 +25,24 @@ import (
 
 // Server holds the HTTP server, printer registry, and dependencies.
 type Server struct {
-	cfg        *config.Config
-	http       *http.Server
-	mux        *http.ServeMux
-	printers   map[string]printers.Printer
-	mu         sync.RWMutex
-	bambuCloud *bambu.BambuCloudClient // cached for onboarding/reload
-	configPath string                   // path to config.yaml for saving
+	cfg         *config.Config
+	http        *http.Server
+	mux         *http.ServeMux
+	printers    map[string]printers.Printer
+	mu          sync.RWMutex
+	bambuCloud  *bambu.BambuCloudClient // cached for onboarding/reload
+	configPath  string                  // path to config.yaml for saving
 	printersCtx context.CancelFunc      // cancel for printer connection goroutines
-	cameraMgr  *camera.CameraManager    // persistent Bambu camera connections
-	rtspMgr    *camera.Go2RTCManager    // go2rtc subprocess manager for RTSPS cameras
+	cameraMgr   *camera.CameraManager   // persistent Bambu camera connections
+	rtspMgr     *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
 
 	// Onboarding provisional state (single-user, set during wizard)
-	onboardingMu        sync.Mutex
-	onboardingEmail     string // email for 2FA flow
-	onboardingToken     string
-	onboardingUserID    string
-	onboardingDevices   []bambu.DeviceInfo
-	onboardingCloud     *bambu.BambuCloudClient // partially-authenticated client
+	onboardingMu      sync.Mutex
+	onboardingEmail   string // email for 2FA flow
+	onboardingToken   string
+	onboardingUserID  string
+	onboardingDevices []bambu.DeviceInfo
+	onboardingCloud   *bambu.BambuCloudClient // partially-authenticated client
 
 	// wsHub manages WebSocket connections for real-time status updates.
 	wsHub *ws.Hub
@@ -431,6 +431,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/resume", s.handleResume)
 	s.mux.HandleFunc("POST /api/printers/{id}/cancel", s.handleCancel)
 	s.mux.HandleFunc("POST /api/printers/{id}/skip", s.handleSkipObject)
+	s.mux.HandleFunc("POST /api/printers/{id}/bed-temp", s.handleSetBedTemp)
+	s.mux.HandleFunc("POST /api/printers/{id}/nozzle-temp", s.handleSetNozzleTemp)
+	s.mux.HandleFunc("POST /api/printers/{id}/chamber-temp", s.handleSetChamberTemp)
+	s.mux.HandleFunc("POST /api/printers/{id}/light", s.handleSetLight)
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
 	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr, s.rtspMgr))
@@ -689,6 +693,100 @@ func (s *Server) handleSkipObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := p.SkipObject(r.Context()); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// --- P1S Control Handlers ---
+
+// handleSetBedTemp sets the bed heater target temperature.
+// Expects JSON body: {"temp": 60}
+func (s *Server) handleSetBedTemp(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	var req struct {
+		Temp int `json:"temp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	if err := p.SetBedTemp(r.Context(), req.Temp); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// handleSetNozzleTemp sets the nozzle target temperature.
+// Expects JSON body: {"temp": 210}
+func (s *Server) handleSetNozzleTemp(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	var req struct {
+		Temp int `json:"temp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	if err := p.SetNozzleTemp(r.Context(), req.Temp); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// handleSetChamberTemp sets the chamber heater target temperature.
+// Expects JSON body: {"temp": 35}
+func (s *Server) handleSetChamberTemp(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	var req struct {
+		Temp int `json:"temp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	if err := p.SetChamberTemp(r.Context(), req.Temp); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// handleSetLight turns the chamber light on or off.
+// Expects JSON body: {"on": true}
+func (s *Server) handleSetLight(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	var req struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	if err := p.SetLight(r.Context(), req.On); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}

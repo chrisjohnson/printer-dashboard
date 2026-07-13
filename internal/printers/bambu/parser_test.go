@@ -166,6 +166,48 @@ func TestParseReport(t *testing.T) {
 			want:    nil,
 			wantErr: true,
 		},
+		{
+			name: "system.ledctrl parsed",
+			input: `{
+				"system": {
+					"ledctrl": {
+						"node": "chamber_light",
+						"mode": "on"
+					}
+				}
+			}`,
+			want: &report{
+				System: &systemStatus{
+					LEDCtrl: &ledStatus{Node: "chamber_light", Mode: "on"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "system.ledctrl with print data",
+			input: `{
+				"print": {
+					"gcode_state": "RUNNING",
+					"mc_percent": 50
+				},
+				"system": {
+					"ledctrl": {
+						"node": "chamber_light",
+						"mode": "off"
+					}
+				}
+			}`,
+			want: &report{
+				Print: &printStatus{
+					GcodeState: "RUNNING",
+					McPercent:  intPtr(50),
+				},
+				System: &systemStatus{
+					LEDCtrl: &ledStatus{Node: "chamber_light", Mode: "off"},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -195,6 +237,7 @@ func TestParseReport(t *testing.T) {
 			// Compare top-level fields.
 			comparePrintStatus(t, tt.want.Print, got.Print)
 			compareCameraStatus(t, tt.want.Camera, got.Camera)
+			compareSystemStatus(t, tt.want.System, got.System)
 		})
 	}
 }
@@ -367,6 +410,40 @@ func compareCameraStatus(t *testing.T, want, got *cameraStatus) {
 	}
 	if got.TimelapseURL != want.TimelapseURL {
 		t.Errorf("TimelapseURL = %q; want %q", got.TimelapseURL, want.TimelapseURL)
+	}
+}
+
+func compareSystemStatus(t *testing.T, want, got *systemStatus) {
+	t.Helper()
+
+	if want == nil && got == nil {
+		return
+	}
+	if want == nil {
+		t.Fatal("expected nil System")
+		return
+	}
+	if got == nil {
+		t.Fatal("expected non-nil System")
+		return
+	}
+
+	if want.LEDCtrl == nil && got.LEDCtrl == nil {
+		return
+	}
+	if want.LEDCtrl == nil {
+		t.Errorf("LEDCtrl = %+v; want nil", got.LEDCtrl)
+		return
+	}
+	if got.LEDCtrl == nil {
+		t.Errorf("LEDCtrl = nil; want %+v", want.LEDCtrl)
+		return
+	}
+	if got.LEDCtrl.Node != want.LEDCtrl.Node {
+		t.Errorf("LEDCtrl.Node = %q; want %q", got.LEDCtrl.Node, want.LEDCtrl.Node)
+	}
+	if got.LEDCtrl.Mode != want.LEDCtrl.Mode {
+		t.Errorf("LEDCtrl.Mode = %q; want %q", got.LEDCtrl.Mode, want.LEDCtrl.Mode)
 	}
 }
 

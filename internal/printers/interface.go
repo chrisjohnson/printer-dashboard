@@ -44,6 +44,9 @@ type PrinterStatus struct {
 	// HMSWarnings holds decoded Bambu HMS events of common/info/unknown
 	// severity — non-blocking, surfaced in the UI but does not affect State.
 	HMSWarnings []HMSEntry `json:"hms_warnings,omitempty"`
+	// LightOn reports the chamber light state when known. nil means unknown
+	// (not yet reported), true = on, false = off.
+	LightOn *bool `json:"light_on,omitempty"`
 }
 
 // HMSEntry is one decoded Bambu HMS (Health Management System) event.
@@ -94,4 +97,16 @@ type Printer interface {
 
 	// CameraStreams returns the available camera/display streams for this printer.
 	CameraStreams() []CameraStream
+
+	// SetBedTemp sets the bed heater target temperature in °C.
+	SetBedTemp(ctx context.Context, temp int) error
+
+	// SetNozzleTemp sets the primary nozzle target temperature in °C.
+	SetNozzleTemp(ctx context.Context, temp int) error
+
+	// SetChamberTemp sets the chamber heater target temperature in °C.
+	SetChamberTemp(ctx context.Context, temp int) error
+
+	// SetLight turns the chamber light on or off.
+	SetLight(ctx context.Context, on bool) error
 }
