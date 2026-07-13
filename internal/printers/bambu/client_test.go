@@ -563,7 +563,8 @@ func TestHandleReport_NilBedTemper(t *testing.T) {
 func TestHandleReport_ChamberTempFallback(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// Report without chamber_temper but with info.temp (H2S-style).
+	// Report without chamber_temper but with info.temp (H2S-style packed integer).
+	// 3932188 = (60 << 16) | 28 → current = 28°C, target = 60°C.
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
@@ -573,7 +574,7 @@ func TestHandleReport_ChamberTempFallback(t *testing.T) {
 			"nozzle_temper": 200.0,
 			"home_flag": 0,
 			"info": {
-				"temp": 28.5
+				"temp": 3932188
 			}
 		}
 	}`)
@@ -581,8 +582,11 @@ func TestHandleReport_ChamberTempFallback(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
-	if s.ChamberTemp == nil || *s.ChamberTemp != 28.5 {
-		t.Errorf("ChamberTemp = %v; want 28.5 (from info.temp fallback)", s.ChamberTemp)
+	if s.ChamberTemp == nil || *s.ChamberTemp != 28.0 {
+		t.Errorf("ChamberTemp = %v; want 28.0 (from info.temp packed-integer decode)", s.ChamberTemp)
+	}
+	if s.ChamberTargetTemp == nil || *s.ChamberTargetTemp != 60.0 {
+		t.Errorf("ChamberTargetTemp = %v; want 60.0 (from info.temp packed-integer decode)", s.ChamberTargetTemp)
 	}
 }
 
@@ -1675,20 +1679,21 @@ func TestHandleReport_ExplicitIdleStillWorks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// K-059: H2S info.temp scaling — 3932184 → 39.3°C
+// K-059: H2S info.temp packed-integer decode — current in low 16 bits,
+// target in high 16 bits.
 // ---------------------------------------------------------------------------
 
-func TestHandleReport_InfoTempScaledToCelsius(t *testing.T) {
+func TestHandleReport_InfoTempPackedInteger(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// H2S report with info.temp as scaled integer (3932184 = 39.32184°C).
+	// 3932220: low 16 bits = 60 (current), high 16 bits = 60 (target).
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
 			"gcode_file": "test.gcode",
 			"nozzle_temper": 200.0,
 			"info": {
-				"temp": 3932184
+				"temp": 3932220
 			}
 		}
 	}`)
@@ -1696,39 +1701,53 @@ func TestHandleReport_InfoTempScaledToCelsius(t *testing.T) {
 	s := c.Status()
 
 	if s.ChamberTemp == nil {
-		t.Fatal("ChamberTemp = nil; want ~39.32")
+		t.Fatal("ChamberTemp = nil; want 60.0")
 	}
-	if *s.ChamberTemp < 39.3 || *s.ChamberTemp > 39.4 {
-		t.Errorf("ChamberTemp = %f; want ~39.32 (3932184 / 100000)", *s.ChamberTemp)
+	if *s.ChamberTemp != 60.0 {
+		t.Errorf("ChamberTemp = %f; want 60.0 (3932220 & 0xFFFF = 60)", *s.ChamberTemp)
+	}
+	if s.ChamberTargetTemp == nil {
+		t.Fatal("ChamberTargetTemp = nil; want 60.0")
+	}
+	if *s.ChamberTargetTemp != 60.0 {
+		t.Errorf("ChamberTargetTemp = %f; want 60.0 (3932220 >> 16 = 60)", *s.ChamberTargetTemp)
 	}
 }
 
-func TestHandleReport_InfoTempDirectCelsius(t *testing.T) {
+func TestHandleReport_InfoTempPackedIntegerAsymmetric(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// info.temp already in °C (small value, no scaling needed).
+	// (60 << 16) | 45 = 3932205: current = 45, target = 60.
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
-			"gcode_file": "test.gcode",
 			"info": {
-				"temp": 28.5
+				"temp": 3932205
 			}
 		}
 	}`)
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
-	if s.ChamberTemp == nil || *s.ChamberTemp != 28.5 {
-		t.Errorf("ChamberTemp = %v; want 28.5 (direct °C, no scaling)", s.ChamberTemp)
+	if s.ChamberTemp == nil {
+		t.Fatal("ChamberTemp = nil; want 45.0")
+	}
+	if *s.ChamberTemp != 45.0 {
+		t.Errorf("ChamberTemp = %f; want 45.0", *s.ChamberTemp)
+	}
+	if s.ChamberTargetTemp == nil {
+		t.Fatal("ChamberTargetTemp = nil; want 60.0")
+	}
+	if *s.ChamberTargetTemp != 60.0 {
+		t.Errorf("ChamberTargetTemp = %f; want 60.0", *s.ChamberTargetTemp)
 	}
 }
 
 func TestHandleReport_InfoTempOutOfRangeIgnored(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// info.temp value that doesn't make sense even after scaling.
-	// 50000000 / 100000 = 500°C — still out of range for a chamber.
+	// 50000000: low 16 bits = 61568 (out of range), high 16 bits = 762 (out of range).
+	// Both current and target should be ignored.
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
@@ -1741,19 +1760,23 @@ func TestHandleReport_InfoTempOutOfRangeIgnored(t *testing.T) {
 	s := c.Status()
 
 	if s.ChamberTemp != nil {
-		t.Errorf("ChamberTemp = %v; want nil (500°C is out of range after scaling)", s.ChamberTemp)
+		t.Errorf("ChamberTemp = %v; want nil (current out of range)", s.ChamberTemp)
+	}
+	if s.ChamberTargetTemp != nil {
+		t.Errorf("ChamberTargetTemp = %v; want nil (target out of range)", s.ChamberTargetTemp)
 	}
 }
 
 func TestHandleReport_InfoTempPreservesPreviousWhenOutOfRange(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// Set initial chamber temp.
+	// Set initial chamber and target temps.
 	c.mu.Lock()
 	c.status.ChamberTemp = float64Ptr(25.0)
+	c.status.ChamberTargetTemp = float64Ptr(40.0)
 	c.mu.Unlock()
 
-	// Report with out-of-range info.temp — should not clobber existing value.
+	// Report with out-of-range info.temp — should not clobber existing values.
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
@@ -1767,6 +1790,9 @@ func TestHandleReport_InfoTempPreservesPreviousWhenOutOfRange(t *testing.T) {
 
 	if s.ChamberTemp == nil || *s.ChamberTemp != 25.0 {
 		t.Errorf("ChamberTemp = %v; want 25.0 (should preserve previous when new value is out of range)", s.ChamberTemp)
+	}
+	if s.ChamberTargetTemp == nil || *s.ChamberTargetTemp != 40.0 {
+		t.Errorf("ChamberTargetTemp = %v; want 40.0 (should preserve previous when new value is out of range)", s.ChamberTargetTemp)
 	}
 }
 

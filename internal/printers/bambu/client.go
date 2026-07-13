@@ -307,23 +307,24 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	if p.ChamberTemper != nil {
 		s.ChamberTemp = p.ChamberTemper
 	} else if p.Info != nil && p.Info.Temp != nil {
-		// H2S (O1S) may report chamber temp via info.temp. Some firmware
-		// versions send it as a scaled integer (real_temp × 100000) rather
-		// than degrees Celsius. Detect and convert.
-		temp := *p.Info.Temp
-		if temp > 500 {
-			// Likely a raw sensor value — convert to °C.
-			temp /= 100000
-		}
-		// Sanity check: chamber temperature must be in a plausible range.
-		if temp >= -50 && temp <= 100 {
-			s.ChamberTemp = &temp
+		// H2S sends info.temp as a packed 32-bit integer:
+		//   Low 16 bits  (val & 0xFFFF)      = current temperature in °C
+		//   High 16 bits ((val >> 16) & 0xFFFF) = target temperature in °C
+		raw := int64(*p.Info.Temp)
+		current := float64(raw & 0xFFFF)
+		target := float64((raw >> 16) & 0xFFFF)
+		if current >= -50 && current <= 100 {
+			s.ChamberTemp = &current
 		} else {
-			log.Printf("bambu %s: info.temp out of range (raw=%.0f, scaled=%.1f), ignoring",
-				c.cfg.ID, *p.Info.Temp, temp)
+			log.Printf("bambu %s: info.temp current out of range (raw=%d, current=%.0f), ignoring",
+				c.cfg.ID, raw, current)
+		}
+		if target >= 0 && target <= 100 {
+			s.ChamberTargetTemp = &target
 		}
 	}
-	if p.ChamberTargetTemper != nil {
+	// Don't overwrite ChamberTargetTemp if it was already decoded from info.temp.
+	if p.ChamberTargetTemper != nil && s.ChamberTargetTemp == nil {
 		s.ChamberTargetTemp = p.ChamberTargetTemper
 	}
 
