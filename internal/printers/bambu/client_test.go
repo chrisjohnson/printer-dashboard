@@ -1797,6 +1797,148 @@ func TestHandleReport_InfoTempPreservesPreviousWhenOutOfRange(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// K-002: P1S subtask_name fallback for CurrentFile
+// ---------------------------------------------------------------------------
+
+// TestHandleReport_SubtaskNameFallback_WhenGcodeFileAbsent verifies that when
+// gcode_file is absent (nil or empty), subtask_name is used as the fallback
+// for CurrentFile. This is the P1S behavior: the printer sends subtask_name
+// during printing instead of gcode_file.
+func TestHandleReport_SubtaskNameFallback_WhenGcodeFileAbsent(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// P1S-style report: gcode_file absent, subtask_name present.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"subtask_name": "benchy_v2.gcode",
+			"mc_percent": 42,
+			"mc_remaining_time": 1200
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.CurrentFile != "benchy_v2.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (should fall back to subtask_name)", s.CurrentFile, "benchy_v2.gcode")
+	}
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q", s.State, "printing")
+	}
+}
+
+// TestHandleReport_SubtaskNameFallback_WhenGcodeFileEmpty verifies that an
+// explicit empty string for gcode_file still triggers the subtask_name fallback.
+func TestHandleReport_SubtaskNameFallback_WhenGcodeFileEmpty(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "",
+			"subtask_name": "phone_case.gcode",
+			"mc_percent": 10
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.CurrentFile != "phone_case.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (empty gcode_file should fall back to subtask_name)", s.CurrentFile, "phone_case.gcode")
+	}
+}
+
+// TestHandleReport_GcodeFilePreferredOverSubtaskName verifies that gcode_file
+// takes precedence when both gcode_file and subtask_name are present. Some
+// printer models may send both fields; gcode_file is the canonical source.
+func TestHandleReport_GcodeFilePreferredOverSubtaskName(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "primary_file.gcode",
+			"subtask_name": "subtask_file.gcode",
+			"mc_percent": 50
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.CurrentFile != "primary_file.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (gcode_file should take precedence over subtask_name)", s.CurrentFile, "primary_file.gcode")
+	}
+}
+
+// TestHandleReport_SubtaskNameFallback_PreservedAcrossHeartbeat verifies that
+// a file name set via subtask_name fallback is preserved across subsequent
+// heartbeat reports that omit both gcode_file and subtask_name.
+func TestHandleReport_SubtaskNameFallback_PreservedAcrossHeartbeat(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// First report: P1S-style with subtask_name.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"subtask_name": "dragon.gcode",
+			"mc_percent": 30,
+			"mc_remaining_time": 2400
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	s1 := c.Status()
+
+	if s1.CurrentFile != "dragon.gcode" {
+		t.Fatalf("After first report: CurrentFile = %q; want %q", s1.CurrentFile, "dragon.gcode")
+	}
+
+	// Second report: heartbeat that omits both gcode_file and subtask_name.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "",
+			"mc_percent": 35
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+
+	if s2.CurrentFile != "dragon.gcode" {
+		t.Errorf("After heartbeat: CurrentFile = %q; want %q (should be preserved from subtask_name)", s2.CurrentFile, "dragon.gcode")
+	}
+}
+
+// TestHandleReport_SubtaskNameFallback_NeitherPresent verifies that when
+// neither gcode_file nor subtask_name is present, CurrentFile is not touched.
+func TestHandleReport_SubtaskNameFallback_NeitherPresent(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Set an initial CurrentFile.
+	c.setStatus(printers.PrinterStatus{
+		ID:          "test-id",
+		Name:        "Test Printer",
+		Type:        "bambu",
+		CurrentFile: "previous_file.gcode",
+	})
+
+	// Report with neither field.
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"mc_percent": 50
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.CurrentFile != "previous_file.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (should be preserved when neither field present)", s.CurrentFile, "previous_file.gcode")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // publishCommand tests
 // ---------------------------------------------------------------------------
 

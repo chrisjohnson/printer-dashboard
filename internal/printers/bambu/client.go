@@ -288,6 +288,11 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	}
 	if p.GcodeFile != nil && *p.GcodeFile != "" {
 		s.CurrentFile = *p.GcodeFile
+	} else if p.SubtaskName != nil && *p.SubtaskName != "" {
+		// P1S uses subtask_name for the current print filename instead of
+		// gcode_file during printing. Fall back to it when gcode_file is
+		// absent or empty.
+		s.CurrentFile = *p.SubtaskName
 	}
 
 	// Temperatures — only update when the field is present in the report.

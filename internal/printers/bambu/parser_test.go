@@ -142,6 +142,25 @@ func TestParseReport(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "subtask_name field parsed (P1S-style report)",
+			input: `{
+				"print": {
+					"gcode_state": "RUNNING",
+					"subtask_name": "benchy.gcode",
+					"mc_percent": 42
+				}
+			}`,
+			want: &report{
+				Print: &printStatus{
+					GcodeState:  "RUNNING",
+					SubtaskName: stringPtr("benchy.gcode"),
+					McPercent:   intPtr(42),
+				},
+				Camera: nil,
+			},
+			wantErr: false,
+		},
+		{
 			name:    "malformed JSON",
 			input:   `{bad`,
 			want:    nil,
@@ -310,6 +329,7 @@ func comparePrintStatus(t *testing.T, want, got *printStatus) {
 	// String pointer fields.
 	compareStringPtr(t, "WifiSignal", want.WifiSignal, got.WifiSignal)
 	compareStringPtr(t, "GcodeFile", want.GcodeFile, got.GcodeFile)
+	compareStringPtr(t, "SubtaskName", want.SubtaskName, got.SubtaskName)
 	compareStringPtr(t, "Lifecycle", want.Lifecycle, got.Lifecycle)
 
 	// Plain int fields.
