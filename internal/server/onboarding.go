@@ -490,6 +490,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       --radius-control: 8px;
       --radius-card: 12px;
       --radius-pill: 999px;
+      /* Shared width for the target-temp inputs and the light toggle track,
+         so the two control types always read as the same width even if one
+         is tweaked later — see input.target / .toggle below. */
+      --control-width: 5.5em;
       --danger: #dc2626;
       --danger-hover: #b91c1c;
       /* Heat-source icon tints (by type) — warm bed, sky nozzle, cool chamber */
@@ -578,7 +582,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .temps .val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
     /* Editable target-temp input — soft pill, faint border, accent focus ring. */
     input.target {
-      width: 5.5em; padding: 3px 8px;
+      width: var(--control-width); padding: 3px 8px;
       font-size: inherit; font-family: inherit; font-weight: 600;
       color: var(--accent); text-align: center;
       background: #f6f8fc; border: 1px solid var(--border-subtle);
@@ -597,16 +601,38 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .temp-icon.chamber { color: var(--temp-chamber); }
     .temp-values { display: flex; gap: 8px; align-items: center; }
 
-    /* Light toggle row — styled like a temp-row but with a CSS switch */
+    /* Light toggle row — styled like a temp-row but with a CSS switch that
+       matches the width/pill shape of input.target above it. The on/off
+       label lives on the sliding thumb itself (.thumb), not a separate
+       static span, so it reads as one "pressed" state at a glance. */
     .light-row { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; padding: 2px 0; }
-    .light-label { color: var(--text); font-weight: 600; font-size: inherit; font-variant-numeric: tabular-nums; min-width: 2em; text-align: right; }
-    /* iOS-style toggle switch (pure CSS, no JS library) */
-    .toggle { position: relative; width: 40px; height: 22px; display: inline-block; flex-shrink: 0; }
+    /* iOS-style toggle switch (pure CSS, no JS library). Track width is tied
+       to --control-width (same var as input.target) so the two control
+       types can never visually drift apart. */
+    .toggle { position: relative; width: var(--control-width); height: 22px; display: inline-block; flex-shrink: 0; }
     .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
-    .toggle .slider { position: absolute; inset: 0; background: #ccc; border-radius: 11px; transition: background 0.2s; cursor: pointer; }
-    .toggle .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: white; border-radius: 50%; transition: transform 0.2s; pointer-events: none; }
-    .toggle input:checked + .slider { background: var(--accent); }
-    .toggle input:checked + .slider::before { transform: translateX(18px); }
+    /* Off state: dimmed/desaturated grey track — deliberately distinct from
+       input.target's pale-blue resting look, so "off" reads as "inactive"
+       rather than just "unfocused". */
+    .toggle .slider {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      background: #e3e4e8; border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill); transition: background 0.2s, border-color 0.2s;
+      cursor: pointer;
+    }
+    .toggle .thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: calc(50% - 2px); height: calc(100% - 4px);
+      display: flex; align-items: center; justify-content: center;
+      background: #fff; border-radius: var(--radius-pill);
+      color: var(--text-muted); font-weight: 600; font-size: 0.75em;
+      font-variant-numeric: tabular-nums; text-transform: lowercase;
+      box-shadow: 0 1px 2px rgba(0,0,0,.15);
+      transition: transform 0.2s, color 0.2s;
+      pointer-events: none;
+    }
+    .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+    .toggle input:checked + .slider .thumb { transform: translateX(100%); color: var(--accent); }
 
     /* File name — hidden on mobile, shown on desktop (see media query below).
        Always rendered in the markup (with a "—" placeholder when no file is
@@ -772,7 +798,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         </span>
         <span class="light-row" data-light>
           <span class="label"><span class="temp-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/></svg></span>Light</span>
-          <span class="temp-values"><label class="toggle"><input type="checkbox"><span class="slider"></span></label><span class="light-label">OFF</span></span>
+          <span class="temp-values"><label class="toggle"><input type="checkbox"><span class="slider"><span class="thumb">off</span></span></label></span>
         </span>
       </div>
       <div class="filename">&nbsp;</div>
@@ -947,8 +973,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (lightRow) {
         const toggle = lightRow.querySelector('.toggle input');
         if (toggle) toggle.checked = p.light_on === true;
-        const label = lightRow.querySelector('.light-label');
-        if (label) label.textContent = p.light_on === true ? 'ON' : 'OFF';
+        const thumb = lightRow.querySelector('.toggle .thumb');
+        if (thumb) thumb.textContent = p.light_on === true ? 'on' : 'off';
       }
 
       reorderCard(p.id);
@@ -1287,7 +1313,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           // The data-light marker lets updateCard() find it directly.
           '<span class="light-row" data-light>' +
             '<span class="label"><span class="temp-icon">' + svgLight() + '</span>Light</span>' +
-            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"></span></label><span class="light-label">' + (p.light_on === true ? 'ON' : 'OFF') + '</span></span>' +
+            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : 'off') + '</span></span></label></span>' +
           '</span>' +
         '</div>' +
         fileHtml +
@@ -1377,8 +1403,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (card) {
         var toggle = card.querySelector('[data-light] .toggle input');
         if (toggle) toggle.checked = newOn;
-        var label = card.querySelector('[data-light] .light-label');
-        if (label) label.textContent = newOn ? 'ON' : 'OFF';
+        var thumb = card.querySelector('[data-light] .toggle .thumb');
+        if (thumb) thumb.textContent = newOn ? 'on' : 'off';
       }
 
       fetch('/api/printers/' + printerId + '/light', {
@@ -1392,8 +1418,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             if (card) {
               var toggle = card.querySelector('[data-light] .toggle input');
               if (toggle) toggle.checked = currentlyOn;
-              var label = card.querySelector('[data-light] .light-label');
-              if (label) label.textContent = currentlyOn ? 'ON' : 'OFF';
+              var thumb = card.querySelector('[data-light] .toggle .thumb');
+              if (thumb) thumb.textContent = currentlyOn ? 'on' : 'off';
             }
             alert('Light control failed: ' + d.error);
           }
@@ -1403,8 +1429,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           if (card) {
             var toggle = card.querySelector('[data-light] .toggle input');
             if (toggle) toggle.checked = currentlyOn;
-            var label = card.querySelector('[data-light] .light-label');
-            if (label) label.textContent = currentlyOn ? 'ON' : 'OFF';
+            var thumb = card.querySelector('[data-light] .toggle .thumb');
+            if (thumb) thumb.textContent = currentlyOn ? 'on' : 'off';
           }
           alert('Network error controlling light');
         });
