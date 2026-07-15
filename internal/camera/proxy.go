@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -204,22 +205,66 @@ func servePlaceholder(w http.ResponseWriter) {
 	w.Write(placeholderJPEG)
 }
 
+// lastGoodFrameCache holds the most recent successfully-fetched frame per
+// stream, keyed by RTSPStreamKey (rtsps://) or the raw camera URL (http/https).
+// It lets FrameHandler serve the last good frame on a transient fetch
+// failure instead of falling back to the gray placeholder, mirroring the
+// behavior FrameBuffer already gives Bambu cameras.
+type lastGoodFrameCache struct {
+	mu      sync.Mutex
+	buffers map[string]*FrameBuffer
+}
+
+func newLastGoodFrameCache() *lastGoodFrameCache {
+	return &lastGoodFrameCache{buffers: make(map[string]*FrameBuffer)}
+}
+
+func (c *lastGoodFrameCache) get(key string) *FrameBuffer {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	fb, ok := c.buffers[key]
+	if !ok {
+		fb = NewFrameBuffer()
+		c.buffers[key] = fb
+	}
+	return fb
+}
+
+// serveLastGoodOrPlaceholder serves fb's most recent frame if one exists,
+// falling back to the gray placeholder if no frame has ever been cached for
+// this stream (first request, or camera never reachable).
+func serveLastGoodOrPlaceholder(w http.ResponseWriter, fb *FrameBuffer) {
+	if frame := fb.Latest(); frame != nil {
+		writeFrame(w, "image/jpeg", frame)
+		return
+	}
+	servePlaceholder(w)
+}
+
+func writeFrame(w http.ResponseWriter, contentType string, body []byte) {
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.Write(body)
+}
+
 // readFirstJPEGFromMJPEG reads the first JPEG frame from a multipart/x-mixed-replace
-// MJPEG stream. It returns the raw JPEG bytes (without the multipart headers).
-func readFirstJPEGFromMJPEG(r io.Reader) []byte {
+// MJPEG stream. It returns the raw JPEG bytes (without the multipart headers)
+// and true, or false if no complete frame could be read before an error.
+func readFirstJPEGFromMJPEG(r io.Reader) ([]byte, bool) {
 	br := bufio.NewReader(r)
 	// Read until we find a JPEG start marker (FF D8).
 	for {
 		b, err := br.ReadByte()
 		if err != nil {
-			return placeholderJPEG
+			return nil, false
 		}
 		if b != 0xFF {
 			continue
 		}
 		next, err := br.ReadByte()
 		if err != nil {
-			return placeholderJPEG
+			return nil, false
 		}
 		if next != 0xD8 {
 			continue
@@ -230,18 +275,18 @@ func readFirstJPEGFromMJPEG(r io.Reader) []byte {
 		for {
 			b, err := br.ReadByte()
 			if err != nil {
-				return placeholderJPEG
+				return nil, false
 			}
 			jpeg = append(jpeg, b)
 			if b == 0xFF {
 				next, err := br.ReadByte()
 				if err != nil {
-					return placeholderJPEG
+					return nil, false
 				}
 				jpeg = append(jpeg, next)
 				if next == 0xD9 {
 					// Found JPEG EOI marker — done.
-					return jpeg
+					return jpeg, true
 				}
 			}
 		}
@@ -261,6 +306,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 		}).DialContext,
 	}
 	client := &http.Client{Transport: transport}
+	frameCache := newLastGoodFrameCache()
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		rawURL := r.URL.Query().Get("url")
@@ -305,10 +351,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 				frame = placeholderJPEG
 			}
 
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Content-Length", strconv.Itoa(len(frame)))
-			w.Write(frame)
+			writeFrame(w, "image/jpeg", frame)
 			return
 		}
 
@@ -318,13 +361,14 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 				return
 			}
 			streamKey := RTSPStreamKey(parsedURL)
+			fb := frameCache.get("rtsps:" + streamKey)
 			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
-				servePlaceholder(w)
+				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			frameURL, ok := rtspMgr.FrameURL(streamKey)
 			if !ok {
-				servePlaceholder(w)
+				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 
@@ -337,26 +381,24 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 
 			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, frameURL, nil)
 			if err != nil {
-				servePlaceholder(w)
+				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			resp, err := client.Do(req)
 			if err != nil {
-				servePlaceholder(w)
+				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 			if err != nil {
-				servePlaceholder(w)
+				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 
-			w.Header().Set("Content-Type", "image/jpeg")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-			w.Write(body)
+			fb.Update(body)
+			writeFrame(w, "image/jpeg", body)
 			return
 		}
 
@@ -365,18 +407,20 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			return
 		}
 
+		fb := frameCache.get("http:" + rawURL)
+
 		// HTTP camera: make a single GET request and serve the response body.
 		// For MJPEG streams (multipart/x-mixed-replace), read only the first
 		// JPEG frame instead of consuming the entire never-ending stream.
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
 		if err != nil {
-			servePlaceholder(w)
+			serveLastGoodOrPlaceholder(w, fb)
 			return
 		}
 
 		resp, err := client.Do(req)
 		if err != nil {
-			servePlaceholder(w)
+			serveLastGoodOrPlaceholder(w, fb)
 			return
 		}
 		defer resp.Body.Close()
@@ -386,13 +430,18 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 		if strings.HasPrefix(contentType, "multipart/x-mixed-replace") {
 			// Read just the first JPEG frame from the MJPEG stream.
 			// Each part is: --boundary\r\nContent-Type: image/jpeg\r\n\r\n<JPEG bytes>\r\n
-			body = readFirstJPEGFromMJPEG(resp.Body)
+			var ok bool
+			body, ok = readFirstJPEGFromMJPEG(resp.Body)
+			if !ok {
+				serveLastGoodOrPlaceholder(w, fb)
+				return
+			}
 			contentType = "image/jpeg"
 		} else {
 			// Single-image response — read the body with a 10MB limit.
 			body, err = io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 			if err != nil {
-				servePlaceholder(w)
+				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 		}
@@ -400,9 +449,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			contentType = "image/jpeg"
 		}
 
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.Write(body)
+		fb.Update(body)
+		writeFrame(w, contentType, body)
 	}
 }

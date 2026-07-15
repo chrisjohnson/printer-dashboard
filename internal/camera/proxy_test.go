@@ -392,6 +392,220 @@ func TestFrameHandler_RTSPS_WithGo2RTC(t *testing.T) {
 	rtspMgr.mu.Unlock()
 }
 
+func TestFrameHandler_RTSPS_LastGoodFrame(t *testing.T) {
+	// Start a mock HTTP server that mimics go2rtc's frame API.
+	frameJPEG := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9}
+	mockGo2RTC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/streams") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/frame.jpeg") {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.WriteHeader(http.StatusOK)
+			w.Write(frameJPEG)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mockGo2RTC.Close()
+
+	mockURL, _ := url.Parse(mockGo2RTC.URL)
+	mockPort, _ := strconv.Atoi(mockURL.Port())
+
+	rtspMgr := NewGo2RTCManager("", 0)
+	streamKey := "192.168.1.100:322_live"
+	rtspMgr.mu.Lock()
+	rtspMgr.instances[streamKey] = &go2rtcInstance{
+		streamKey: streamKey,
+		rtspsURL:  "rtsps://192.168.1.100:322/live",
+		localPort: mockPort,
+		startedAt: time.Now(),
+	}
+	rtspMgr.mu.Unlock()
+
+	handler := FrameHandler(nil, rtspMgr)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape("rtsps://192.168.1.100:322/live"), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	firstBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading first response body: %v", err)
+	}
+	if string(firstBody) != string(frameJPEG) {
+		t.Fatalf("first response body = %x; want %x", firstBody, frameJPEG)
+	}
+
+	// Remove the go2rtc instance so FrameURL returns !ok on the next call,
+	// simulating a transient failure after a good frame was already cached.
+	rtspMgr.mu.Lock()
+	delete(rtspMgr.instances, streamKey)
+	rtspMgr.mu.Unlock()
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape("rtsps://192.168.1.100:322/live"), nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	resp2 := w2.Result()
+	defer resp2.Body.Close()
+	secondBody, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		t.Fatalf("reading second response body: %v", err)
+	}
+	if string(secondBody) != string(firstBody) {
+		t.Errorf("second response body = %x; want last-good frame %x", secondBody, firstBody)
+	}
+	if string(secondBody) == string(placeholderJPEG) {
+		t.Errorf("second response body is the placeholder; want the cached last-good frame")
+	}
+}
+
+func TestFrameHandler_HTTP_LastGoodFrame(t *testing.T) {
+	frameJPEG := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.WriteHeader(http.StatusOK)
+		w.Write(frameJPEG)
+	}))
+
+	handler := FrameHandler(nil, nil)
+	proxyURL := "/api/camera/frame?url=" + url.QueryEscape(upstream.URL)
+
+	req := httptest.NewRequest(http.MethodGet, proxyURL, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	firstBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading first response body: %v", err)
+	}
+	if string(firstBody) != string(frameJPEG) {
+		t.Fatalf("first response body = %x; want %x", firstBody, frameJPEG)
+	}
+
+	// Close the upstream so the second request fails and must fall back to
+	// the cached last-good frame instead of the placeholder.
+	upstream.Close()
+
+	req2 := httptest.NewRequest(http.MethodGet, proxyURL, nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	resp2 := w2.Result()
+	defer resp2.Body.Close()
+	secondBody, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		t.Fatalf("reading second response body: %v", err)
+	}
+	if string(secondBody) != string(firstBody) {
+		t.Errorf("second response body = %x; want last-good frame %x", secondBody, firstBody)
+	}
+	if string(secondBody) == string(placeholderJPEG) {
+		t.Errorf("second response body is the placeholder; want the cached last-good frame")
+	}
+}
+
+func TestFrameHandler_HTTP_MJPEG_ReadError_ServesLastGood(t *testing.T) {
+	frameJPEG := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9}
+	var serveMJPEG bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !serveMJPEG {
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.WriteHeader(http.StatusOK)
+			w.Write(frameJPEG)
+			return
+		}
+		// Simulate a connection that drops mid-frame: announce MJPEG but
+		// never write a complete JPEG (no EOI marker), then close the
+		// connection by hijacking it.
+		w.Header().Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, "--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xe0incomplete")
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			t.Fatalf("ResponseWriter does not support hijacking")
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			t.Fatalf("hijacking connection: %v", err)
+		}
+		conn.Close()
+	}))
+	defer upstream.Close()
+
+	handler := FrameHandler(nil, nil)
+	proxyURL := "/api/camera/frame?url=" + url.QueryEscape(upstream.URL)
+
+	req := httptest.NewRequest(http.MethodGet, proxyURL, nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+	firstBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading first response body: %v", err)
+	}
+	if string(firstBody) != string(frameJPEG) {
+		t.Fatalf("first response body = %x; want %x", firstBody, frameJPEG)
+	}
+
+	serveMJPEG = true
+
+	req2 := httptest.NewRequest(http.MethodGet, proxyURL, nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	resp2 := w2.Result()
+	defer resp2.Body.Close()
+	secondBody, err := io.ReadAll(resp2.Body)
+	if err != nil {
+		t.Fatalf("reading second response body: %v", err)
+	}
+	if string(secondBody) != string(firstBody) {
+		t.Errorf("second response body = %x; want last-good frame %x", secondBody, firstBody)
+	}
+	if string(secondBody) == string(placeholderJPEG) {
+		t.Errorf("second response body is the placeholder; want the cached last-good frame")
+	}
+}
+
+func TestFrameHandler_HTTP_NoCache_ServesPlaceholder(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	unreachableURL := upstream.URL
+	upstream.Close() // close before any request is ever made against it
+
+	handler := FrameHandler(nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/camera/frame?url="+url.QueryEscape(unreachableURL), nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200 (placeholder)", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q; want image/jpeg", ct)
+	}
+
+	gotBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading response body: %v", err)
+	}
+	if string(gotBody) != string(placeholderJPEG) {
+		t.Errorf("body is not the placeholder JPEG on first-ever unreachable request")
+	}
+}
+
 func TestFrameHandler_Bambus_WithMgr(t *testing.T) {
 	// Basic test to verify FrameHandler still works with bambus scheme.
 	handler := FrameHandler(nil, nil)
