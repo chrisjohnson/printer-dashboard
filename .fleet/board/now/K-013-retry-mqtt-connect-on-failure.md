@@ -36,5 +36,6 @@ Retry MQTT connect on failure with exponential backoff. Improves resilience when
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Research dispatched by gentle-loris-hazel 2026-07-16T13:54Z — checking
+current Paho MQTT client options (SetConnectRetry/SetAutoReconnect/etc.)
+and what happens today on initial connect failure, before implementing.
