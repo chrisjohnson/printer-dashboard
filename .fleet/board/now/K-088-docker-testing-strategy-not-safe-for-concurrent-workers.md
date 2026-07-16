@@ -55,6 +55,6 @@ while still keeping the build/run steps simple per K-084's original intent.
   ready per §4a).
 
 ## Handoff notes
-Not started. Related to K-084 (established the fixed-name convention this
-card needs to fix) and K-012 (docker-compose for multi-service deployment —
-may or may not be the same solution space, worth checking when picked up).
+Research dispatched by gentle-loris-hazel 2026-07-16T14:10Z — confirming
+exact collision points (image/container/port/volume) and checking whether
+K-012 (docker-compose) obsoletes this fix.
