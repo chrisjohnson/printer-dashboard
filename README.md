@@ -47,7 +47,7 @@ docker build -t printer-dashboard .
 
 # Remove any leftover container from a previous run, then start a new one
 docker rm -f printer-dashboard || true
-docker run --name printer-dashboard \
+docker run -d --name printer-dashboard \
   -p 8080:8080 \
   -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
   printer-dashboard
