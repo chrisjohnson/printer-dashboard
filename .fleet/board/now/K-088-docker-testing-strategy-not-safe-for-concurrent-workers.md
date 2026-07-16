@@ -2,8 +2,8 @@
 id: K-088
 title: Docker testing strategy not safe for concurrent fleet workers
 initiative_id: null
-claimed_by: null
-claimed_at: null
+claimed_by: gentle-loris-hazel
+claimed_at: 2026-07-16T14:10Z
 blocks: null
 blocked_by: null
 related_cards: [K-084, K-012]
@@ -47,6 +47,7 @@ while still keeping the build/run steps simple per K-084's original intent.
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: swift-panda-dusk 2026-07-16T09:26Z — filed per human request, not started -->
+<!-- signal: gentle-loris-hazel 2026-07-16T14:10Z — claiming, dispatching researcher to confirm collision points and naming scheme -->
 
 ## Decision log
 - 2026-07-16 — swift-panda-dusk: filed to backlog per §2 (human-requested
