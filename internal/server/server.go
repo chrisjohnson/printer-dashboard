@@ -25,17 +25,18 @@ import (
 
 // Server holds the HTTP server, printer registry, and dependencies.
 type Server struct {
-	cfg         *config.Config
-	http        *http.Server
-	mux         *http.ServeMux
-	printers    map[string]printers.Printer
-	mu          sync.RWMutex
-	bambuCloud  *bambu.BambuCloudClient // cached for onboarding/reload
-	configPath  string                  // path to config.yaml for saving
-	printersCtx context.CancelFunc      // cancel for printer connection goroutines
-	cameraMgr   *camera.CameraManager   // persistent Bambu camera connections
-	rtspMgr     *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
-	skipTracker *SkipTracker            // per-printer skipped-object history for the current print
+	cfg               *config.Config
+	http              *http.Server
+	mux               *http.ServeMux
+	printers          map[string]printers.Printer
+	mu                sync.RWMutex
+	bambuCloud        *bambu.BambuCloudClient // cached for onboarding/reload
+	configPath        string                  // path to config.yaml for saving
+	printersCtx       context.CancelFunc      // cancel for printer connection goroutines
+	cameraMgr         *camera.CameraManager   // persistent Bambu camera connections
+	rtspMgr           *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
+	skipTracker       *SkipTracker            // per-printer skipped-object history for the current print
+	hmsDismissTracker *HMSDismissTracker      // per-printer dismissed HMS codes
 
 	// lastPrintState tracks each printer's last-seen state so
 	// startStatusForwarder can detect the "printing" -> not-"printing"
@@ -60,12 +61,13 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	mux := http.NewServeMux()
 
 	s := &Server{
-		cfg:            cfg,
-		mux:            mux,
-		printers:       make(map[string]printers.Printer),
-		configPath:     configPath,
-		skipTracker:    NewSkipTracker(),
-		lastPrintState: make(map[string]string),
+		cfg:               cfg,
+		mux:               mux,
+		printers:          make(map[string]printers.Printer),
+		configPath:        configPath,
+		skipTracker:       NewSkipTracker(),
+		hmsDismissTracker: NewHMSDismissTracker(),
+		lastPrintState:    make(map[string]string),
 		http: &http.Server{
 			Addr:    cfg.Listen,
 			Handler: noCacheMiddleware(mux),
@@ -349,6 +351,7 @@ func (s *Server) startStatusForwarder(ctx context.Context, printerID string, sta
 					return
 				}
 				s.clearSkippedOnPrintEnd(pid, status.State)
+				s.reconcileHMSDismissals(pid, status)
 				enriched := s.enrichStatusWithCameras(pid, status)
 				msg := map[string]any{
 					"type":    "printer_update",
@@ -385,6 +388,21 @@ func (s *Server) clearSkippedOnPrintEnd(printerID, state string) {
 	if wasActive(prev) && !wasActive(state) {
 		s.skipTracker.Clear(printerID)
 	}
+}
+
+// reconcileHMSDismissals clears printerID's dismissed-HMS-code history for
+// any code no longer present in status's HMSErrors/HMSWarnings. Without
+// this, dismissing a code would suppress it forever — including a later,
+// unrelated occurrence of the same code after it cleared and re-fired.
+func (s *Server) reconcileHMSDismissals(printerID string, status printers.PrinterStatus) {
+	active := make([]string, 0, len(status.HMSErrors)+len(status.HMSWarnings))
+	for _, e := range status.HMSErrors {
+		active = append(active, e.Code)
+	}
+	for _, e := range status.HMSWarnings {
+		active = append(active, e.Code)
+	}
+	s.hmsDismissTracker.Reconcile(printerID, active)
 }
 
 // reloadConfig re-reads config.yaml, re-initializes Bambu cloud + printers.

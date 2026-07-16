@@ -120,12 +120,13 @@ func newTestServer(printersMap map[string]printers.Printer) *Server {
 	go wsHub.Run()
 
 	s := &Server{
-		cfg:            &config.Config{Listen: ":0"},
-		mux:            http.NewServeMux(),
-		printers:       printersMap,
-		wsHub:          wsHub,
-		skipTracker:    NewSkipTracker(),
-		lastPrintState: make(map[string]string),
+		cfg:               &config.Config{Listen: ":0"},
+		mux:               http.NewServeMux(),
+		printers:          printersMap,
+		wsHub:             wsHub,
+		skipTracker:       NewSkipTracker(),
+		hmsDismissTracker: NewHMSDismissTracker(),
+		lastPrintState:    make(map[string]string),
 	}
 	s.registerRoutes()
 	return s
