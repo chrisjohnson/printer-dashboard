@@ -3,8 +3,8 @@ id: K-004
 # Filename pattern: {ID}-{slugified-title}.md
 title: COMPLETE state transient no hysteresis
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: gentle-loris-hazel   # pet name of the agent session working this card, e.g. otter
+claimed_at: 2026-07-16T13:22Z    # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
 related_cards: []
@@ -25,6 +25,7 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
+<!-- signal: gentle-loris-hazel 2026-07-16T13:22Z — claiming, dispatching researcher to scope the state machine fix -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
