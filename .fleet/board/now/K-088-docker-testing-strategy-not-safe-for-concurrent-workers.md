@@ -100,5 +100,6 @@ while still keeping the build/run steps simple per K-084's original intent.
   empty, unstarted stub in a different scope — not blocking on it.
 
 ## Handoff notes
-Research complete, plan set. Dispatching Implementer next to update
-AGENTS.md/README.md and check for CI docker usage.
+Implementer dispatched by gentle-loris-hazel 2026-07-16T14:25Z, working in
+`.fleet/worktrees/gentle-loris-hazel` on fresh branch
+`worktree-gentle-loris-hazel-k088` (off origin/main). Awaiting completion.
