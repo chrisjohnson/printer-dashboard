@@ -7,7 +7,7 @@ claimed_by: gentle-loris-hazel   # pet name of the agent session working this ca
 claimed_at: 2026-07-16T13:22Z    # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
-related_cards: []
+related_cards: [K-006, K-030]
 ---
 
 # K-004 — COMPLETE state transient no hysteresis
