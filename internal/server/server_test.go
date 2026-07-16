@@ -120,12 +120,13 @@ func newTestServer(printersMap map[string]printers.Printer) *Server {
 	go wsHub.Run()
 
 	s := &Server{
-		cfg:            &config.Config{Listen: ":0"},
-		mux:            http.NewServeMux(),
-		printers:       printersMap,
-		wsHub:          wsHub,
-		skipTracker:    NewSkipTracker(),
-		lastPrintState: make(map[string]string),
+		cfg:               &config.Config{Listen: ":0"},
+		mux:               http.NewServeMux(),
+		printers:          printersMap,
+		wsHub:             wsHub,
+		skipTracker:       NewSkipTracker(),
+		hmsDismissTracker: NewHMSDismissTracker(),
+		lastPrintState:    make(map[string]string),
 	}
 	s.registerRoutes()
 	return s
@@ -1973,5 +1974,174 @@ func TestHandleListPrinters_LightOnRoundTrip(t *testing.T) {
 
 	if raw["light_on"] != true {
 		t.Errorf("light_on: expected true, got %v", raw["light_on"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/hms/dismiss
+// ---------------------------------------------------------------------------
+
+func TestHandleDismissHMS(t *testing.T) {
+	t.Run("found and dismisses", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{
+				ID:   "printer-1",
+				Name: "My Printer",
+				HMSErrors: []printers.HMSEntry{
+					{Code: "0300-2000-0003-0001", Module: "AMS", Severity: "fatal"},
+				},
+			},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/hms/dismiss", map[string]string{"code": "0300-2000-0003-0001"})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+
+		var body map[string]string
+		decodeBody(t, resp, &body)
+		if body["status"] != "ok" {
+			t.Errorf(`expected "status":"ok", got %q`, body["status"])
+		}
+
+		if !s.hmsDismissTracker.IsDismissed("printer-1", "0300-2000-0003-0001") {
+			t.Error("expected code to be marked dismissed")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/nonexistent/hms/dismiss", map[string]string{"code": "0300-2000-0003-0001"})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+
+		var body map[string]string
+		decodeBody(t, resp, &body)
+		if body["error"] != `printer "nonexistent" not found` {
+			t.Errorf("unexpected error message: %q", body["error"])
+		}
+	})
+
+	t.Run("bad request body", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/hms/dismiss")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("missing code", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/hms/dismiss", map[string]string{})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Dismissed HMS codes are filtered from outbound status
+// ---------------------------------------------------------------------------
+
+func TestHandleListPrinters_FiltersDismissedHMS(t *testing.T) {
+	p := &MockPrinter{
+		id:   "p1",
+		name: "Test Printer",
+		stat: printers.PrinterStatus{
+			ID:   "p1",
+			Name: "Test Printer",
+			HMSErrors: []printers.HMSEntry{
+				{Code: "err-dismissed", Module: "AMS", Severity: "fatal"},
+				{Code: "err-active", Module: "AMS", Severity: "fatal"},
+			},
+			HMSWarnings: []printers.HMSEntry{
+				{Code: "warn-dismissed", Module: "AMS", Severity: "common"},
+			},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	// Dismiss before the first read so the fixture reflects post-dismiss state.
+	s.hmsDismissTracker.Dismiss("p1", "err-dismissed")
+	s.hmsDismissTracker.Dismiss("p1", "warn-dismissed")
+
+	resp := mustGet(t, ts.URL, "/api/printers")
+	defer resp.Body.Close()
+
+	var body map[string]any
+	decodeBody(t, resp, &body)
+
+	list, ok := body["printers"].([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("expected 1 printer, got %v", body["printers"])
+	}
+	prt := list[0].(map[string]any)
+
+	hmsErrors, _ := prt["hms_errors"].([]any)
+	if len(hmsErrors) != 1 {
+		t.Fatalf("expected 1 remaining hms_errors entry, got %d: %v", len(hmsErrors), hmsErrors)
+	}
+	if code := hmsErrors[0].(map[string]any)["code"]; code != "err-active" {
+		t.Errorf("expected remaining error code 'err-active', got %v", code)
+	}
+
+	if hmsWarnings, ok := prt["hms_warnings"]; ok {
+		t.Errorf("expected hms_warnings to be filtered out entirely (omitempty), got %v", hmsWarnings)
+	}
+}
+
+func TestHandleGetPrinter_FiltersDismissedHMS(t *testing.T) {
+	p := &MockPrinter{
+		id:   "p1",
+		name: "Test Printer",
+		stat: printers.PrinterStatus{
+			ID:   "p1",
+			Name: "Test Printer",
+			HMSErrors: []printers.HMSEntry{
+				{Code: "err-dismissed", Module: "AMS", Severity: "fatal"},
+			},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	s.hmsDismissTracker.Dismiss("p1", "err-dismissed")
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1")
+	defer resp.Body.Close()
+
+	var body map[string]any
+	decodeBody(t, resp, &body)
+
+	if hmsErrors, ok := body["hms_errors"]; ok {
+		t.Errorf("expected hms_errors to be filtered out entirely (omitempty), got %v", hmsErrors)
 	}
 }

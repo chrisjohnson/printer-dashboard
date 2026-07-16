@@ -25,17 +25,18 @@ import (
 
 // Server holds the HTTP server, printer registry, and dependencies.
 type Server struct {
-	cfg         *config.Config
-	http        *http.Server
-	mux         *http.ServeMux
-	printers    map[string]printers.Printer
-	mu          sync.RWMutex
-	bambuCloud  *bambu.BambuCloudClient // cached for onboarding/reload
-	configPath  string                  // path to config.yaml for saving
-	printersCtx context.CancelFunc      // cancel for printer connection goroutines
-	cameraMgr   *camera.CameraManager   // persistent Bambu camera connections
-	rtspMgr     *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
-	skipTracker *SkipTracker            // per-printer skipped-object history for the current print
+	cfg               *config.Config
+	http              *http.Server
+	mux               *http.ServeMux
+	printers          map[string]printers.Printer
+	mu                sync.RWMutex
+	bambuCloud        *bambu.BambuCloudClient // cached for onboarding/reload
+	configPath        string                  // path to config.yaml for saving
+	printersCtx       context.CancelFunc      // cancel for printer connection goroutines
+	cameraMgr         *camera.CameraManager   // persistent Bambu camera connections
+	rtspMgr           *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
+	skipTracker       *SkipTracker            // per-printer skipped-object history for the current print
+	hmsDismissTracker *HMSDismissTracker      // per-printer dismissed HMS codes
 
 	// lastPrintState tracks each printer's last-seen state so
 	// startStatusForwarder can detect the "printing" -> not-"printing"
@@ -60,12 +61,13 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	mux := http.NewServeMux()
 
 	s := &Server{
-		cfg:            cfg,
-		mux:            mux,
-		printers:       make(map[string]printers.Printer),
-		configPath:     configPath,
-		skipTracker:    NewSkipTracker(),
-		lastPrintState: make(map[string]string),
+		cfg:               cfg,
+		mux:               mux,
+		printers:          make(map[string]printers.Printer),
+		configPath:        configPath,
+		skipTracker:       NewSkipTracker(),
+		hmsDismissTracker: NewHMSDismissTracker(),
+		lastPrintState:    make(map[string]string),
 		http: &http.Server{
 			Addr:    cfg.Listen,
 			Handler: noCacheMiddleware(mux),
@@ -349,7 +351,9 @@ func (s *Server) startStatusForwarder(ctx context.Context, printerID string, sta
 					return
 				}
 				s.clearSkippedOnPrintEnd(pid, status.State)
-				enriched := s.enrichStatusWithCameras(pid, status)
+				s.reconcileHMSDismissals(pid, status)
+				filtered := s.filterDismissedHMS(pid, status)
+				enriched := s.enrichStatusWithCameras(pid, filtered)
 				msg := map[string]any{
 					"type":    "printer_update",
 					"printer": enriched,
@@ -385,6 +389,53 @@ func (s *Server) clearSkippedOnPrintEnd(printerID, state string) {
 	if wasActive(prev) && !wasActive(state) {
 		s.skipTracker.Clear(printerID)
 	}
+}
+
+// reconcileHMSDismissals clears printerID's dismissed-HMS-code history for
+// any code no longer present in status's HMSErrors/HMSWarnings. Without
+// this, dismissing a code would suppress it forever — including a later,
+// unrelated occurrence of the same code after it cleared and re-fired.
+func (s *Server) reconcileHMSDismissals(printerID string, status printers.PrinterStatus) {
+	active := make([]string, 0, len(status.HMSErrors)+len(status.HMSWarnings))
+	for _, e := range status.HMSErrors {
+		active = append(active, e.Code)
+	}
+	for _, e := range status.HMSWarnings {
+		active = append(active, e.Code)
+	}
+	s.hmsDismissTracker.Reconcile(printerID, active)
+}
+
+// filterDismissedHMS returns a copy of status with any HMSErrors/HMSWarnings
+// entries whose code has been dismissed for printerID removed. This is an
+// outbound-serialization concern only — it must run at each point a status
+// leaves the server (list/get/websocket), not on the underlying
+// PrinterStatus that other logic (e.g. state computation, reconciliation)
+// relies on seeing in full.
+func (s *Server) filterDismissedHMS(printerID string, status printers.PrinterStatus) printers.PrinterStatus {
+	status.HMSErrors = s.filterDismissedHMSEntries(printerID, status.HMSErrors)
+	status.HMSWarnings = s.filterDismissedHMSEntries(printerID, status.HMSWarnings)
+	return status
+}
+
+// filterDismissedHMSEntries removes any entry whose Code is dismissed for
+// printerID. Returns nil if entries is empty/nil or everything was filtered
+// out, matching the omitempty JSON behavior of the original slices.
+func (s *Server) filterDismissedHMSEntries(printerID string, entries []printers.HMSEntry) []printers.HMSEntry {
+	if len(entries) == 0 {
+		return nil
+	}
+	filtered := make([]printers.HMSEntry, 0, len(entries))
+	for _, e := range entries {
+		if s.hmsDismissTracker.IsDismissed(printerID, e.Code) {
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // reloadConfig re-reads config.yaml, re-initializes Bambu cloud + printers.
@@ -467,6 +518,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/nozzle-temp", s.handleSetNozzleTemp)
 	s.mux.HandleFunc("POST /api/printers/{id}/chamber-temp", s.handleSetChamberTemp)
 	s.mux.HandleFunc("POST /api/printers/{id}/light", s.handleSetLight)
+	s.mux.HandleFunc("POST /api/printers/{id}/hms/dismiss", s.handleDismissHMS)
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
 	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr, s.rtspMgr))
@@ -647,7 +699,8 @@ func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	printerList := make([]printers.PrinterStatus, 0, len(s.printers))
 	for id, p := range s.printers {
-		printerList = append(printerList, s.enrichWithStreams(p.CameraStreams(), id, p.Status()))
+		status := s.filterDismissedHMS(id, p.Status())
+		printerList = append(printerList, s.enrichWithStreams(p.CameraStreams(), id, status))
 	}
 	s.mu.RUnlock()
 
@@ -672,7 +725,8 @@ func (s *Server) handleGetPrinter(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
 		return
 	}
-	writeJSON(w, 200, s.enrichStatusWithCameras(id, p.Status()))
+	status := s.filterDismissedHMS(id, p.Status())
+	writeJSON(w, 200, s.enrichStatusWithCameras(id, status))
 }
 
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
@@ -852,5 +906,31 @@ func (s *Server) handleSetLight(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// handleDismissHMS marks an HMS (Health Management System) code as dismissed
+// for the given printer, suppressing it from outbound status until it clears
+// and later re-fires (see HMSDismissTracker.Reconcile).
+// Expects JSON body: {"code": "0300-2000-0003-0001"}
+func (s *Server) handleDismissHMS(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	_, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+	if req.Code == "" {
+		writeError(w, 400, "code is required")
+		return
+	}
+	s.hmsDismissTracker.Dismiss(id, req.Code)
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
