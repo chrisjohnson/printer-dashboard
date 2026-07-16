@@ -162,8 +162,45 @@ actions are worth building first.
   (and Inspector's finding that un-committed "done" steps went undetected
   last time). Setting `current_role: implementer`, releasing claim, handing
   off.
+- 2026-07-16 — clever-fennec-reef (worker): implemented steps 2–5, each as
+  its own real, verified commit on `worktree-clever-fennec-reef`:
+  `4b3901c` (HMSDismissTracker), `2458b30` (dismiss endpoint + outbound
+  filtering + tests), `8ac6e21` (per-entry dismissible-row UI), `2b555ca`
+  (JS wiring). `go build`/`go vet`/`go test ./...` clean after every step,
+  each verified by re-reading `git log` output before moving on — this is a
+  deliberate response to the prior incident on this card where steps were
+  checked off with no commits behind them.
+- 2026-07-16 — clever-fennec-reef (worker), step 6 (Inspector): dispatched a
+  Review pass to verify the four claims in the original step 6 ask.
+  **No real Bambu printer was available in this environment**, so "verify
+  with real Bambu printer" could not be performed literally. Instead, each
+  claim was verified as rigorously as automation allows:
+  - *Dismissed row disappears*: verified via `TestHandleListPrinters_FiltersDismissedHMS` / `TestHandleGetPrinter_FiltersDismissedHMS` (both pass) plus code reading of the JS wiring.
+  - *State tag stays "error", ground truth unaffected*: verified by code trace — `State` is computed in `bambu/client.go`'s `handleReport` from the driver's own unfiltered HMS data before the status ever reaches `server.go`; `filterDismissedHMS` operates on a value-copy only at the outbound-serialization boundary, after `State` is already fixed. Dismissal never touches driver state.
+  - *Survives page reload (server-side, not per-tab)*: verified — `HMSDismissTracker` lives on `Server`, in-memory, no per-session scoping; grepped all four commits for `localStorage`/`sessionStorage` — zero matches.
+  - *Reconcile un-suppression (clear-then-refire not permanently suppressed)*: verified via a standalone scratch test directly exercising `HMSDismissTracker.Reconcile` (dismiss → reconcile with code absent from active set → confirmed un-dismissed → reconcile with code back in active set → confirmed still not re-suppressed). Scratch test was not committed.
+  No bugs found. **Residual gap, explicitly not swept under the rug**: real
+  Bambu MQTT wire behavior (whether firmware re-sends the exact same `code`
+  string on re-occurrence, timing of reconcile relative to real fault
+  cycles, live-browser/WS rendering) was not and could not be exercised
+  here. Recommend a real-hardware smoke test at or shortly after deploy;
+  filing this as a natural follow-up rather than blocking board closure on
+  hardware this environment doesn't have. The originally-scoped "action"
+  half of the card title (remedial-fix buttons) was already descoped by the
+  Planner (see above) — a separate follow-up card if wanted.
 
 ## Handoff notes
+
+**2026-07-16 — clever-fennec-reef: card complete, PR open.**
+PR: https://github.com/chrisjohnson/printer-dashboard/pull/2 (branch
+`worktree-clever-fennec-reef` → `main`). All 4 implementation commits
+(`4b3901c`, `2458b30`, `8ac6e21`, `2b555ca`) plus the step-6 verification
+pass are described in the Decision log above. One open item before/at
+deploy: a real-hardware smoke test against a live Bambu printer (not
+possible in this dev environment) — see PR description's unchecked test-plan
+item. No blocking bugs found.
+
+---
 
 **Inspector found: implementation not present.** Steps 2–5 were marked complete in the plan but the code changes do not exist in the codebase:
 
