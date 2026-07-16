@@ -36,5 +36,7 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Research dispatched by gentle-loris-hazel 2026-07-16T13:22Z — scoping the
+state machine, reconciling against K-006 (possible duplicate/sibling) and
+K-030 (possible existing hysteresis pattern to reuse). Awaiting findings
+before implementation.
