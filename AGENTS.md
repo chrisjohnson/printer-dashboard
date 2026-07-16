@@ -18,7 +18,8 @@ docker build -t printer-dashboard .
 docker rm -f printer-dashboard || true
 docker run -d --name printer-dashboard \
   -p 8080:8080 \
-  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
+  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
   printer-dashboard
 ```
 
