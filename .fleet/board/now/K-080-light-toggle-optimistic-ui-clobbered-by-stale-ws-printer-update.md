@@ -36,5 +36,7 @@ Light-toggle optimistic UI can be clobbered by a stale WS printer_update. toggle
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Implementer dispatched by gentle-loris-hazel 2026-07-16T13:40Z, working in
+`.fleet/worktrees/gentle-loris-hazel` (branch `worktree-gentle-loris-hazel`,
+same branch as the already-shipped K-004 fix / PR #3 — will need a second
+commit + separate push/PR for this card's fix). Awaiting completion.
