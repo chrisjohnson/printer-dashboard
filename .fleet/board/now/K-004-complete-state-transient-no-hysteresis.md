@@ -73,5 +73,6 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
   insufficient in practice.
 
 ## Handoff notes
-Research complete, plan set. Dispatching Implementer next to add the
-streak-threshold latch to both Bambu and Snapmaker paths, plus tests.
+Implementer dispatched by gentle-loris-hazel 2026-07-16T13:31Z — adding
+streak-threshold latch to Bambu + Snapmaker paths, plus tests. Awaiting
+completion before push/PR.
