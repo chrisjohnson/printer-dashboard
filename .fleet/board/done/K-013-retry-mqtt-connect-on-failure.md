@@ -20,26 +20,23 @@ Retry MQTT connect on failure with exponential backoff. Improves resilience when
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
 1. [x] Researcher: determine what's actually missing. Done — see Decision log.
-2. [ ] Implementer: wrap the initial `mqttClient.Connect()`/`WaitTimeout`
-   call in `internal/printers/bambu/client.go` (~line 181) in a retry loop
-   with doubling backoff (1s→2s→4s...) capped at `MaxReconnectInterval`
-   (30s), respecting `ctx.Done()` for shutdown cancellation. Retry
-   indefinitely (no attempt ceiling — see Decision log for rationale).
-   Do NOT enable Paho's `SetConnectRetry` (fixed-interval, not exponential,
-   and conflicts with a custom loop). Leave `AutoReconnect`/
-   `MaxReconnectInterval` as-is — they already correctly handle
-   connection-lost-after-success.
-3. [ ] Implementer: add a test exercising the initial-connect-failure retry
-   path (dial to a closed/refusing port, or inject a failing dialer if the
-   client is structured to allow that — check existing test patterns in
-   `client_test.go` for how MQTT connection is mocked/faked).
-4. [ ] Implementer: run full test suite, commit, push, open PR.
+2. [x] Implementer: added `connectWithRetry` wrapping the initial connect in
+   a doubling-backoff loop (1s→2s→4s..., capped at 30s), retrying
+   indefinitely, respecting `ctx.Done()`. `SetConnectRetry` left disabled;
+   `AutoReconnect`/`MaxReconnectInterval` untouched.
+3. [x] Implementer: added `TestConnect_RetriesInitialConnectFailure` and
+   `TestConnect_RetryLoopRespectsContextCancellation`, using a real local
+   TCP listener + injected test-only backoff fields. Re-run 15x with
+   `-race` during development, no flakiness.
+4. [x] Implementer: full test suite passes, committed. PR:
+   https://github.com/chrisjohnson/printer-dashboard/pull/5
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: gentle-loris-hazel 2026-07-16T13:54Z — claiming, dispatching researcher to check current connect/reconnect behavior before implementing -->
+<!-- signal: gentle-loris-hazel 2026-07-16T14:15Z — done, PR #5 open, moved to done/ -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -69,10 +66,16 @@ Retry MQTT connect on failure with exponential backoff. Improves resilience when
   UX in the current status model — indefinite retry with capped backoff
   is the lower-risk, more-consistent choice; can add a ceiling later if a
   human wants one.
+- 2026-07-16 — gentle-loris-hazel: verified locally (rebased branch onto
+  latest main for a clean diff, re-ran `go build`/`go vet`/full test
+  suite/`-race` on the new tests myself before pushing). PR #5 opened
+  (https://github.com/chrisjohnson/printer-dashboard/pull/5). On ctx
+  cancellation the retry loop makes `Connect()` return nil (clean
+  shutdown) rather than propagating an error — intentional, preserves the
+  pre-existing contract that a non-nil return means a genuine connect
+  failure, and cancellation only happens on shutdown. Closing as done —
+  review/merge is outside this card's scope.
 
 ## Handoff notes
-Implementer dispatched by gentle-loris-hazel 2026-07-16T14:05Z, working in
-`.fleet/worktrees/gentle-loris-hazel` on a fresh branch
-`worktree-gentle-loris-hazel-k013` (branched directly off origin/main, no
-unrelated commits this time — learned from the K-080 branch-mixing
-mistake). Awaiting completion.
+PR #5 open against main, not yet merged. If review feedback requires
+changes, that's follow-up work on branch `worktree-gentle-loris-hazel-k013`.
