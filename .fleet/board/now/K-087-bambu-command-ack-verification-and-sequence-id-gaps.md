@@ -76,6 +76,6 @@ firmware-side client identity/version gate, unrelated to payload content.
   follow-up, not started) from K-086 research side-findings.
 
 ## Handoff notes
-Not started. Two independent sub-issues bundled here since they're both
-small, adjacent, and found in the same investigation — may split into
-separate cards if scope grows once someone picks this up.
+Research dispatched by gentle-loris-hazel 2026-07-16T14:21Z — checking
+whether sequence_id omission is a bug vs. intentional, and whether real
+firmware-ack verification is feasible vs. just a send-time audit log.
