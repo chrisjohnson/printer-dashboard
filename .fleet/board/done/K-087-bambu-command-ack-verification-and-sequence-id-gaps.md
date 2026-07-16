@@ -46,15 +46,17 @@ firmware-side client identity/version gate, unrelated to payload content.
 1. [x] Researcher: `sequence_id` omission on print-namespace commands is
    intentional/inconsequential, not a bug — no code change. See Decision
    log for evidence.
-2. [ ] Implementer: add a lightweight audit log (command name + printer ID
-   + timestamp, no payload/secrets) in `publishCommand`
-   (`client.go:446-458`) and/or its callers.
+2. [x] Implementer: added audit log — `publishCommand` now takes a
+   `cmdName string` param, logs `"bambu %s: sending command %s"` (matches
+   existing file's log format), no payload/secrets logged. All 7 callers
+   updated to pass a short command name.
 3. [x] Researcher: confirmed firmware-ack verification is NOT feasible —
    client subscribes to only `device/%s/report`, publishes to only
    `device/%s/request`, no separate ack topic, no correlation ID in the
    parsed report struct at all. Audit log (item 2) is the full scope; no
    further "verification" work to do.
-4. [ ] Implementer: run full test suite, commit, push, open PR.
+4. [x] Implementer: full test suite passes, committed, pushed, PR opened:
+   https://github.com/chrisjohnson/printer-dashboard/pull/7
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -62,6 +64,7 @@ firmware-side client identity/version gate, unrelated to payload content.
 -->
 <!-- signal: gentle-loris-hazel 2026-07-16T13:06Z — filed from K-086 research side-findings, not started -->
 <!-- signal: gentle-loris-hazel 2026-07-16T14:21Z — claiming, dispatching researcher for sequence_id investigation + ack-verification feasibility -->
+<!-- signal: gentle-loris-hazel 2026-07-16T14:45Z — done, PR #7 open, moved to done/ -->
 
 ## Working context
 
@@ -94,9 +97,14 @@ firmware-side client identity/version gate, unrelated to payload content.
   fields resembling a command-correlation ID. True firmware-ack
   verification would require protocol reverse-engineering beyond this
   card's scope. Scope narrows to just the audit log (Plan item 2).
+- 2026-07-16 — gentle-loris-hazel: verified locally (rebased branch onto
+  latest main for a clean diff, re-ran `go build`/`go vet`/full test suite
+  myself before pushing). New test `TestPublishCommand_LogsAuditLine`
+  includes an explicit privacy assertion that the raw payload is NOT
+  present in the log output. PR #7 opened
+  (https://github.com/chrisjohnson/printer-dashboard/pull/7). Closing as
+  done — review/merge is outside this card's scope.
 
 ## Handoff notes
-Implementer dispatched by gentle-loris-hazel 2026-07-16T14:35Z, working in
-`.fleet/worktrees/gentle-loris-hazel` on fresh branch
-`worktree-gentle-loris-hazel-k087` (off origin/main). Scope: audit log
-only. Awaiting completion.
+PR #7 open against main, not yet merged. If review feedback requires
+changes, that's follow-up work on branch `worktree-gentle-loris-hazel-k087`.
