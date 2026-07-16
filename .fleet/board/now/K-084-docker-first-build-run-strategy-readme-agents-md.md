@@ -33,18 +33,18 @@ Needs both:
    this app").
 
 ## Plan
-1. [ ] Implementer: check whether a `Dockerfile` already exists at repo
+1. [x] Implementer: check whether a `Dockerfile` already exists at repo
    root; if not, this card needs one too (can't docker-first without an
    image to build) — add a minimal one appropriate to the app's language/
    runtime if missing.
-2. [ ] Implementer: update `README.md` with a docker-first build/run section:
+2. [x] Implementer: update `README.md` with a docker-first build/run section:
    `docker build -t <image> .` then `docker rm -f printer-dashboard || true`
    then `docker run --name printer-dashboard <image>` (fill in real port
    mappings/env/volumes as needed by the app).
-3. [ ] Implementer: add `AGENTS.md` at repo root with the same convention
+3. [x] Implementer: add `AGENTS.md` at repo root with the same convention
    stated as project guidance for agents (fixed image name, fixed container
    name `printer-dashboard`, always `docker rm` before `docker run`).
-4. [ ] Implementer: verify `docker build` and `docker run` actually work
+4. [x] Implementer: verify `docker build` and `docker run` actually work
    locally against the new Dockerfile before committing.
 
 ## Signals
@@ -68,6 +68,16 @@ Needs both:
   under the orchestrator session identity to dispatch an Implementer
   sub-agent immediately rather than leaving it for queue pickup, since the
   human is waiting on this synchronously.
+- 2026-07-16 — Implementer: existing root `Dockerfile` was already correct
+  (multi-stage, `EXPOSE 8080`, non-root) — no changes needed there. Verified
+  `docker build` + `docker rm -f printer-dashboard || true` + `docker run`
+  end-to-end against a placeholder `config.yaml` (app takes no env vars,
+  config is YAML-file-only). Added README "Running with Docker" section and
+  new root `AGENTS.md`. Committed `6dff915` on `worktree-faint-skunk-cairn`
+  (README.md + AGENTS.md only). Not pushed, no PR — orchestrator to confirm
+  with human before pushing per repo's general git-safety default.
 
 ## Handoff notes
-Not started yet — about to dispatch Implementer.
+Implementation + local verification complete (commit `6dff915`). Awaiting
+human confirmation to push branch and open PR vs main, then move this card
+to done/.
