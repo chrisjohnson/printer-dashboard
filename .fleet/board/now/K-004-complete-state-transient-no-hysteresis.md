@@ -19,7 +19,24 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ]
+1. [x] Researcher: locate root cause, reconcile K-006/K-030, recommend fix
+   approach. Done — see Decision log.
+2. [ ] Implementer: add streak-threshold latch (mirroring
+   `hmsHealthyStreakThreshold` pattern) in `internal/printers/bambu/client.go`
+   `handleReport` (~line 300-301) so `"complete"` only reverts to `"idle"`
+   after 2 consecutive idle reports; a new RUNNING report still overrides
+   immediately, no latch needed on that edge. Apply the same pattern in
+   `internal/printers/snapmaker/snapmaker.go` (`handleStatusReport`,
+   `current.State = mapMoonrakerState(...)` ~line 396).
+3. [ ] Implementer: add tests — Bambu: SUCCESS→single IDLE must NOT drop
+   State from "complete"; SUCCESS→IDLE×2 must drop it (model on
+   `client_test.go:2096-2126` `TestHandleReport_SuccessDoesNotClearCurrentFile`
+   and the existing `hmsHealthyStreak` tests). Snapmaker: add an equivalent
+   Complete→subsequent-state test in `snapmaker_test.go` (none exists today).
+4. [ ] Implementer: run full test suite, commit, push, open PR.
+5. [ ] Close K-006 and K-030 as duplicates once this PR is up, pointing both
+   at K-004 (confirmed duplicates — both cards' own Context sections say
+   "folds into K-004").
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -34,9 +51,27 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-07-16 — gentle-loris-hazel: Research confirmed this is user-visible
+  (state pushed live over WebSocket per-report, not just an API nuance).
+  Root cause: `internal/printers/bambu/client.go:300-301` unconditionally
+  overwrites `s.State` on every report with no latch — Bambu firmware
+  reports `SUCCESS`→briefly then `IDLE`, clobbering "complete" within
+  ~1-2 MQTT pushes. Same unconditional-overwrite bug exists in
+  `internal/printers/snapmaker/snapmaker.go:396`, lower urgency there
+  (Moonraker's "Complete" is stickier in practice) but same architectural
+  gap — fixing both. K-006 and K-030 confirmed duplicates (both say "folds
+  into K-004" in their own Context) — closing both once this ships.
+- 2026-07-16 — gentle-loris-hazel: judgment call — using streak-threshold=2
+  (matching existing `hmsHealthyStreakThreshold` constant) rather than a
+  time-based latch, since Bambu's transport is MQTT-push (no fixed
+  interval, so "hold for N seconds" needs a timer this codebase doesn't
+  otherwise use) and this exactly mirrors an already-shipped, already-
+  reviewed pattern in the same file. Exact desired product semantics
+  (streak count vs. e.g. "hold until acknowledged") wasn't specified
+  anywhere in the repo — proceeding with the low-risk match to precedent
+  per an ordinary judgment call; can be tuned later if 2 proves
+  insufficient in practice.
 
 ## Handoff notes
-Research dispatched by gentle-loris-hazel 2026-07-16T13:22Z — scoping the
-state machine, reconciling against K-006 (possible duplicate/sibling) and
-K-030 (possible existing hysteresis pattern to reuse). Awaiting findings
-before implementation.
+Research complete, plan set. Dispatching Implementer next to add the
+streak-threshold latch to both Bambu and Snapmaker paths, plus tests.
