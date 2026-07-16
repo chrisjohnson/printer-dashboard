@@ -3,8 +3,8 @@ id: K-075
 # Filename pattern: {ID}-{slugified-title}.md
 title: HMS dismiss/action flow
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: clever-fennec-reef                 # pet name of the agent session working this card, e.g. otter
+claimed_at: 2026-07-16T03:15Z                 # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
 related_cards: []
@@ -30,6 +30,7 @@ HMS dismiss/action flow. Bigger feature — needs exploration and planning. Hand
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
+<!-- signal: clever-fennec-reef 2026-07-16T03:15Z — claiming, starting at Plan step 2 (HMSDismissTracker) -->
 
 ## Working context
 
