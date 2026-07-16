@@ -1,0 +1,191 @@
+---
+id: K-078
+# Filename pattern: {ID}-{slugified-title}.md
+title: "Light toggle: match temp input styling, on/off label on thumb, dim when off"
+initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
+claimed_by: null                 # pet name of the agent session working this card, e.g. otter
+claimed_at: null                 # ISO8601, paired with claimed_by
+blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
+blocked_by: null                     # set on a card that can't proceed until another card finishes
+related_cards: [K-077, K-031]
+---
+
+# K-078 — Light toggle: match temp input styling, on/off label on thumb, dim when off
+
+## Context
+The P1S printer control panel's light toggle (chamber/cavity LED control,
+implemented in K-077 on top of the original toggle UI from K-031) currently
+doesn't visually match the target temperature input fields directly above it
+in the layout, and its on/off state isn't communicated clearly enough.
+
+Requested changes, per direct user request:
+1. The light toggle should be resized/restyled to match the width and visual
+   style of the target temp input fields above it, so the control panel reads
+   as a consistent set of controls rather than a mismatched toggle next to
+   text inputs.
+2. The toggle's slider thumb (the moveable/draggable part of the switch)
+   should display text directly on it: "on" when the light is on, "off" when
+   the light is off. The label should update live as the state changes,
+   rather than being a static label elsewhere in the control.
+3. The toggle's overall appearance should change from a fully colored/lit
+   look when on to a dimmed/desaturated look when off, giving an at-a-glance
+   visual cue of state beyond just the thumb position and text.
+
+This is purely a front-end styling/UX change to an existing control; no new
+backend/Moonraker functionality is expected (K-077 already wired up the
+underlying SET_LED command and commanded-state tracking).
+
+## Plan
+- [x] 1. Restructure toggle markup in BOTH the skeleton (~line 775) and
+      `renderCard()` (~line 1290) so on/off text lives on the thumb itself
+      (remove `.light-label` span entirely; add `.thumb` span inside
+      `.slider` holding lowercase "on"/"off" text).
+- [x] 2. Rewrite toggle CSS: add `--control-width` custom property shared by
+      `input.target` and `.toggle` so widths can't drift apart; replace
+      hardcoded `border-radius: 11px` with `var(--radius-pill)`; resize
+      `.thumb` to show text, centered via flex, `font-weight: 600`;
+      recompute `translateX` for checked state based on new track/thumb
+      widths.
+- [x] 3. Add explicit dimmed/desaturated "off" look vs. full-saturation "on"
+      look (distinct requirement from width matching).
+- [x] 4. Update `updateCard()` and both branches of `toggleLight()`
+      (success + revert) to set `textContent` on `.toggle .thumb` instead of
+      removed `.light-label`.
+- [x] 5. Check both `@media` breakpoints (~654, ~712) — confirm toggle still
+      scales in step with `input.target` since widths use
+      em/custom-property. Confirmed by inspection: both breakpoints (768px,
+      1200px) only change `.temps` font-size, no width override on
+      `.toggle`/`input.target`, and `--control-width` is itself in `em` so
+      both scale together automatically.
+- [x] 6. Build/typecheck (`go build ./...`), then visually verify in browser:
+      width match, live on/off text on thumb, dimmed off state. Confirmed —
+      see Working context below.
+
+## Signals
+<!-- append-only. Leave signals for other agents. Format:
+     <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
+-->
+
+## Working context
+Implementation is code-complete in `internal/server/onboarding.go` (still
+**uncommitted** — check `git diff internal/server/onboarding.go` to see it).
+Key values landed on:
+- New CSS var `--control-width: 5.5em`, referenced by both `input.target`'s
+  `width` and `.toggle`'s `width` (was previously two independent hardcoded
+  `5.5em` / `40px` values — now can't drift apart).
+- `.toggle .slider` off-state: `background: #e3e4e8; border: 1px solid
+  var(--border-subtle); border-radius: var(--radius-pill)` (was flat `#ccc`,
+  hardcoded `11px` radius).
+- `.toggle input:checked + .slider`: `background: var(--accent); border-color:
+  var(--accent)` (full color when on).
+- New `.thumb` span (replaces old `.slider::before` circle): `width: calc(50%
+  - 2px)`, flex-centered text, `font-weight: 600; font-size: 0.75em;
+  text-transform: lowercase`, `color: var(--text-muted)` when off, `color:
+  var(--accent)` when on (checked state also does `transform:
+  translateX(100%)` to slide it to the right half of the track).
+- `.light-label` span removed entirely from both the skeleton markup
+  (~line 803) and `renderCard()` (~line 1316); `updateCard()` and both
+  `toggleLight()` branches (~lines 973, 1403, 1418, 1429) now target
+  `.toggle .thumb` via `textContent` instead.
+
+Verification status as of hand-off (2026-07-13, orchestrator session):
+- `go build ./...` — **passes**.
+- `go test ./internal/server/...` — **passes** (no test currently asserts on
+  toggle DOM structure, so this doesn't cover the new behavior, just confirms
+  no regression/compile break).
+- Browser visual verification — **incomplete**. The implementer that wrote
+  this code was interrupted mid-verification; its last observation was that
+  at the mobile breakpoint (0.75rem font), the toggle still matched the
+  input width and thumb text stayed legible without clipping. It had NOT yet
+  confirmed: (a) live thumb text flip when actually clicking the toggle in a
+  loaded dashboard, (b) the on-state looking visibly more saturated/colored
+  than the off-state side by side, (c) the 1200px breakpoint visually (only
+  checked by CSS inspection above, not rendered), (d) that width visually
+  lines up pixel-for-pixel against `input.target` in a real browser (only
+  confirmed structurally via the shared `--control-width` var).
+- `npm run test:e2e` (Playwright, `tests/dashboard.test.ts`) — **not run**.
+  No existing test in that file asserts on the toggle/thumb, so this is
+  optional regression coverage per the planner's original notes, not a
+  blocking requirement.
+
+Browser visual verification (2026-07-13, reviewer session): built the binary
+(`go build -o /tmp/printer-dashboard-build .`), ran it against a copy of
+`config.yaml` on an alternate port (`:8091`, the real `:8080` was already
+occupied by a live Docker instance of this dashboard — left untouched) so it
+connected to the real P1S/H2S over Bambu cloud MQTT, then drove it with a
+throwaway Playwright script (headless Chromium, not committed). All four
+previously-open items confirmed:
+- (a) Live thumb text flip on click — clicked the real P1S light toggle,
+  `.toggle .thumb` textContent flipped `on` → `off` and back to `on` against
+  the live backend (confirmed via bounding-box + textContent read, not just
+  visual). Restored the physical light to its original "on" state afterward.
+- (b) On vs. off contrast — screenshots show on-state as solid accent blue,
+  off-state as flat desaturated gray; clearly distinct at a glance.
+- (c) 1200px breakpoint — resized viewport to 1200px and re-screenshotted;
+  toggle renders correctly (single-column layout at that width, toggle
+  unaffected).
+- (d) Width match vs. `input.target` — measured bounding boxes directly:
+  both `input.target` and `.toggle` render at exactly 77px wide at 1400px
+  viewport, confirming the shared `--control-width` var keeps them in sync
+  pixel-for-pixel, not just structurally.
+
+No console errors during the session. Test server stopped and killed after
+verification; live Docker instance on :8080 was never touched.
+
+## Decision log
+- 2026-07-13: Card created directly from user request in orchestrator session
+  "orchestrator-session-2026-07-13".
+- 2026-07-13: Planner explored the codebase (single file:
+  `internal/server/onboarding.go`, no separate frontend build) and produced
+  the ordered plan above.
+- 2026-07-13: Implementer executed plan items 1-5 in full (see diff in
+  `internal/server/onboarding.go`, uncommitted). Started item 6's browser
+  verification (confirmed mobile breakpoint text legibility) but was
+  interrupted/killed by the user before finishing verification or running
+  tests. Orchestrator then independently confirmed `go build` and
+  `go test ./internal/server/...` both pass, and confirmed via code
+  inspection (not browser rendering) that both `@media` breakpoints are
+  width-safe. Recorded here per user's request ("figure out whatever's left
+  and record it to the ticket") ahead of a session restart — no further
+  implementation or commit attempted this session.
+- 2026-07-13: Reviewer session completed plan item 6's remaining browser
+  verification (see Working context above) by running the built binary
+  against the real printers on a scratch port so the live SET_LED path was
+  actually exercised end-to-end, not just inspected. All four open questions
+  from hand-off resolved positively; no regressions or console errors found.
+  Diff review (of `internal/server/onboarding.go`) and commit still pending.
+- 2026-07-13: Orchestrator session picked this card back up (`work k-078`).
+  `current_role` frontmatter was stale at "implementer" even though the
+  implementation and browser verification were both already done; per this
+  card's own Handoff notes the actual next step is a Reviewer diff pass, so
+  updated `current_role` to `reviewer` and dispatched accordingly rather than
+  re-spawning an Implementer.
+- 2026-07-13: Reviewer pass completed on `git diff internal/server/onboarding.go`.
+  Checked: (1) `.toggle input:checked + .slider .thumb` transform math —
+  `translateX(100%)` against a `calc(50% - 2px)`-wide thumb lands it flush
+  with the track's right edge minus the same 2px inset as the left, so it's
+  symmetric, not a coincidence of the numbers picked; (2) `--control-width`
+  is `em`-based and neither `input.target` nor `.toggle` set their own
+  font-size, so both inherit from `.temps` and scale together across all
+  three font-size breakpoints, confirming the planner's item-5 note; (3)
+  every old `.light-label` reference (CSS rule, skeleton markup,
+  `renderCard()`, `updateCard()`, both `toggleLight()` branches) was found
+  and replaced with `.toggle .thumb` — grepped the whole file, zero orphans
+  left. No correctness bugs found. One non-blocking nit: `.toggle .slider`
+  still carries `display: flex; align-items: center` that's inert now that
+  `.thumb` is absolutely positioned inside it — cosmetic dead weight, not
+  worth its own revision cycle. Diff is approved to move toward commit as-is.
+
+- 2026-07-13: Git Expert committed `internal/server/onboarding.go` alongside this card move to `done/` (per F-020 precedent, bundled in one commit).
+
+## Handoff notes
+Next session: this card is code-complete, fully browser-verified (functional
++ visual), and has now passed an independent Reviewer diff pass with no
+correctness bugs found (see Decision log). The diff is still **uncommitted**.
+Suggested next steps, in order:
+1. Dispatch git-expert to commit the change (`internal/server/onboarding.go`)
+   and move this card to `done/` (bundle the card move + code diff in one
+   commit, per the pattern used for F-020).
+2. `.fleet/board/now/` and the modified `onboarding.go` are both currently
+   uncommitted/untracked — don't lose this work; check `git status` first
+   thing next session.

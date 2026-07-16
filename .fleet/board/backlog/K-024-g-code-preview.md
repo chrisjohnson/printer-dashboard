@@ -1,36 +1,39 @@
 ---
-id: K-000
+id: K-024
 # Filename pattern: {ID}-{slugified-title}.md
-title: <short title>
+title: G-code preview
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
 claimed_by: null                 # pet name of the agent session working this card, e.g. otter
 claimed_at: null                 # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
-blocked_by: null                 # set on a card that can't proceed until another card finishes
+blocked_by: null                     # set on a card that can't proceed until another card finishes
 related_cards: []
 ---
 
-# K-000 — <short title>
+# K-024 — G-code preview
 
 ## Context
-<!-- why this card exists: root cause, links to runbooks/PRs/related cards -->
+
+G-code preview. Render G-code toolpaths in the browser. Deferred — significant scope.
 
 ## Plan
-<!-- ordered checklist -->
+<!-- ordered checklist. Prefix steps with the role expected to do them once a card
+     has been planned out, e.g. "Implementer: apply config change". -->
 1. [ ]
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
-     Examples:
-     <!-- signal: otter 2025-07-15T14:30Z — claiming, will work on API layer -->
-     <!-- signal: otter 2025-07-15T15:10Z — blocked on K-003, need schema first -->
-     <!-- signal: otter 2025-07-15T15:45Z — done, moved to done/ -->
 -->
+
+## Working context
+<!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
+     belongs in a linked doc, not here. -->
 
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- what's half-done, what the next agent picking this up should do first. -->
+<!-- written by whichever role/session was last active on this card, before handing
+     off or ending a session. What's half-done, what the next role should do first. -->

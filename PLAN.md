@@ -149,14 +149,32 @@ The `bambu-login` CLI tool provides step-by-step instructions for this process.
 {"print": {"command": "project_file", "param": "skip_object"}}
 ```
 
-**Camera:**
-- **Local access** (same LAN): Binary TLS protocol on port 6000
+**Camera — as shipped (K-001, K-047; updated 2026-07-16, see `.fleet/notes.md`):**
+P1S and H2S ended up on two different camera paths, not the single unified
+design this section originally sketched:
+- **P1S**: uses the binary-TLS protocol described below (port 6000,
+  `bambus://`) via `BambuStreamReader` — this part of the original design
+  shipped as planned. Not regression-tested since the H2S go2rtc refactor
+  (tracked as K-040).
+- **H2S**: does **not** use port 6000 or TUTK P2P. It has exactly one
+  physical camera (`/live/1`; `/live/2` 404s on real hardware) reachable
+  over LAN once "LAN Only Liveview" is enabled on the printer (a separate
+  toggle from full LAN mode), which opens RTSPS on port 322. The server
+  runs a `go2rtc` subprocess per camera instance (own RTSP listen port,
+  18554 + offset) that consumes that RTSPS feed and transcodes to MJPEG via
+  `ffmpeg` for the dashboard. TUTK P2P (below) was investigated but never
+  implemented for H2S — LAN-only was sufficient and avoided depending on
+  Bambu's proprietary remote-camera SDK.
+
+Original binary-TLS design (still accurate for P1S):
   - **Protocol:** Raw TLS socket (NOT HTTP). Connect to `{ip}:6000` via TLS, send 80-byte binary auth packet (username `bblp` + access code), receive continuous MJPEG frames.
   - **URL format (internal):** `bambus://{ip}:6000?token={access_code}`
   - **Auth:** Binary packet: 16-byte header (magic values `0x40`, `0x3000`) + 32-byte username (`bblp` padded) + 32-byte access code (padded)
   - **Response:** 16-byte frame header (payload size LE) + JPEG data
   - The access code is shown on the printer display (Settings > Network). Works without LAN mode on pre-lockdown firmware.
   - **Limitation:** ~1 FPS, single concurrent connection.
+
+Remote access (never implemented, not currently planned):
 - **Remote access**: Uses TUTK P2P protocol (proprietary SDK, used by Bambu Studio/Handy)
   - Cloud API provides TTCode credentials for TUTK via `POST /v1/iot-service/api/user/ttcode`
   - Not implementable without TUTK SDK — users should use Bambu Handy app for remote camera
