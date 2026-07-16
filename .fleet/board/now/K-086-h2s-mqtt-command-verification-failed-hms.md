@@ -90,4 +90,5 @@ is.
   immediately rather than leaving for queue pickup.
 
 ## Handoff notes
-Not started. Research dispatch next.
+Research dispatched by gentle-loris-hazel 2026-07-16T13:06Z, covering Plan
+steps 1-3. Awaiting findings before any implementation.
