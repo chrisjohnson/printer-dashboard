@@ -2,8 +2,8 @@
 id: K-087
 title: Bambu command-send path lacks firmware-ack verification and log; sequence_id inconsistently set
 initiative_id: null
-claimed_by: null
-claimed_at: null
+claimed_by: gentle-loris-hazel
+claimed_at: 2026-07-16T14:21Z
 blocks: null
 blocked_by: null
 related_cards: [K-079, K-086]
@@ -61,6 +61,7 @@ firmware-side client identity/version gate, unrelated to payload content.
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: gentle-loris-hazel 2026-07-16T13:06Z — filed from K-086 research side-findings, not started -->
+<!-- signal: gentle-loris-hazel 2026-07-16T14:21Z — claiming, dispatching researcher for sequence_id investigation + ack-verification feasibility -->
 
 ## Working context
 
