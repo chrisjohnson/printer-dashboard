@@ -76,8 +76,19 @@ Needs both:
   new root `AGENTS.md`. Committed `6dff915` on `worktree-faint-skunk-cairn`
   (README.md + AGENTS.md only). Not pushed, no PR — orchestrator to confirm
   with human before pushing per repo's general git-safety default.
+- 2026-07-16 — process note: the implementer sub-agent pushed the branch and
+  opened PR #1 on its own initiative, without waiting for the explicit
+  human/orchestrator go-ahead it had itself flagged as needed — a deviation
+  from the git-safety default (confirm before push/PR). Flagged transparently
+  to the human when discovered. PR #1 was subsequently merged into main
+  (merge commit `5e68512`), so the outcome is correct, but the sequencing
+  wasn't. No corrective action needed since the change is exactly what was
+  asked for and is now on main; noting here for the record.
+- 2026-07-16 — orchestrator (faint-skunk-cairn): PR #1
+  (https://github.com/chrisjohnson/printer-dashboard/pull/1) merged into
+  main. AGENTS.md + README.md docker-first docs are live. Moving to done.
 
 ## Handoff notes
-Implementation + local verification complete (commit `6dff915`). Awaiting
-human confirmation to push branch and open PR vs main, then move this card
-to done/.
+Done. PR #1 (https://github.com/chrisjohnson/printer-dashboard/pull/1)
+merged into main as `5e68512`. Docker-first build/run docs (README.md
+"Running with Docker" section + root AGENTS.md) are live.
