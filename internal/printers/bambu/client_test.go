@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2876,5 +2879,190 @@ func TestNew_PrepopulatesModelFromConfig(t *testing.T) {
 
 	if got != "H2S" {
 		t.Errorf("New() model = %q; want %q (should pre-populate from config)", got, "H2S")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// K-013: Connect — initial-connect retry with backoff
+// ---------------------------------------------------------------------------
+//
+// These tests exercise Connect's real retry loop end-to-end against a local
+// TCP listener rather than the mockMQTTClient seam used elsewhere in this
+// file — mockMQTTClient only fakes the post-construction mqtt.Client, but
+// Connect constructs its own real *paho* client internally (via
+// mqtt.NewClient), so the only way to exercise the retry loop faithfully is
+// a real (if minimal) TCP/MQTT endpoint. brokerOverride and
+// connectBackoffBase/connectBackoffMax are test-only seams on Client for
+// exactly this purpose (see their doc comments in client.go).
+
+// writeRawConnack writes a minimal, hand-rolled MQTT 3.1.1 CONNACK packet
+// (session-present=0, return-code=0/Accepted) directly to conn, bypassing
+// any real MQTT packet decode of what the client sent. This is sufficient
+// for Paho's client-side handshake (connectMQTT) to treat the connection as
+// successfully established.
+func writeRawConnack(conn net.Conn) error {
+	_, err := conn.Write([]byte{0x20, 0x02, 0x00, 0x00})
+	return err
+}
+
+// newTestConnectClient builds a Client wired for Connect(), pointed at
+// brokerAddr (host:port, no scheme) via brokerOverride, with a fast test
+// backoff schedule.
+func newTestConnectClient(id, brokerAddr string, backoffBase, backoffMax time.Duration) *Client {
+	cfg := config.PrinterDef{
+		ID:     id,
+		Name:   "Connect Test " + id,
+		Type:   "bambu",
+		Serial: "SERIAL-CONNECT-" + id,
+	}
+	cloud := NewBambuCloudClient("us")
+	c := New(cfg, cloud)
+	c.brokerOverride = "tcp://" + brokerAddr
+	c.connectBackoffBase = backoffBase
+	c.connectBackoffMax = backoffMax
+	return c
+}
+
+// TestConnect_RetriesInitialConnectFailure verifies that a failing initial
+// connect is retried rather than giving up after one attempt: the listener
+// refuses (closes without responding) the first few connections, then
+// starts accepting and completing the MQTT handshake. Connect must not
+// return until it eventually succeeds, at which point it blocks on
+// ctx.Done() as usual (the existing successful-connect path, unchanged).
+func TestConnect_RetriesInitialConnectFailure(t *testing.T) {
+	const failuresBeforeSuccess = 3
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start test listener: %v", err)
+	}
+	defer ln.Close()
+
+	var acceptCount int64
+	handshakeSucceeded := make(chan struct{})
+	var handshakeSucceededOnce sync.Once
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			n := atomic.AddInt64(&acceptCount, 1)
+			if n <= failuresBeforeSuccess {
+				// Simulate a failing connect: close immediately without any
+				// MQTT handshake response.
+				conn.Close()
+				continue
+			}
+			// From here on, complete the handshake successfully and hold
+			// the connection open (mimicking a real broker) until the test
+			// tears it down.
+			go func(c net.Conn) {
+				defer c.Close()
+				if err := writeRawConnack(c); err != nil {
+					return
+				}
+				handshakeSucceededOnce.Do(func() { close(handshakeSucceeded) })
+				// Keep reading (and discarding) to drain PINGREQs etc. and
+				// avoid the client seeing a premature EOF/reset that would
+				// look like a second failure.
+				buf := make([]byte, 256)
+				for {
+					if _, err := c.Read(buf); err != nil {
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	c := newTestConnectClient("retry-success", ln.Addr().String(), 5*time.Millisecond, 20*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	connectDone := make(chan error, 1)
+	go func() {
+		connectDone <- c.Connect(ctx)
+	}()
+
+	// Wait for the fake broker to complete a successful handshake (each
+	// retry sleeps at most ~20ms, so this should resolve well within a
+	// couple hundred ms — generous headroom without waiting through a real
+	// 1s/2s/4s/... schedule).
+	select {
+	case <-handshakeSucceeded:
+	case err := <-connectDone: // Connect only returns after ctx.Done(); a return here is unexpected this early.
+		t.Fatalf("Connect returned before context was cancelled (err=%v)", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the retry loop to reach a successful handshake")
+	}
+
+	if got := atomic.LoadInt64(&acceptCount); got <= failuresBeforeSuccess {
+		t.Fatalf("acceptCount = %d; want > %d (expected the retry loop to keep attempting past the simulated failures)", got, failuresBeforeSuccess)
+	}
+
+	// Verify the success path behaves exactly as before: Connect blocks
+	// until ctx is cancelled, then returns cleanly.
+	cancel()
+	select {
+	case err := <-connectDone:
+		if err != nil {
+			t.Errorf("Connect() error = %v; want nil after clean shutdown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connect did not return after context cancellation")
+	}
+}
+
+// TestConnect_RetryLoopRespectsContextCancellation verifies that a pending
+// retry (backoff sleep) is interrupted promptly when ctx is cancelled,
+// rather than sleeping through shutdown — Connect must return quickly, not
+// after a queued backoff interval elapses.
+func TestConnect_RetryLoopRespectsContextCancellation(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to start test listener: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			// Always fail — this test only cares about cancellation
+			// interrupting the backoff sleep, so the connect must never
+			// succeed.
+			conn.Close()
+		}
+	}()
+
+	// A deliberately long backoff — if cancellation were not respected
+	// promptly, the test would have to wait out this whole interval.
+	const longBackoff = 10 * time.Second
+	c := newTestConnectClient("retry-cancel", ln.Addr().String(), longBackoff, longBackoff)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	connectDone := make(chan error, 1)
+	go func() {
+		connectDone <- c.Connect(ctx)
+	}()
+
+	// Let the first attempt fail and the retry loop enter its backoff sleep.
+	time.Sleep(200 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case err := <-connectDone:
+		if err != nil {
+			t.Errorf("Connect() error = %v; want nil (cancellation during retry is a clean shutdown, not a connect error)", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Connect did not return promptly after context cancellation during backoff sleep (retry loop is not respecting ctx.Done())")
 	}
 }
