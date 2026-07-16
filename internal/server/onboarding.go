@@ -559,12 +559,34 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       word-break: break-word;
     }
 
-    .warning-banner {
-      background: var(--tag-warning-bg); color: var(--tag-warning-text);
-      padding: 8px 12px; border-radius: var(--radius-control);
-      font-size: 0.8125rem; line-height: 1.4;
-      word-break: break-word;
+    /* HMS (Health Management System) rows — one per hms_errors/hms_warnings
+       entry, replacing the old single-string warning-banner (see K-075).
+       .hms-list is the always-in-DOM container (mirrors .error-banner's
+       hidden-via-display:none-rather-than-omitted pattern) so renderCard()
+       and updateCard() agree on shape. Each .hms-row is styled by severity
+       using the same --tag-error-*/--tag-warning-* variables as .tag.error/
+       .tag.paused, so HMS severity coloring matches the rest of the card. */
+    .hms-list {
+      display: flex; flex-direction: column; gap: 4px;
     }
+    .hms-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; padding: 8px 12px; border-radius: var(--radius-control);
+      font-size: 0.8125rem; line-height: 1.4;
+    }
+    .hms-row .hms-text { word-break: break-word; }
+    .hms-row.hms-error {
+      background: var(--tag-error-bg); color: var(--tag-error-text);
+    }
+    .hms-row.hms-warning {
+      background: var(--tag-warning-bg); color: var(--tag-warning-text);
+    }
+    .hms-row .hms-dismiss {
+      flex-shrink: 0; border: none; background: transparent; color: inherit;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer; opacity: 0.75;
+      padding: 2px 6px; border-radius: var(--radius-control);
+    }
+    .hms-row .hms-dismiss:hover { opacity: 1; background: rgba(0,0,0,0.08); }
 
     /* Progress bar — always visible */
     .progress-section { margin: 4px 0; }
@@ -1011,12 +1033,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const errorEl = card.querySelector('.error-banner');
       toggleBanner(errorEl, st === 'error' && !!p.error_msg, p.error_msg);
 
-      // 8b. Warning banner — HMS (Bambu Health Management System) warnings,
-      // independent of error state. Same shared toggleBanner()/hmsSummary()
-      // helpers as the error banner above.
-      const warningEl = card.querySelector('.warning-banner');
-      const hmsWarnings = p.hms_warnings || [];
-      toggleBanner(warningEl, hmsWarnings.length > 0, hmsSummary(hmsWarnings));
+      // 8b. HMS rows — one dismissible row per (already server-filtered)
+      // hms_errors/hms_warnings entry, independent of error state. Built via
+      // the shared hmsRowsHtml() helper — same one renderCard() uses for its
+      // initial markup — so the two paths can't drift (see K-053 for the
+      // documented history of exactly this class of drift, and how
+      // bannerHtml()/toggleBanner() above already guard against it for the
+      // plain error banner). The whole list is small, so on each update we
+      // just replace its innerHTML wholesale rather than diffing rows.
+      const hmsListEl = card.querySelector('.hms-list');
+      if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []);
 
       // 9. Control buttons
       const pauseBtn = card.querySelector('button[onclick*="pause"]');
@@ -1266,15 +1292,19 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // without a full card rebuild.
       const errorHtml = bannerHtml('error-banner', st === 'error' && !!p.error_msg, p.error_msg);
 
-      // Warning banner — shown when HMS (Bambu Health Management System)
-      // warnings are present, regardless of error state. Same
-      // always-in-DOM/hidden-via-display:none pattern as errorHtml (both
-      // built via the shared bannerHtml() helper) so there is no layout
-      // shift, and so updateCard() can find and toggle it without a full
-      // card rebuild. Errors continue to use error-banner/error_msg
-      // unchanged; this is a separate, non-blocking channel.
-      const hmsWarnings = p.hms_warnings || [];
-      const warningHtml = bannerHtml('warning-banner', hmsWarnings.length > 0, hmsSummary(hmsWarnings));
+      // HMS rows — one dismissible row per (already server-filtered)
+      // hms_errors/hms_warnings entry, regardless of error state. The
+      // container is always rendered (empty when there are no entries) so
+      // renderCard() and updateCard() agree on shape and a later WS update
+      // can find and refresh it without a full card rebuild — same
+      // always-in-DOM precedent as errorHtml. Built via the shared
+      // hmsRowsHtml() helper so this can't drift from updateCard()'s copy
+      // (see K-053 for the documented history of exactly this class of
+      // drift, and bannerHtml()/toggleBanner() above for the existing
+      // guard on the plain error banner). Errors continue to use
+      // error-banner/error_msg unchanged; this is a separate, non-blocking,
+      // per-entry-dismissible channel.
+      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>';
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1383,7 +1413,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         fileHtml +
         layerHtml +
         errorHtml +
-        warningHtml +
+        hmsHtml +
         '<div class="controls">' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
@@ -1437,9 +1467,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return escapeHtml(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"));
     }
 
-    // Builds one HTML banner element string. Shared by error-banner and
-    // warning-banner in renderCard() so the two don't drift out of sync (see
-    // K-053 for the documented history of exactly this class of drift).
+    // Builds one HTML banner element string. Shared by renderCard()'s plain
+    // error-banner so it stays consistent across the initial render (see
+    // K-053 for the documented history of this class of drift — HMS rows
+    // below follow the same shared-helper precedent via hmsRowsHtml()).
     // Always emits the element (hidden via display:none when not visible)
     // rather than omitting it, so renderCard()/updateCard() agree on shape
     // and a later WS update can find + toggle it without a full card rebuild.
@@ -1447,8 +1478,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return '<div class="' + cls + '"' + (visible ? '' : ' style="display:none;"') + '>' + escapeHtml(text || '') + '</div>';
     }
 
-    // Shows/hides an already-in-DOM banner element and sets its text. Shared
-    // by the error-banner and warning-banner toggle logic in updateCard().
+    // Shows/hides an already-in-DOM banner element and sets its text. Used
+    // by the error-banner toggle logic in updateCard().
     function toggleBanner(el, visible, text) {
       if (!el) return;
       if (visible) {
@@ -1459,17 +1490,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }
     }
 
-    // Joins decoded HMS entries into one summary string, preferring each
-    // entry's human-readable message (falling back to the raw code when no
-    // message was found) — "<message> (<code>)" or just "<code>". Shared
-    // Go-side equivalent is bambu/client.go's hmsEntrySummary()/
-    // strings.Join — same format, kept independently since it's a different
-    // language, but this is the single JS-side source of truth (was
-    // previously duplicated separately in renderCard() and updateCard()).
-    function hmsSummary(entries) {
-      return entries.map(function(e) {
-        return e.message ? (e.message + ' (' + e.code + ')') : e.code;
-      }).join('; ');
+    // Builds one HMS entry's row markup: severity styling, message-or-code
+    // text, and a Dismiss button carrying enough data (printer id + HMS
+    // code) for a click handler to call POST /api/printers/{id}/hms/dismiss.
+    // Message-or-code fallback mirrors the Go-side hmsEntrySummary() in
+    // bambu/parser.go (message when present, else the raw code) — same
+    // preference, independently implemented since it's a different language.
+    function hmsRowHtml(printerId, entry, severityCls) {
+      const text = entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+      return '<div class="hms-row ' + severityCls + '" data-hms-code="' + escapeHtml(entry.code) + '">' +
+        '<span class="hms-text">' + escapeHtml(text) + '</span>' +
+        '<button class="hms-dismiss" type="button" data-printer-id="' + escapeHtml(printerId) + '" data-hms-code="' + escapeHtml(entry.code) + '" onclick="dismissHms(\'' + escapeJsString(printerId) + '\',\'' + escapeJsString(entry.code) + '\')">Dismiss</button>' +
+      '</div>';
+    }
+
+    // Builds the full per-entry HMS row list for one printer card: errors
+    // first (severity fatal/serious, styled via .hms-error), then warnings
+    // (everything else, styled via .hms-warning) — same bucketing the server
+    // already applied via hms_errors/hms_warnings (see bambu/parser.go's
+    // splitHMS()). Single shared helper used by both renderCard() (initial
+    // markup, wrapped in the always-in-DOM .hms-list container) and
+    // updateCard() (innerHTML replacement of that same container) so the two
+    // rendering paths can't drift out of sync (see K-053 for the documented
+    // history of exactly this class of drift, and bannerHtml()/toggleBanner()
+    // above for the precedent this follows).
+    function hmsRowsHtml(printerId, errors, warnings) {
+      return (errors || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-error'); }).join('') +
+        (warnings || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-warning'); }).join('');
     }
 
     function cmd(id, action) {
