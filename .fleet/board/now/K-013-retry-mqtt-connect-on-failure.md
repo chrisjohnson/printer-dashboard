@@ -71,4 +71,8 @@ Retry MQTT connect on failure with exponential backoff. Improves resilience when
   human wants one.
 
 ## Handoff notes
-Research complete, plan set. Dispatching Implementer next.
+Implementer dispatched by gentle-loris-hazel 2026-07-16T14:05Z, working in
+`.fleet/worktrees/gentle-loris-hazel` on a fresh branch
+`worktree-gentle-loris-hazel-k013` (branched directly off origin/main, no
+unrelated commits this time — learned from the K-080 branch-mixing
+mistake). Awaiting completion.
