@@ -36,5 +36,5 @@ Authentication — login page, sessions. Must have tests. Needed for remote acce
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Research dispatched by gentle-loris-hazel 2026-07-16T14:07Z — mapping auth
+flow, existing coverage, and test harness conventions before writing tests.
