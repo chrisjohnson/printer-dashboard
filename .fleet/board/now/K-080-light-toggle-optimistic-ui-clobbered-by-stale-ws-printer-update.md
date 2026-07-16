@@ -3,8 +3,8 @@ id: K-080
 # Filename pattern: {ID}-{slugified-title}.md
 title: Light-toggle optimistic UI clobbered by stale WS printer_update
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: gentle-loris-hazel   # pet name of the agent session working this card, e.g. otter
+claimed_at: 2026-07-16T13:40Z    # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
 related_cards: []
@@ -25,6 +25,7 @@ Light-toggle optimistic UI can be clobbered by a stale WS printer_update. toggle
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
+<!-- signal: gentle-loris-hazel 2026-07-16T13:40Z — claiming, root cause already scoped in Context, dispatching implementer directly -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
