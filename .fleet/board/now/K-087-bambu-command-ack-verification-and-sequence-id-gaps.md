@@ -43,18 +43,18 @@ Neither issue was shown to cause K-086's HMS — that was root-caused to a
 firmware-side client identity/version gate, unrelated to payload content.
 
 ## Plan
-1. [ ] Researcher/Implementer: decide whether `sequence_id` omission on
-   print-namespace commands is intentional (protocol may not require it
-   there) or a latent bug — check Bambu's MQTT protocol docs/vendored
-   references, and whether omission has ever correlated with a dropped
-   command.
+1. [x] Researcher: `sequence_id` omission on print-namespace commands is
+   intentional/inconsequential, not a bug — no code change. See Decision
+   log for evidence.
 2. [ ] Implementer: add a lightweight audit log (command name + printer ID
-   + timestamp, no payload/secrets) on the Bambu command-send path, so
-   future HMS/behavior reports can be timestamp-correlated against actual
-   commands sent — mirrors what's missing for K-086-style investigations.
-3. [ ] Implementer: consider whether firmware-level ack verification is
-   feasible for Bambu's MQTT protocol (may not be — command acks may not
-   exist in the report stream) before committing to a specific approach.
+   + timestamp, no payload/secrets) in `publishCommand`
+   (`client.go:446-458`) and/or its callers.
+3. [x] Researcher: confirmed firmware-ack verification is NOT feasible —
+   client subscribes to only `device/%s/report`, publishes to only
+   `device/%s/request`, no separate ack topic, no correlation ID in the
+   parsed report struct at all. Audit log (item 2) is the full scope; no
+   further "verification" work to do.
+4. [ ] Implementer: run full test suite, commit, push, open PR.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -74,8 +74,28 @@ firmware-side client identity/version gate, unrelated to payload content.
 ## Decision log
 - 2026-07-16 — gentle-loris-hazel: filed to backlog per §2 (self-discovered
   follow-up, not started) from K-086 research side-findings.
+- 2026-07-16 — gentle-loris-hazel: Research resolved both open questions.
+  **sequence_id**: present-since-inception unused field on `printCommand`
+  (commit `5f2b801`, comment "Optional sequence ID for operations like
+  skip") — never populated, never removed, in any commit. `commands_test.go`
+  `TestCommand_BasicCommands` asserts exact JSON output for pause/resume/
+  stop/skip_object with no `sequence_id` key — its absence is the tested,
+  intended behavior. The one real prior bug (`111da6a`, light control
+  missing required fields) was only ever found on the system/light path,
+  never print-namespace. No in-repo protocol doc confirms print-namespace
+  commands require it either way — genuinely undeterminable with 100%
+  certainty, but weight of evidence favors "intentional." Leaving as-is;
+  too risky to add unverified fields to a working command path without
+  firmware ground truth.
+  **Ack verification**: confirmed infeasible — `client.go:212` subscribes
+  to only `device/%s/report`, `client.go:452` publishes to only
+  `device/%s/request`; no separate ack/response topic exists in this
+  implementation, and the parsed report struct (parser.go:12-44) has zero
+  fields resembling a command-correlation ID. True firmware-ack
+  verification would require protocol reverse-engineering beyond this
+  card's scope. Scope narrows to just the audit log (Plan item 2).
 
 ## Handoff notes
-Research dispatched by gentle-loris-hazel 2026-07-16T14:21Z — checking
-whether sequence_id omission is a bug vs. intentional, and whether real
-firmware-ack verification is feasible vs. just a send-time audit log.
+Research complete, scope narrowed to just adding the audit log (Plan item
+2) — sequence_id needs no change, true ack verification is infeasible.
+Dispatching Implementer next for the audit log only.
