@@ -1,20 +1,20 @@
 ---
-id: K-030
+id: K-006
 # Filename pattern: {ID}-{slugified-title}.md
-title: H2S status icon hysteresis
+title: Hysteresis for COMPLETE state
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
 claimed_by: null                 # pet name of the agent session working this card, e.g. otter
 claimed_at: null                 # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
-related_cards: []
+related_cards: [K-004]
 ---
 
-# K-030 — H2S status icon hysteresis
+# K-006 — Hysteresis for COMPLETE state
 
 ## Context
 
-H2S status icon hysteresis. Folds into K-004/K-006 — same state machine hysteresis problem for the Snapmaker H2S status icons. Deferred.
+Hysteresis for COMPLETE state. Same problem as K-004 — COMPLETE state is transient and gets overwritten. Deferred — folds into K-004 when that card is picked up.
 
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
@@ -33,7 +33,10 @@ H2S status icon hysteresis. Folds into K-004/K-006 — same state machine hyster
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-07-16 — gentle-loris-hazel: closing as duplicate. K-004 shipped the
+  hysteresis fix this card describes (PR #3,
+  https://github.com/chrisjohnson/printer-dashboard/pull/3) — this card's
+  own Context said it folds into K-004.
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Resolved via K-004 / PR #3. Nothing further here.

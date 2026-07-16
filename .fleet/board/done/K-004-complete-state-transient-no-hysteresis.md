@@ -21,28 +21,21 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
      has been planned out, e.g. "Implementer: apply config change". -->
 1. [x] Researcher: locate root cause, reconcile K-006/K-030, recommend fix
    approach. Done — see Decision log.
-2. [ ] Implementer: add streak-threshold latch (mirroring
+2. [x] Implementer: add streak-threshold latch (mirroring
    `hmsHealthyStreakThreshold` pattern) in `internal/printers/bambu/client.go`
-   `handleReport` (~line 300-301) so `"complete"` only reverts to `"idle"`
-   after 2 consecutive idle reports; a new RUNNING report still overrides
-   immediately, no latch needed on that edge. Apply the same pattern in
-   `internal/printers/snapmaker/snapmaker.go` (`handleStatusReport`,
-   `current.State = mapMoonrakerState(...)` ~line 396).
-3. [ ] Implementer: add tests — Bambu: SUCCESS→single IDLE must NOT drop
-   State from "complete"; SUCCESS→IDLE×2 must drop it (model on
-   `client_test.go:2096-2126` `TestHandleReport_SuccessDoesNotClearCurrentFile`
-   and the existing `hmsHealthyStreak` tests). Snapmaker: add an equivalent
-   Complete→subsequent-state test in `snapmaker_test.go` (none exists today).
-4. [ ] Implementer: run full test suite, commit, push, open PR.
-5. [ ] Close K-006 and K-030 as duplicates once this PR is up, pointing both
-   at K-004 (confirmed duplicates — both cards' own Context sections say
-   "folds into K-004").
+   `handleReport`. Applied same pattern in `internal/printers/snapmaker/snapmaker.go`.
+3. [x] Implementer: add tests — done, both Bambu and Snapmaker, plus updated
+   two pre-existing tests that exercised the buggy single-report transition.
+4. [x] Implementer: run full test suite, commit, push, open PR. PR:
+   https://github.com/chrisjohnson/printer-dashboard/pull/3
+5. [x] Close K-006 and K-030 as duplicates, pointing both at K-004.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: gentle-loris-hazel 2026-07-16T13:22Z — claiming, dispatching researcher to scope the state machine fix -->
+<!-- signal: gentle-loris-hazel 2026-07-16T14:10Z — done, PR #3 open, moved to done/ -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -71,8 +64,24 @@ COMPLETE state is transient — SUCCESS overwrites to complete, but the next IDL
   anywhere in the repo — proceeding with the low-risk match to precedent
   per an ordinary judgment call; can be tuned later if 2 proves
   insufficient in practice.
+- 2026-07-16 — gentle-loris-hazel: **process note** — the Implementer
+  sub-agent committed the fix directly onto local `main` in the main repo
+  checkout instead of the `worktree-gentle-loris-hazel` branch (violates
+  AGENTS.md §2a "never push source code to main"). Caught before any push:
+  moved the commit onto `worktree-gentle-loris-hazel` (fast-forwarded that
+  branch onto it, since it was a stale ancestor) and hard-reset local
+  `main` back to `origin/main`. No data lost, nothing shared was affected
+  since the stray commit was never pushed. PR opened normally from the
+  correct branch after this fix. Verified `go build`, `go vet`,
+  `go test ./... -race` all pass before opening the PR.
+- 2026-07-16 — gentle-loris-hazel: PR #3 opened
+  (https://github.com/chrisjohnson/printer-dashboard/pull/3), build/vet/
+  test all pass locally. Closing K-004 as done — code review/merge is a
+  separate step outside this card's scope (PR awaits human/reviewer
+  action). Also closing K-006 and K-030 as confirmed duplicates.
 
 ## Handoff notes
-Implementer dispatched by gentle-loris-hazel 2026-07-16T13:31Z — adding
-streak-threshold latch to Bambu + Snapmaker paths, plus tests. Awaiting
-completion before push/PR.
+PR #3 open against main, not yet merged. This card's scope (root-cause,
+fix, tests, PR) is complete. If the PR gets review feedback requiring
+changes, that's follow-up work on `worktree-gentle-loris-hazel` — reopen
+or file a new card if picked up by a different session.
