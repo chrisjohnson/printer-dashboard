@@ -1395,7 +1395,11 @@ func TestHandleReport_BootSequenceFlicker(t *testing.T) {
 		t.Errorf("After SUCCESS: ErrorMsg = %q; want empty", s2.ErrorMsg)
 	}
 
-	// Step 3: device finishes booting, reports IDLE
+	// Step 3: device finishes booting, reports IDLE. Because SUCCESS just
+	// latched State to "complete", the complete->idle latch requires
+	// completeIdleStreakThreshold consecutive IDLE reports before State
+	// settles — a single IDLE report here must not flip it yet (see
+	// TestHandleReport_SuccessThenSingleIdle_DoesNotDropState).
 	payload3 := []byte(`{
 		"print": {
 			"gcode_state": "IDLE",
@@ -1406,11 +1410,30 @@ func TestHandleReport_BootSequenceFlicker(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload3))
 	s3 := c.Status()
 
-	if s3.State != "idle" {
-		t.Errorf("After IDLE: State = %q; want %q", s3.State, "idle")
+	if s3.State != "complete" {
+		t.Errorf("After first IDLE post-SUCCESS: State = %q; want %q (latched)", s3.State, "complete")
 	}
 	if s3.ErrorMsg != "" {
-		t.Errorf("After IDLE: ErrorMsg = %q; want empty", s3.ErrorMsg)
+		t.Errorf("After first IDLE post-SUCCESS: ErrorMsg = %q; want empty", s3.ErrorMsg)
+	}
+
+	// Step 4: a second consecutive IDLE report meets the latch threshold and
+	// State settles to "idle".
+	payload4 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE",
+			"gcode_file": "",
+			"mc_percent": 0
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload4))
+	s4 := c.Status()
+
+	if s4.State != "idle" {
+		t.Errorf("After second IDLE post-SUCCESS: State = %q; want %q", s4.State, "idle")
+	}
+	if s4.ErrorMsg != "" {
+		t.Errorf("After second IDLE post-SUCCESS: ErrorMsg = %q; want empty", s4.ErrorMsg)
 	}
 }
 
@@ -1556,7 +1579,10 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 		t.Errorf("Step 5: RemainingTime = %d; want 0", s5.RemainingTime)
 	}
 
-	// Step 6: IDLE (back to idle after completion)
+	// Step 6: IDLE (first report back to idle after completion). The
+	// complete->idle latch requires completeIdleStreakThreshold consecutive
+	// IDLE reports before State actually settles, so State is still
+	// "complete" here (see TestHandleReport_SuccessThenSingleIdle_DoesNotDropState).
 	payload6 := []byte(`{
 		"print": {
 			"gcode_state": "IDLE"
@@ -1565,11 +1591,28 @@ func TestHandleReport_FullPrintLifecycle(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload6))
 	s6 := c.Status()
 
-	if s6.State != "idle" {
-		t.Errorf("Step 6: State = %q; want %q", s6.State, "idle")
+	if s6.State != "complete" {
+		t.Errorf("Step 6: State = %q; want %q (latched)", s6.State, "complete")
 	}
 	if s6.ErrorMsg != "" {
 		t.Errorf("Step 6: ErrorMsg = %q; want empty", s6.ErrorMsg)
+	}
+
+	// Step 7: a second consecutive IDLE report meets the latch threshold and
+	// State settles to "idle".
+	payload7 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload7))
+	s7 := c.Status()
+
+	if s7.State != "idle" {
+		t.Errorf("Step 7: State = %q; want %q", s7.State, "idle")
+	}
+	if s7.ErrorMsg != "" {
+		t.Errorf("Step 7: ErrorMsg = %q; want empty", s7.ErrorMsg)
 	}
 }
 
@@ -2125,6 +2168,141 @@ func TestHandleReport_SuccessDoesNotClearCurrentFile(t *testing.T) {
 	if s2.CurrentFile != "done.gcode" {
 		t.Errorf("After SUCCESS: CurrentFile = %q; want %q (complete is not idle, should preserve)",
 			s2.CurrentFile, "done.gcode")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// complete->idle latch tests (State flicker fix)
+// ---------------------------------------------------------------------------
+
+// TestHandleReport_SuccessThenSingleIdle_DoesNotDropState verifies that a
+// single IDLE report immediately following SUCCESS does NOT drop State from
+// "complete" back to "idle". Bambu firmware reports SUCCESS briefly right
+// after a print finishes, then settles to IDLE on the very next MQTT push —
+// without a latch this flickers "complete" -> "idle" within one report,
+// which a connected dashboard client would see as COMPLETE flashing and
+// vanishing.
+func TestHandleReport_SuccessThenSingleIdle_DoesNotDropState(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Printing.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "done.gcode",
+			"mc_percent": 99
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	// SUCCESS — state becomes "complete".
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"mc_percent": 100
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	if s2 := c.Status(); s2.State != "complete" {
+		t.Fatalf("After SUCCESS: State = %q; want %q", s2.State, "complete")
+	}
+
+	// A single subsequent IDLE report must NOT drop State from "complete".
+	payload3 := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload3))
+	s3 := c.Status()
+	if s3.State != "complete" {
+		t.Fatalf("After SUCCESS then single IDLE: State = %q; want %q (latched)", s3.State, "complete")
+	}
+}
+
+// TestHandleReport_SuccessThenTwoIdles_DropsStateToIdle verifies that once
+// completeIdleStreakThreshold consecutive IDLE reports have been seen after
+// SUCCESS, State does eventually settle to "idle".
+func TestHandleReport_SuccessThenTwoIdles_DropsStateToIdle(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "done.gcode",
+			"mc_percent": 99
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"mc_percent": 100
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	if s2 := c.Status(); s2.State != "complete" {
+		t.Fatalf("After SUCCESS: State = %q; want %q", s2.State, "complete")
+	}
+
+	idlePayload := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+
+	// First IDLE report: still latched.
+	c.handleReport(nil, newMockMessage(idlePayload))
+	if s := c.Status(); s.State != "complete" {
+		t.Fatalf("After SUCCESS then 1 IDLE: State = %q; want %q (still latched)", s.State, "complete")
+	}
+
+	// Second consecutive IDLE report: threshold met, State settles to "idle".
+	c.handleReport(nil, newMockMessage(idlePayload))
+	if s := c.Status(); s.State != "idle" {
+		t.Fatalf("After SUCCESS then 2 IDLEs: State = %q; want %q (threshold met)", s.State, "idle")
+	}
+}
+
+// TestHandleReport_SuccessThenRunning_OverridesImmediately verifies that a
+// new print starting (RUNNING) immediately overrides a latched "complete"
+// state with no delay — only the complete->idle edge is latched.
+func TestHandleReport_SuccessThenRunning_OverridesImmediately(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "first.gcode",
+			"mc_percent": 99
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"mc_percent": 100
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	if s2 := c.Status(); s2.State != "complete" {
+		t.Fatalf("After SUCCESS: State = %q; want %q", s2.State, "complete")
+	}
+
+	// New print starts immediately (no intervening IDLE reports).
+	payload3 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "second.gcode",
+			"mc_percent": 1
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload3))
+	s3 := c.Status()
+	if s3.State != "printing" {
+		t.Fatalf("After SUCCESS then RUNNING: State = %q; want %q (immediate override, no latch)", s3.State, "printing")
 	}
 }
 

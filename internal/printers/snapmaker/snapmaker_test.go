@@ -838,6 +838,97 @@ func TestHandleStatusReport_ErrorState(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// complete->non-complete latch tests (State flicker fix, mirrors Bambu)
+// ---------------------------------------------------------------------------
+
+// TestHandleStatusReport_CompleteThenSingleOperational_DoesNotDropState
+// verifies that a single "Operational" (idle) report immediately following
+// "Complete" does NOT drop State from "complete" back to "idle". This
+// mirrors the same latch on the Bambu client, applied here for architectural
+// consistency even though Moonraker's Complete status tends to be stickier
+// in practice.
+func TestHandleStatusReport_CompleteThenSingleOperational_DoesNotDropState(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	complete := &apiPrinterResponse{
+		State: &stateReport{Text: "Complete"},
+	}
+	p.handleStatusReport(complete)
+	if s := p.Status(); s.State != "complete" {
+		t.Fatalf("After Complete: State = %q; want %q", s.State, "complete")
+	}
+
+	operational := &apiPrinterResponse{
+		State: &stateReport{Text: "Operational"},
+	}
+	p.handleStatusReport(operational)
+	s := p.Status()
+	if s.State != "complete" {
+		t.Fatalf("After Complete then single Operational: State = %q; want %q (latched)", s.State, "complete")
+	}
+}
+
+// TestHandleStatusReport_CompleteThenTwoOperational_DropsStateToIdle
+// verifies that once completeIdleStreakThreshold consecutive non-"complete"
+// reports have been seen after Complete, State does eventually settle to
+// "idle".
+func TestHandleStatusReport_CompleteThenTwoOperational_DropsStateToIdle(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	complete := &apiPrinterResponse{
+		State: &stateReport{Text: "Complete"},
+	}
+	p.handleStatusReport(complete)
+	if s := p.Status(); s.State != "complete" {
+		t.Fatalf("After Complete: State = %q; want %q", s.State, "complete")
+	}
+
+	operational := &apiPrinterResponse{
+		State: &stateReport{Text: "Operational"},
+	}
+
+	// First Operational report: still latched.
+	p.handleStatusReport(operational)
+	if s := p.Status(); s.State != "complete" {
+		t.Fatalf("After Complete then 1 Operational: State = %q; want %q (still latched)", s.State, "complete")
+	}
+
+	// Second consecutive Operational report: threshold met, State settles.
+	p.handleStatusReport(operational)
+	if s := p.Status(); s.State != "idle" {
+		t.Fatalf("After Complete then 2 Operational reports: State = %q; want %q (threshold met)", s.State, "idle")
+	}
+}
+
+// TestHandleStatusReport_CompleteThenPrinting_OverridesImmediately verifies
+// that a new print starting (Printing) immediately overrides a latched
+// "complete" state with no delay — only settling back to a non-printing
+// state is latched.
+func TestHandleStatusReport_CompleteThenPrinting_OverridesImmediately(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	complete := &apiPrinterResponse{
+		State: &stateReport{Text: "Complete"},
+	}
+	p.handleStatusReport(complete)
+	if s := p.Status(); s.State != "complete" {
+		t.Fatalf("After Complete: State = %q; want %q", s.State, "complete")
+	}
+
+	printing := &apiPrinterResponse{
+		State: &stateReport{
+			Text:  "Printing",
+			Flags: &stateFlags{Printing: true},
+		},
+	}
+	p.handleStatusReport(printing)
+	s := p.Status()
+	if s.State != "printing" {
+		t.Fatalf("After Complete then Printing: State = %q; want %q (immediate override, no latch)", s.State, "printing")
+	}
+}
+
 func TestHandleQueryReport_FullUpdate(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 

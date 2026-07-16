@@ -30,6 +30,18 @@ const (
 	wsReadWait      = 10 * time.Second // WebSocket read deadline
 )
 
+// completeIdleStreakThreshold is the number of consecutive non-"complete"
+// reports required before handleStatusReport allows a newly-reported state
+// to overwrite a latched State="complete" back down to a non-terminal state
+// such as "idle". Mirrors the same latch in the Bambu client (see
+// completeIdleStreakThreshold there for the full rationale): Moonraker's
+// "Complete"/"Cancelled" status tends to be stickier than Bambu's SUCCESS,
+// but the same architectural gap exists, so we apply the same guard for
+// consistency. Any report that maps to "printing" (a new print starting)
+// still overrides "complete" immediately — only settling back to a
+// non-printing state is latched.
+const completeIdleStreakThreshold = 2
+
 // Printer implements the printers.Printer interface for Snapmaker U1 printers
 // running Paxx firmware.
 type Printer struct {
@@ -44,6 +56,14 @@ type Printer struct {
 	// successfully commanded instead of polling hardware. nil means unknown
 	// (no SetLight call has succeeded yet). Guarded by mu, same as status.
 	lightOn *bool
+
+	// completeIdleStreak counts consecutive non-"complete" reports seen
+	// while State is latched to "complete". Used by handleStatusReport to
+	// require completeIdleStreakThreshold consecutive such reports before
+	// letting the new state overwrite a "complete" state, guarding against a
+	// single stale/transient report flipping State away from "complete" too
+	// eagerly. Guarded by mu, same as status.
+	completeIdleStreak int
 
 	// httpClient is used for all REST API calls to the printer.
 	httpClient *http.Client
@@ -392,8 +412,27 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 	p.mu.RUnlock()
 
 	// State
+	//
+	// complete->non-complete latch: mirrors the Bambu client's
+	// completeIdleStreak latch (see completeIdleStreakThreshold's doc comment
+	// for the full rationale). Require completeIdleStreakThreshold
+	// consecutive non-"complete" reports while latched to "complete" before
+	// allowing the overwrite, so a single stale/transient report can't flip
+	// State away from "complete" prematurely. A report that maps to
+	// "printing" (a new print starting) still overrides "complete"
+	// immediately — only settling back down (e.g. to "idle") is latched.
 	if s.State != nil {
-		current.State = mapMoonrakerState(s.State.Text, s.State.Flags)
+		newState := mapMoonrakerState(s.State.Text, s.State.Flags)
+		if current.State == "complete" && newState != "complete" && newState != "printing" {
+			p.completeIdleStreak++
+			if p.completeIdleStreak >= completeIdleStreakThreshold {
+				current.State = newState
+				p.completeIdleStreak = 0
+			}
+		} else {
+			current.State = newState
+			p.completeIdleStreak = 0
+		}
 	}
 
 	// Temperatures — dynamically handle any number of toolheads
