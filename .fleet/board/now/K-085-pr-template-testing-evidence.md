@@ -51,4 +51,10 @@ currently exists in this repo — this is a net-new addition, not an edit.
   template automatically once merged.
 
 ## Handoff notes
-Card complete, PR open — see below once created.
+Card complete. No separate PR — this branch (`worktree-clever-fennec-reef`)
+was still shared with K-075's in-flight PR, so the template commit
+(`22291fa`) landed in the existing https://github.com/chrisjohnson/printer-dashboard/pull/2
+rather than a new PR. Per human follow-up request, PR #2's body was also
+rewritten by hand to comply with the new template (Summary / Test plan with
+command:/result: entries / Testing evidence honesty) — first real usage of
+the template this card added.
