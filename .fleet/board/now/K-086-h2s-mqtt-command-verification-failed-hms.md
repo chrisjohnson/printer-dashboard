@@ -2,8 +2,8 @@
 id: K-086
 title: H2S showing "MQTT Command verification failed" HMS (HMS_0500-0500-0001-0007)
 initiative_id: null
-claimed_by: faint-skunk-cairn
-claimed_at: 2026-07-16T03:48Z
+claimed_by: gentle-loris-hazel
+claimed_at: 2026-07-16T13:06Z
 blocks: null
 blocked_by: null
 related_cards: [K-004, K-006, K-030, K-073, K-075, K-079]
@@ -67,6 +67,7 @@ is.
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: faint-skunk-cairn 2026-07-16T03:48Z — claiming, highest priority per human, dispatching researcher -->
+<!-- signal: gentle-loris-hazel 2026-07-16T13:06Z — reclaiming, prior claim stale (>9h, no follow-up signals, no related commits on faint-skunk-cairn worktree); dispatching researcher -->
 
 ## Working context
 
