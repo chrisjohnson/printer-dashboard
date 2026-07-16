@@ -31,16 +31,29 @@ without colliding — e.g. per-worktree or per-branch image/container naming
 while still keeping the build/run steps simple per K-084's original intent.
 
 ## Plan
-1. [ ] Researcher: read K-084's README/AGENTS.md docker instructions and
-   confirm exactly where the fixed name collides (image name, container
-   name, and/or published port).
-2. [ ] Researcher: decide naming scheme for concurrency-safety — likely
-   derive container/image name (and port, if fixed) from worktree directory
-   name or branch, so parallel `docker build`/`docker run` don't share
-   state.
-3. [ ] Implementer: update README.md and root AGENTS.md docker instructions
-   to the new scheme; keep it as simple as the single-worker case where only
-   one worktree is active.
+1. [x] Researcher: confirmed three collision points — image name, container
+   name, AND host port are all hardcoded to `printer-dashboard`/`8080` in
+   both `AGENTS.md:16-23` and `README.md:46-54` (identical commands in
+   both). A fourth: the `${HOME}/.printer-dashboard` volume mount is also
+   shared across all worktrees (same `$HOME`). See Decision log.
+2. [x] Researcher: recommended scheme — suffix image/container name and the
+   token-cache volume path with the worktree pet name (falls back to plain
+   `printer-dashboard` outside a fleet worktree, zero change for manual/
+   single-worker use); switch the fixed `8080:8080` port publish to a
+   random host port (`-p 0:8080`, queried back via `docker port`) rather
+   than hand-rolling a second per-worker numbering scheme. K-012
+   (docker-compose) is an empty, unstarted stub — not the same scope, not
+   worth blocking on.
+3. [ ] Implementer: update `AGENTS.md:16-23` and `README.md:46-54` docker
+   commands to the new scheme (see Decision log for exact commands).
+4. [ ] Implementer: check `.github/workflows/` (unverified by research) to
+   confirm docker isn't also invoked in CI in a way this change could
+   affect — if it is, adjust; if CI doesn't use docker at all (Go tests run
+   natively per README), no CI change needed.
+5. [ ] Implementer: commit, push, open PR (docs-only change — no Go tests
+   apply, but note in the PR that this couldn't be "tested" in the
+   traditional sense beyond confirming the new commands are syntactically
+   valid shell / manually dry-run where possible).
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -53,8 +66,39 @@ while still keeping the build/run steps simple per K-084's original intent.
 - 2026-07-16 — swift-panda-dusk: filed to backlog per §2 (human-requested
   ticket, orchestrator role never claims — human to promote to now/ when
   ready per §4a).
+- 2026-07-16 — gentle-loris-hazel: Research confirmed the exact commands
+  (identical in both files):
+  ```
+  docker build -t printer-dashboard .
+  docker rm -f printer-dashboard || true
+  docker run -d --name printer-dashboard \
+    -p 8080:8080 \
+    -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+    -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+    printer-dashboard
+  ```
+  Adopting the recommended fix: derive a suffix from the worktree pet name
+  (`WORKTREE=$(basename "$(pwd)")` when under `.fleet/worktrees/`, unset
+  otherwise — falls back to today's exact plain-name behavior for manual/
+  single-worker use, satisfying the card's "keep it as simple as the
+  single-worker case" requirement):
+  ```
+  NAME="printer-dashboard${WORKTREE:+-$WORKTREE}"
+  docker build -t "$NAME" .
+  docker rm -f "$NAME" || true
+  docker run -d --name "$NAME" \
+    -p 0:8080 \
+    -v "${HOME}/.printer-dashboard-${WORKTREE:-default}:/home/app/.printer-dashboard:rw" \
+    -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+    "$NAME"
+  docker port "$NAME" 8080   # shows the assigned host port
+  ```
+  Switching `-p 8080:8080` → `-p 0:8080` (random host port, queried back)
+  rather than inventing a second per-worker port-numbering scheme — this
+  is manual/smoke-test tooling, not a fixed public-facing port, so a
+  stable port number isn't load-bearing. K-012 (docker-compose) is an
+  empty, unstarted stub in a different scope — not blocking on it.
 
 ## Handoff notes
-Research dispatched by gentle-loris-hazel 2026-07-16T14:10Z — confirming
-exact collision points (image/container/port/volume) and checking whether
-K-012 (docker-compose) obsoletes this fix.
+Research complete, plan set. Dispatching Implementer next to update
+AGENTS.md/README.md and check for CI docker usage.
