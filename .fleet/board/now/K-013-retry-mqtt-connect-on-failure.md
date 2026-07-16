@@ -19,7 +19,21 @@ Retry MQTT connect on failure with exponential backoff. Improves resilience when
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ]
+1. [x] Researcher: determine what's actually missing. Done — see Decision log.
+2. [ ] Implementer: wrap the initial `mqttClient.Connect()`/`WaitTimeout`
+   call in `internal/printers/bambu/client.go` (~line 181) in a retry loop
+   with doubling backoff (1s→2s→4s...) capped at `MaxReconnectInterval`
+   (30s), respecting `ctx.Done()` for shutdown cancellation. Retry
+   indefinitely (no attempt ceiling — see Decision log for rationale).
+   Do NOT enable Paho's `SetConnectRetry` (fixed-interval, not exponential,
+   and conflicts with a custom loop). Leave `AutoReconnect`/
+   `MaxReconnectInterval` as-is — they already correctly handle
+   connection-lost-after-success.
+3. [ ] Implementer: add a test exercising the initial-connect-failure retry
+   path (dial to a closed/refusing port, or inject a failing dialer if the
+   client is structured to allow that — check existing test patterns in
+   `client_test.go` for how MQTT connection is mocked/faked).
+4. [ ] Implementer: run full test suite, commit, push, open PR.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -34,8 +48,27 @@ Retry MQTT connect on failure with exponential backoff. Improves resilience when
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-07-16 — gentle-loris-hazel: Research found `AutoReconnect(true)` +
+  `MaxReconnectInterval(30s)` (client.go:172-173) already correctly handle
+  connection-lost-after-success with Paho's own backoff. What's actually
+  missing is *initial*-connect retry: `SetConnectRetry` is never called
+  (defaults false), so a failed first `Connect()` just returns an error
+  immediately (client.go:181-192) and the caller (server.go:331-336) logs
+  it and gives up — that printer is stuck in "error" until process
+  restart. Paho's `ConnectRetry` option, if enabled, is fixed-interval not
+  exponential, and would make `Connect()` async in a way that conflicts
+  with the current synchronous `WaitTimeout` pattern — so this needs a
+  small hand-rolled retry loop around the initial connect, not an
+  options-only fix. No existing backoff utility in the repo to reuse; a
+  local loop is appropriate for this single call site.
+- 2026-07-16 — gentle-loris-hazel: judgment call — retry indefinitely (no
+  attempt ceiling), matching the existing precedent of both
+  `AutoReconnect` (retries forever post-connect) and Snapmaker's
+  reconnect loop (retries forever via ticker) elsewhere in this codebase.
+  The card didn't specify a ceiling and there's no "give up permanently"
+  UX in the current status model — indefinite retry with capped backoff
+  is the lower-risk, more-consistent choice; can add a ceiling later if a
+  human wants one.
 
 ## Handoff notes
-Research dispatched by gentle-loris-hazel 2026-07-16T13:54Z — checking
-current Paho MQTT client options (SetConnectRetry/SetAutoReconnect/etc.)
-and what happens today on initial connect failure, before implementing.
+Research complete, plan set. Dispatching Implementer next.
