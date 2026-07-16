@@ -1633,6 +1633,35 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         });
     }
 
+    // Dismiss one HMS row. POSTs to the backend (which records the dismissal
+    // and filters the code out of future hms_errors/hms_warnings — see
+    // K-075) and, on success, optimistically hides just that row so the UI
+    // reacts immediately rather than waiting for the next poll/WS
+    // updateCard(). This is a one-shot DOM hide, not a persistent client
+    // cache: the server is the source of truth, and the next updateCard()
+    // rebuild of .hms-list will already omit the dismissed entry, so there
+    // is nothing to reconcile here later. Mirrors toggleLight()'s
+    // fetch/JSON-body/error-handling shape above.
+    function dismissHms(printerId, code) {
+      fetch('/api/printers/' + printerId + '/hms/dismiss', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code })
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.error) {
+            console.error('dismissHms error:', d.error);
+            return;
+          }
+          var card = document.getElementById('printer-' + printerId);
+          var rows = card ? card.querySelectorAll('.hms-row') : [];
+          for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute('data-hms-code') === code) { rows[i].remove(); break; }
+          }
+        })
+        .catch(function(e) { console.error('dismissHms network error:', e); });
+    }
+
     window._cameraSlots = window._cameraSlots || {};
 
     function cameraFlip(printerId, dir) {
