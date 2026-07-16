@@ -35,6 +35,13 @@ type Server struct {
 	printersCtx context.CancelFunc      // cancel for printer connection goroutines
 	cameraMgr   *camera.CameraManager   // persistent Bambu camera connections
 	rtspMgr     *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
+	skipTracker *SkipTracker            // per-printer skipped-object history for the current print
+
+	// lastPrintState tracks each printer's last-seen state so
+	// startStatusForwarder can detect the "printing" -> not-"printing"
+	// transition and clear that printer's skipTracker history.
+	lastPrintStateMu sync.Mutex
+	lastPrintState   map[string]string
 
 	// Onboarding provisional state (single-user, set during wizard)
 	onboardingMu      sync.Mutex
@@ -53,10 +60,12 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	mux := http.NewServeMux()
 
 	s := &Server{
-		cfg:        cfg,
-		mux:        mux,
-		printers:   make(map[string]printers.Printer),
-		configPath: configPath,
+		cfg:            cfg,
+		mux:            mux,
+		printers:       make(map[string]printers.Printer),
+		configPath:     configPath,
+		skipTracker:    NewSkipTracker(),
+		lastPrintState: make(map[string]string),
 		http: &http.Server{
 			Addr:    cfg.Listen,
 			Handler: noCacheMiddleware(mux),
@@ -339,6 +348,7 @@ func (s *Server) startStatusForwarder(ctx context.Context, printerID string, sta
 				if !ok {
 					return
 				}
+				s.clearSkippedOnPrintEnd(pid, status.State)
 				enriched := s.enrichStatusWithCameras(pid, status)
 				msg := map[string]any{
 					"type":    "printer_update",
@@ -354,6 +364,27 @@ func (s *Server) startStatusForwarder(ctx context.Context, printerID string, sta
 			}
 		}
 	}(printerID, statusCh)
+}
+
+// clearSkippedOnPrintEnd resets printerID's SkipTracker history the moment
+// its print session actually ends (job finished, cancelled, or errored) — a
+// print session's skipped-object list has no meaning once that session ends.
+// "printing" and "paused" both count as the same in-progress session (a
+// pause must NOT clear skip history), so this only fires when the state
+// leaves that pair entirely. No-ops on every other transition, including the
+// first status ever seen for a printer (lastPrintState starts empty, so
+// there is no stale in-progress state to transition away from).
+func (s *Server) clearSkippedOnPrintEnd(printerID, state string) {
+	wasActive := func(st string) bool { return st == "printing" || st == "paused" }
+
+	s.lastPrintStateMu.Lock()
+	prev := s.lastPrintState[printerID]
+	s.lastPrintState[printerID] = state
+	s.lastPrintStateMu.Unlock()
+
+	if wasActive(prev) && !wasActive(state) {
+		s.skipTracker.Clear(printerID)
+	}
 }
 
 // reloadConfig re-reads config.yaml, re-initializes Bambu cloud + printers.
@@ -431,6 +462,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/resume", s.handleResume)
 	s.mux.HandleFunc("POST /api/printers/{id}/cancel", s.handleCancel)
 	s.mux.HandleFunc("POST /api/printers/{id}/skip", s.handleSkipObject)
+	s.mux.HandleFunc("GET /api/printers/{id}/skipped", s.handleGetSkipped)
 	s.mux.HandleFunc("POST /api/printers/{id}/bed-temp", s.handleSetBedTemp)
 	s.mux.HandleFunc("POST /api/printers/{id}/nozzle-temp", s.handleSetNozzleTemp)
 	s.mux.HandleFunc("POST /api/printers/{id}/chamber-temp", s.handleSetChamberTemp)
@@ -685,6 +717,11 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 
+// handleSkipObject sends the firmware skip-current-object command and
+// records the skip in the printer's SkipTracker history. Expects an optional
+// JSON body {"name": "object_name"} (best-effort, for display only) — a
+// missing or unparsable body is not an error since the firmware command
+// itself carries no object identity.
 func (s *Server) handleSkipObject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	p, ok := s.getPrinter(id)
@@ -696,7 +733,32 @@ func (s *Server) handleSkipObject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]string{"status": "ok"})
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	json.NewDecoder(r.Body).Decode(&req)
+
+	s.skipTracker.RecordSkip(id, req.Name)
+	writeJSON(w, 200, map[string]any{
+		"status":        "ok",
+		"skipped_count": len(s.skipTracker.GetSkipped(id)),
+	})
+}
+
+// handleGetSkipped returns the list of objects skipped so far this print
+// session for the given printer.
+func (s *Server) handleGetSkipped(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.getPrinter(id); !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	objects := s.skipTracker.GetSkipped(id)
+	writeJSON(w, 200, map[string]any{
+		"objects": objects,
+		"count":   len(objects),
+	})
 }
 
 // --- P1S Control Handlers ---

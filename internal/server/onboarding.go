@@ -655,8 +655,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
     .controls button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     .controls button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
-    /* Hide skip + resume on mobile */
-    .btn-skip, .btn-resume { display: none; }
+    /* Resume is hidden on mobile (rarely needed one-handed); skip needs a
+       confirmation modal now (see .skip-modal below) rather than firing
+       immediately, so it's safe — and useful — to show on mobile too. */
+    .btn-resume { display: none; }
 
     /* Layer info — desktop only (see media query below). Always rendered
        (with a "—" placeholder when no layer data yet) for the same
@@ -680,7 +682,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       .temps { font-size: 0.8125rem; gap: 8px 20px; }
       .filename { display: block; }
       .layer-info { display: block; }
-      .btn-skip, .btn-resume { display: inline-block; }
+      .btn-resume { display: inline-block; }
       .progress-bar { height: 8px; }
     }
 
@@ -740,6 +742,44 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .empty-message { color: var(--text-muted); padding: 20px; }
     .empty-message a { color: var(--accent); }
     .error-message { color: var(--tag-error-text); padding: 20px; }
+
+    /* Skip-object confirmation modal */
+    .skip-modal {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .skip-modal-overlay {
+      position: absolute; inset: 0; background: rgba(0,0,0,.5);
+    }
+    .skip-modal-content {
+      position: relative; background: var(--bg-card); border-radius: var(--radius-card);
+      max-width: 400px; width: calc(100% - 32px); padding: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.2);
+    }
+    .skip-modal-content h3 { margin: 0 0 8px; font-size: 1.0625rem; }
+    .skip-modal-content p { margin: 0 0 12px; color: var(--text-muted); font-size: 0.875rem; }
+    .skipped-list { max-height: 160px; overflow-y: auto; margin-bottom: 12px; }
+    .skipped-count { margin: 0; font-size: 0.8125rem; color: var(--text-subtle); }
+    .skip-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .skip-modal-actions button {
+      padding: 9px 16px; border-radius: var(--radius-control); border: 1px solid transparent;
+      font-size: 0.8125rem; font-weight: 700; cursor: pointer;
+    }
+    .btn-skip-confirm { background: var(--accent); color: #fff; }
+    .btn-skip-confirm:hover { background: var(--accent-hover); }
+    .btn-skip-cancel { background: var(--bg-card); border-color: var(--border-subtle); color: var(--text-muted); }
+    .btn-skip-cancel:hover { background: #e9ebee; }
+    .skipped-badge {
+      font-size: 0.75rem; color: var(--text-subtle); cursor: pointer;
+      background: none; border: none; padding: 0; text-align: left;
+    }
+    @media (max-width: 767px) {
+      .skip-modal-content {
+        width: 100%; height: 100%; max-width: none; border-radius: 0;
+        display: flex; flex-direction: column; justify-content: center;
+      }
+      .skip-modal-actions button { min-height: 44px; }
+    }
   </style>
 </head>
 <body>
@@ -815,6 +855,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
   </div>
   <script>
     window._printerCache = {};
+    window._skippedCounts = {};
     window._wsReconnectDelay = 1000;
 
     function mergeWithCache(p) {
@@ -848,6 +889,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (newCard) {
           // Camera slot is rendered inside the card — no further setup needed
         }
+        // Restore the skipped-object badge from the client-side cache
+        // (populated by loadPrinters()/confirmSkip()/openSkipModal()) rather
+        // than re-fetching — a camera-triggered rebuild has no bearing on
+        // skip state, so there's nothing new to fetch.
+        setSkippedCount(p.id, window._skippedCounts[p.id] || 0);
         reorderCard(p.id);
         return;
       }
@@ -860,7 +906,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
       // 1. State tag
       const tag = card.querySelector('.tag');
+      // Read the previously-rendered state before overwriting it, so we can
+      // detect a real "printing"/"paused" -> anything-else transition below
+      // (a pause must NOT count as leaving the print session — only the tag
+      // text distinguishes that, not the disabled skip button, which is also
+      // disabled while paused).
+      const prevSt = tag ? tag.textContent : null;
       if (tag) { tag.className = 'tag ' + stCls; tag.textContent = st; }
+      const wasActivePrint = prevSt === 'printing' || prevSt === 'paused';
+      const isActivePrint = st === 'printing' || st === 'paused';
+      if (wasActivePrint && !isActivePrint) {
+        // Print session just ended server-side, which already cleared this
+        // printer's SkipTracker (see clearSkippedOnPrintEnd) — re-fetch so
+        // the badge/modal list reflect that instead of the stale cached count.
+        refreshSkippedList(p.id);
+      }
 
       // 2. Online indicator
       const onlineEl = card.querySelector('.card-online');
@@ -962,7 +1022,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const pauseBtn = card.querySelector('button[onclick*="pause"]');
       const resumeBtn = card.querySelector('button[onclick*="resume"]');
       const cancelBtn = card.querySelector('button[onclick*="cancel"]');
-      const skipBtn = card.querySelector('button[onclick*="skip"]');
+      const skipBtn = card.querySelector('.btn-skip');
       if (pauseBtn) pauseBtn.disabled = st !== 'printing';
       if (resumeBtn) resumeBtn.disabled = st !== 'paused';
       if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
@@ -1041,6 +1101,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             window._printerCache[p.id] = p;
           });
           container.innerHTML = list.map(renderCard).join('');
+          // Populate each card's skipped-object badge from the server —
+          // renderCard() itself has no skipped-count data to draw from, so
+          // this is a follow-up fetch per printer once the card exists.
+          list.forEach(function(p) { refreshSkippedList(p.id); });
           // Start periodic refresh for camera frames. The browser keeps the
           // old frame visible while the new one loads, so no flicker.
           // Always retry every image — even errored ones. The onerror
@@ -1324,7 +1388,30 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'skip\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
+          '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
+        '</div>' +
+        '<button class="skipped-badge" id="skipped-badge-' + p.id + '" onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" style="display:none;"></button>' +
+        skipModalHtml(p.id) +
+      '</div>';
+    }
+
+    // Skip-object confirmation modal markup for one printer card. Always
+    // rendered (hidden via display:none) alongside the card, mirroring the
+    // always-in-DOM pattern used by the error/warning banners above — it's
+    // fixed-positioned, so its place in the DOM tree doesn't matter for
+    // layout, only that it exists once per printer.
+    function skipModalHtml(id) {
+      var safeId = escapeJsString(id);
+      return '<div class="skip-modal" id="skip-modal-' + id + '" style="display:none">' +
+        '<div class="skip-modal-overlay" onclick="closeSkipModal(\'' + safeId + '\')"></div>' +
+        '<div class="skip-modal-content">' +
+          '<h3>Skip Object</h3>' +
+          '<p>Skip the current object? This cannot be undone for this print.</p>' +
+          '<div class="skipped-list" id="skipped-list-' + id + '"></div>' +
+          '<div class="skip-modal-actions">' +
+            '<button class="btn-skip-confirm" onclick="confirmSkip(\'' + safeId + '\')">Skip Object</button>' +
+            '<button class="btn-skip-cancel" onclick="closeSkipModal(\'' + safeId + '\')">Cancel</button>' +
+          '</div>' +
         '</div>' +
       '</div>';
     }
@@ -1390,6 +1477,69 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .then(r => r.json())
         .then(d => { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
         .catch(() => alert('Network error'));
+    }
+
+    // openSkipModal shows the skip-object confirmation modal and refreshes
+    // its skipped-objects list from the server (rather than trusting the
+    // client-side cache, since another client/tab may have skipped objects
+    // in the meantime).
+    function openSkipModal(id) {
+      var modal = document.getElementById('skip-modal-' + id);
+      if (!modal) return;
+      modal.style.display = 'flex';
+      refreshSkippedList(id);
+    }
+
+    function closeSkipModal(id) {
+      var modal = document.getElementById('skip-modal-' + id);
+      if (modal) modal.style.display = 'none';
+    }
+
+    // confirmSkip fires the existing fire-and-forget skip endpoint, then
+    // updates the badge from the response's authoritative skipped_count
+    // rather than issuing a second round-trip to re-fetch the list.
+    function confirmSkip(id) {
+      closeSkipModal(id);
+      fetch('/api/printers/' + id + '/skip', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (d.status !== 'ok') { alert(d.error || 'Command failed'); return; }
+          setSkippedCount(id, d.skipped_count);
+        })
+        .catch(function() { alert('Network error'); });
+    }
+
+    // refreshSkippedList fetches the skipped-objects list for id and
+    // populates both the modal's list and the card's skipped-count badge.
+    function refreshSkippedList(id) {
+      fetch('/api/printers/' + id + '/skipped')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          var objects = d.objects || [];
+          var listEl = document.getElementById('skipped-list-' + id);
+          if (listEl) {
+            listEl.innerHTML = '<p class="skipped-count">' +
+              escapeHtml(objects.length + ' object' + (objects.length !== 1 ? 's' : '') + ' skipped so far') +
+              '</p>';
+          }
+          setSkippedCount(id, objects.length);
+        })
+        .catch(function() {});
+    }
+
+    // setSkippedCount updates the cache and the card's skipped-count badge
+    // (hidden entirely when count is 0, so a printer that's never had an
+    // object skipped shows nothing extra below its controls).
+    function setSkippedCount(id, count) {
+      window._skippedCounts[id] = count;
+      var badge = document.getElementById('skipped-badge-' + id);
+      if (!badge) return;
+      if (count > 0) {
+        badge.textContent = count + ' object' + (count !== 1 ? 's' : '') + ' skipped';
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
     }
 
     function toggleLight(printerId) {

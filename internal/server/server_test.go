@@ -120,10 +120,12 @@ func newTestServer(printersMap map[string]printers.Printer) *Server {
 	go wsHub.Run()
 
 	s := &Server{
-		cfg:      &config.Config{Listen: ":0"},
-		mux:      http.NewServeMux(),
-		printers: printersMap,
-		wsHub:    wsHub,
+		cfg:            &config.Config{Listen: ":0"},
+		mux:            http.NewServeMux(),
+		printers:       printersMap,
+		wsHub:          wsHub,
+		skipTracker:    NewSkipTracker(),
+		lastPrintState: make(map[string]string),
 	}
 	s.registerRoutes()
 	return s
@@ -1199,10 +1201,13 @@ func TestHandleSkip(t *testing.T) {
 			t.Errorf("expected 200, got %d", resp.StatusCode)
 		}
 
-		var body map[string]string
+		var body map[string]any
 		decodeBody(t, resp, &body)
 		if body["status"] != "ok" {
-			t.Errorf(`expected "status":"ok", got %q`, body["status"])
+			t.Errorf(`expected "status":"ok", got %v`, body["status"])
+		}
+		if count, _ := body["skipped_count"].(float64); count != 1 {
+			t.Errorf(`expected "skipped_count":1, got %v`, body["skipped_count"])
 		}
 
 		if !p.SkipCalled {
@@ -1254,6 +1259,163 @@ func TestHandleSkip(t *testing.T) {
 
 		if !p.SkipCalled {
 			t.Error("expected SkipCalled to be true even on error")
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/printers/{id}/skipped
+// ---------------------------------------------------------------------------
+
+func TestHandleGetSkipped(t *testing.T) {
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers/nonexistent/skipped")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("empty before any skip", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustGet(t, ts.URL, "/api/printers/printer-1/skipped")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+
+		var body struct {
+			Objects []SkippedObject `json:"objects"`
+			Count   int             `json:"count"`
+		}
+		decodeBody(t, resp, &body)
+		if body.Count != 0 {
+			t.Errorf("expected count 0, got %d", body.Count)
+		}
+		if body.Objects == nil {
+			t.Error("expected objects to be an empty array, not null")
+		}
+	})
+
+	t.Run("reflects skips recorded via POST /skip", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer"}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		mustPost(t, ts.URL, "/api/printers/printer-1/skip").Body.Close()
+		mustPost(t, ts.URL, "/api/printers/printer-1/skip").Body.Close()
+
+		resp := mustGet(t, ts.URL, "/api/printers/printer-1/skipped")
+		defer resp.Body.Close()
+
+		var body struct {
+			Objects []SkippedObject `json:"objects"`
+			Count   int             `json:"count"`
+		}
+		decodeBody(t, resp, &body)
+		if body.Count != 2 {
+			t.Errorf("expected count 2, got %d", body.Count)
+		}
+		if len(body.Objects) != 2 {
+			t.Errorf("expected 2 objects, got %d", len(body.Objects))
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// clearSkippedOnPrintEnd — pause must not clear, real session end must
+// ---------------------------------------------------------------------------
+
+func TestClearSkippedOnPrintEnd(t *testing.T) {
+	newServer := func() *Server {
+		return &Server{skipTracker: NewSkipTracker(), lastPrintState: make(map[string]string)}
+	}
+
+	t.Run("pause does not clear", func(t *testing.T) {
+		s := newServer()
+		s.skipTracker.RecordSkip("p1", "A")
+
+		s.clearSkippedOnPrintEnd("p1", "printing")
+		s.clearSkippedOnPrintEnd("p1", "paused")
+
+		if got := s.skipTracker.GetSkipped("p1"); len(got) != 1 {
+			t.Errorf("expected skip history preserved across pause, got %d entries", len(got))
+		}
+	})
+
+	t.Run("resume from pause does not clear", func(t *testing.T) {
+		s := newServer()
+		s.skipTracker.RecordSkip("p1", "A")
+
+		s.clearSkippedOnPrintEnd("p1", "paused")
+		s.clearSkippedOnPrintEnd("p1", "printing")
+
+		if got := s.skipTracker.GetSkipped("p1"); len(got) != 1 {
+			t.Errorf("expected skip history preserved across resume, got %d entries", len(got))
+		}
+	})
+
+	t.Run("completion clears", func(t *testing.T) {
+		s := newServer()
+		s.skipTracker.RecordSkip("p1", "A")
+
+		s.clearSkippedOnPrintEnd("p1", "printing")
+		s.clearSkippedOnPrintEnd("p1", "complete")
+
+		if got := s.skipTracker.GetSkipped("p1"); len(got) != 0 {
+			t.Errorf("expected skip history cleared on completion, got %d entries", len(got))
+		}
+	})
+
+	t.Run("cancel from paused clears", func(t *testing.T) {
+		s := newServer()
+		s.skipTracker.RecordSkip("p1", "A")
+
+		s.clearSkippedOnPrintEnd("p1", "paused")
+		s.clearSkippedOnPrintEnd("p1", "idle")
+
+		if got := s.skipTracker.GetSkipped("p1"); len(got) != 0 {
+			t.Errorf("expected skip history cleared on cancel, got %d entries", len(got))
+		}
+	})
+
+	t.Run("first-ever status does not clear", func(t *testing.T) {
+		s := newServer()
+		s.skipTracker.RecordSkip("p1", "A")
+
+		// No prior clearSkippedOnPrintEnd call for p1 — lastPrintState is
+		// empty, so this must not be treated as a "was active" transition.
+		s.clearSkippedOnPrintEnd("p1", "idle")
+
+		if got := s.skipTracker.GetSkipped("p1"); len(got) != 1 {
+			t.Errorf("expected skip history preserved on first-ever status, got %d entries", len(got))
+		}
+	})
+
+	t.Run("printers are isolated", func(t *testing.T) {
+		s := newServer()
+		s.skipTracker.RecordSkip("p1", "A")
+		s.skipTracker.RecordSkip("p2", "B")
+
+		s.clearSkippedOnPrintEnd("p1", "printing")
+		s.clearSkippedOnPrintEnd("p1", "complete")
+
+		if got := s.skipTracker.GetSkipped("p1"); len(got) != 0 {
+			t.Errorf("p1: expected cleared, got %d entries", len(got))
+		}
+		if got := s.skipTracker.GetSkipped("p2"); len(got) != 1 {
+			t.Errorf("p2: expected untouched, got %d entries", len(got))
 		}
 	})
 }
