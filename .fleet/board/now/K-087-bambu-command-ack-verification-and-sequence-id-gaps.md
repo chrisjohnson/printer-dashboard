@@ -96,6 +96,7 @@ firmware-side client identity/version gate, unrelated to payload content.
   card's scope. Scope narrows to just the audit log (Plan item 2).
 
 ## Handoff notes
-Research complete, scope narrowed to just adding the audit log (Plan item
-2) — sequence_id needs no change, true ack verification is infeasible.
-Dispatching Implementer next for the audit log only.
+Implementer dispatched by gentle-loris-hazel 2026-07-16T14:35Z, working in
+`.fleet/worktrees/gentle-loris-hazel` on fresh branch
+`worktree-gentle-loris-hazel-k087` (off origin/main). Scope: audit log
+only. Awaiting completion.
