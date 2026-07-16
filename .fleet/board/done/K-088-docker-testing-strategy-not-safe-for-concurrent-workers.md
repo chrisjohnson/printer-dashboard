@@ -44,16 +44,12 @@ while still keeping the build/run steps simple per K-084's original intent.
    than hand-rolling a second per-worker numbering scheme. K-012
    (docker-compose) is an empty, unstarted stub — not the same scope, not
    worth blocking on.
-3. [ ] Implementer: update `AGENTS.md:16-23` and `README.md:46-54` docker
-   commands to the new scheme (see Decision log for exact commands).
-4. [ ] Implementer: check `.github/workflows/` (unverified by research) to
-   confirm docker isn't also invoked in CI in a way this change could
-   affect — if it is, adjust; if CI doesn't use docker at all (Go tests run
-   natively per README), no CI change needed.
-5. [ ] Implementer: commit, push, open PR (docs-only change — no Go tests
-   apply, but note in the PR that this couldn't be "tested" in the
-   traditional sense beyond confirming the new commands are syntactically
-   valid shell / manually dry-run where possible).
+3. [x] Implementer: updated `AGENTS.md` and `README.md` docker commands to
+   the new scheme.
+4. [x] Implementer: confirmed no `.github/workflows/` exists at all in this
+   repo (only a PR template) — no CI docker usage to update.
+5. [x] Implementer: committed, pushed, PR opened:
+   https://github.com/chrisjohnson/printer-dashboard/pull/6
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -61,6 +57,7 @@ while still keeping the build/run steps simple per K-084's original intent.
 -->
 <!-- signal: swift-panda-dusk 2026-07-16T09:26Z — filed per human request, not started -->
 <!-- signal: gentle-loris-hazel 2026-07-16T14:10Z — claiming, dispatching researcher to confirm collision points and naming scheme -->
+<!-- signal: gentle-loris-hazel 2026-07-16T14:35Z — done, PR #6 open, moved to done/ -->
 
 ## Decision log
 - 2026-07-16 — swift-panda-dusk: filed to backlog per §2 (human-requested
@@ -98,8 +95,27 @@ while still keeping the build/run steps simple per K-084's original intent.
   is manual/smoke-test tooling, not a fixed public-facing port, so a
   stable port number isn't load-bearing. K-012 (docker-compose) is an
   empty, unstarted stub in a different scope — not blocking on it.
+- 2026-07-16 — gentle-loris-hazel: **caught and fixed a real bug before
+  pushing.** The first Implementer pass set `WORKTREE=$(basename "$(pwd)")`
+  *unconditionally* in both files' code blocks, contradicting the prose's
+  claimed fallback ("leave unset for normal checkout") — run from a
+  non-worktree checkout, `basename` would return the repo dir's own name
+  (`printer-dashboard`), producing `NAME=printer-dashboard-printer-dashboard`
+  instead of the plain fallback, breaking the card's explicit "keep it as
+  simple as the single-worker case" requirement. Dispatched a follow-up fix
+  (conditional `case "$(pwd)" in */.fleet/worktrees/*) ... esac`),
+  re-verified myself by running the actual logic from both a real normal
+  checkout and a real fleet-worktree directory on this machine — confirms
+  correct fallback now.
+- 2026-07-16 — gentle-loris-hazel: PR #6 opened
+  (https://github.com/chrisjohnson/printer-dashboard/pull/6). Docs-only
+  change; no docker daemon available in this environment to run an actual
+  end-to-end concurrent-container test, noted honestly in the PR body.
+  Closing as done — review/merge is outside this card's scope.
 
 ## Handoff notes
-Implementer dispatched by gentle-loris-hazel 2026-07-16T14:25Z, working in
-`.fleet/worktrees/gentle-loris-hazel` on fresh branch
-`worktree-gentle-loris-hazel-k088` (off origin/main). Awaiting completion.
+PR #6 open against main, not yet merged. If review feedback requires
+changes, that's follow-up work on branch `worktree-gentle-loris-hazel-k088`.
+Worth a human manually running the new commands once (build+run in two
+different worktrees simultaneously) to confirm no collision in practice,
+since this couldn't be verified end-to-end in this environment.
