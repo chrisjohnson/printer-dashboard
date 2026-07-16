@@ -879,14 +879,28 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     window._printerCache = {};
     window._skippedCounts = {};
     window._wsReconnectDelay = 1000;
+    // Fields with an optimistic write in flight, keyed by printer id then
+    // field name (e.g. window._pendingFields['p1']['light_on'] === true).
+    // mergeWithCache() consults this to avoid letting a WS printer_update
+    // clobber an optimistic update with the server's pre-command state
+    // while the command that will make it true is still in flight — see
+    // toggleLight() below, the origin of this pattern (K-080). Once the
+    // owning fetch settles, the caller clears its own entry, so the very
+    // next WS update (genuinely newer server state) applies normally.
+    window._pendingFields = {};
 
     function mergeWithCache(p) {
       const cached = window._printerCache[p.id] || {};
+      const pending = window._pendingFields[p.id] || {};
       const merged = {};
       // Copy all cached values first
       Object.keys(cached).forEach(k => merged[k] = cached[k]);
-      // Override with new values (only if they're not null/undefined)
+      // Override with new values (only if they're not null/undefined), but
+      // skip fields that have an optimistic write in flight — otherwise a
+      // WS push reporting the printer's pre-command state would overwrite
+      // the optimistic value before the command has had a chance to land.
       Object.keys(p).forEach(k => {
+        if (pending[k]) return;
         if (p[k] !== null && p[k] !== undefined) {
           merged[k] = p[k];
         }
@@ -1604,6 +1618,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (thumb) thumb.textContent = newOn ? 'on' : 'off';
       }
 
+      // Also update the cache itself — not just the DOM. mergeWithCache()
+      // treats _printerCache as the source of truth for re-renders (see
+      // connectWebSocket()'s printer_update handler and updateCard()), so
+      // if a WS push carrying the printer's pre-toggle light state arrives
+      // while this fetch is still in flight, it would otherwise merge on
+      // top of a stale cached light_on and snap the toggle back before the
+      // command even lands. Mark light_on "pending" for this printer too —
+      // the driver only learns the real new state after a round trip to the
+      // physical printer, so a WS push during that window carries a
+      // concrete-but-stale light_on (not an omitted field), which
+      // mergeWithCache() would otherwise happily apply. Marking it pending
+      // makes mergeWithCache() skip that field until this fetch settles, at
+      // which point the flag clears and the next genuine WS update (e.g.
+      // the driver catching up, or a real change from elsewhere) applies
+      // normally — so we only suppress the specific in-flight race, not
+      // future updates.
+      cached.light_on = newOn;
+      window._pendingFields[printerId] = window._pendingFields[printerId] || {};
+      window._pendingFields[printerId].light_on = true;
+
       fetch('/api/printers/' + printerId + '/light', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1611,7 +1645,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }).then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.error) {
-            // Revert optimistic update
+            // Revert optimistic update — both DOM and cache
+            cached.light_on = currentlyOn;
             if (card) {
               var toggle = card.querySelector('[data-light] .toggle input');
               if (toggle) toggle.checked = currentlyOn;
@@ -1622,7 +1657,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
         })
         .catch(function(e) {
-          // Revert on network error
+          // Revert on network error — both DOM and cache
+          cached.light_on = currentlyOn;
           if (card) {
             var toggle = card.querySelector('[data-light] .toggle input');
             if (toggle) toggle.checked = currentlyOn;
@@ -1630,6 +1666,15 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             if (thumb) thumb.textContent = currentlyOn ? 'on' : 'off';
           }
           alert('Network error controlling light');
+        })
+        .finally(function() {
+          // Whether the command succeeded or failed, it's no longer in
+          // flight — resume normal merge behavior for light_on so the next
+          // WS update (the driver's authoritative post-command state) is
+          // no longer suppressed.
+          if (window._pendingFields[printerId]) {
+            delete window._pendingFields[printerId].light_on;
+          }
         });
     }
 
