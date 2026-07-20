@@ -121,9 +121,10 @@ Confirmed on disk: `~/.printer-dashboard/` already exists predating K-088
   request is the promotion).
 
 ## Handoff notes
-Scope: docs fix (token cache + config.yaml mounts, both files) + copy
-real config.yaml into `~/.printer-dashboard/config.yaml` + restart the
-K-089 container with corrected mounts and real config. Dispatching
-research (confirm exact current doc text, check for any other place
-`config.yaml` path is assumed/hardcoded, e.g. `.gitignore`,
-`config.example.yaml` references) then implementer.
+Implementer dispatched by gentle-loris-hazel 2026-07-20T02:29Z, working in
+`.fleet/worktrees/gentle-loris-hazel` on a fresh branch off origin/main.
+Scope: doc changes (token cache + config.yaml mounts, both files) + copy
+real config.yaml to `~/.printer-dashboard/config.yaml` (backing up any
+existing one) + restart the K-089 container with corrected mounts. PR
+not to be opened until I review the operational steps. Awaiting
+completion.
