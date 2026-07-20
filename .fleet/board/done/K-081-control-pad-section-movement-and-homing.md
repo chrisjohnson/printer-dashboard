@@ -35,21 +35,21 @@ protocol reference (movement GCode shapes, safety gates) before starting.
    existing skip-object modal), X/Y do not.
 3. [x] Implementer (backend, stage 1): all files done as scoped. PR:
    https://github.com/chrisjohnson/printer-dashboard/pull/11
-4. [ ] Implementer (frontend, stage 2, after stage 1 lands): movement pad
-   UI in `internal/server/onboarding.go` (`renderCard`+`updateCard` kept
-   in sync — watch for the K-053-class drift bug), step-size selector
-   defaulting to smallest step, Home All button, Z-axis confirmation
-   modal mirroring the skip-object modal pattern, Playwright tests for
-   button-disable states across idle/printing/paused/error.
-5. [ ] Run full test suite (Go + Playwright), commit, push, open PR(s) —
-   may be 1 or 2 PRs depending on how stage 1/2 land relative to each
-   other, Implementer's call.
+4. [x] Implementer (frontend, stage 2): movement pad UI done as scoped —
+   jog pad, step selector (default 0.1mm), Home All, Z-confirm modal,
+   renderCard/updateCard kept in sync, Playwright tests. Same commit
+   sequence as stage 1.
+5. [x] Full test suite passes (Go + Playwright, 1 pre-existing unrelated
+   sandbox failure). I reviewed both diffs line-by-line given the safety
+   stakes, rebased for a clean PR, re-ran the full suite myself, pushed,
+   updated PR #11 to cover the complete feature (single PR, not two).
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: gentle-loris-hazel 2026-07-20T03:08Z — claiming, dispatching researcher first (safety-sensitive: physical printer movement) to review K-054 protocol notes, existing K-031 pattern, and safety gates before any implementation -->
+<!-- signal: gentle-loris-hazel 2026-07-20T04:35Z — done, PR #11 open (full feature, both stages), moved to done/ -->
 
 ## Working context
 - Bambu: `gcode_line` command, `G28\n` for home, `G91\nG1 X.. Y.. Z.. F..\nG90\n`
@@ -113,11 +113,27 @@ protocol reference (movement GCode shapes, safety gates) before starting.
   test/-race) verified myself before pushing. PR #11 opened (stage 1
   only — backend, no UI yet, so nothing is reachable/triggerable by a
   real user until stage 2 ships).
+- 2026-07-20 — gentle-loris-hazel: Stage 2 (frontend) reviewed with the
+  same care — read the full onboarding.go diff, confirmed the Z-confirm
+  modal's confirm-button rewiring uses `.onclick =` (replaces, not
+  `addEventListener`, so no double-fire risk across repeated opens),
+  confirmed `renderCard()`/`updateCard()` disable-state sync was actually
+  added (not just claimed) for the new buttons. Deliberately left the
+  currently-running dev container (from K-089/K-090, showing the human's
+  real printer data) on its pre-existing image rather than rebuild/
+  restart it to eyeball this in a live browser — the Playwright suite's
+  end-to-end coverage (button disable states, jog dispatch, Z-modal
+  confirm/cancel flow, all in a real headless browser) was judged
+  sufficient for a PR; visual QA can happen at human review/merge time
+  without disrupting their live dashboard. Full test suite verified
+  myself, PR #11 updated to cover the complete feature (single PR).
+  Closing as done — review/merge is outside this card's scope.
 
 ## Handoff notes
-Stage 1 (backend) PR #11 open, not yet merged. Stage 2 (frontend)
-Implementer dispatched 2026-07-20T04:10Z, continuing on the SAME branch
-(`worktree-gentle-loris-hazel-k081`) rather than a new one, since the
-frontend can't be meaningfully tested without the backend endpoints —
-will update PR #11 to reflect the complete feature once stage 2 lands,
-rather than stacking a second PR. Awaiting completion.
+PR #11 open against main, not yet merged — covers the complete K-081
+feature (backend + frontend, both stages). Recommend the human do a
+quick manual click-through once merged, given this is the app's first
+feature that sends real physical movement commands and automated tests
+can't fully substitute for eyes-on verification with real (or at least
+live) hardware. K-092 (backlog) tracks retrofitting the same backend
+gating pattern onto pause/resume/cancel/temp/light.
