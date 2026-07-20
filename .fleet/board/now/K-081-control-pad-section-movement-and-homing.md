@@ -115,8 +115,9 @@ protocol reference (movement GCode shapes, safety gates) before starting.
   real user until stage 2 ships).
 
 ## Handoff notes
-Stage 1 (backend) PR #11 open, not yet merged — establishes HomeAll/Jog
-across both printer backends plus real server-side safety gating (409 on
-non-idle, validated/clamped jog inputs). Proceeding to stage 2 (frontend)
-now on a new branch off the stage-1 branch tip, so the UI can actually
-call these endpoints.
+Stage 1 (backend) PR #11 open, not yet merged. Stage 2 (frontend)
+Implementer dispatched 2026-07-20T04:10Z, continuing on the SAME branch
+(`worktree-gentle-loris-hazel-k081`) rather than a new one, since the
+frontend can't be meaningfully tested without the backend endpoints —
+will update PR #11 to reflect the complete feature once stage 2 lands,
+rather than stacking a second PR. Awaiting completion.
