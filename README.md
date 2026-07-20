@@ -37,30 +37,52 @@ The app listens on `:8080` by default and reads its configuration from a `config
 file (no required environment variables — everything is configured via YAML). Mount your
 `config.yaml` into the container at `/app/config.yaml`.
 
+If you're working in one of this repo's fleet worktrees (`.fleet/worktrees/<pet-name>/`),
+multiple agents may be building/running containers at the same time, so the image name,
+container name, host port, and token-cache volume are all derived from the current
+worktree instead of being fixed — that way concurrent runs don't collide or clobber each
+other. `WORKTREE` is detected automatically by the commands below; in a normal,
+single-worker checkout it stays empty and the image/container name falls back to plain
+`printer-dashboard` exactly as before (the host port is now always assigned randomly
+and looked up via `docker port`, regardless of worktree).
+
 ```bash
 # Copy and edit the configuration (same as above)
 cp config.example.yaml config.yaml
 vim config.yaml
 
+# Automatically set when running under a fleet worktree (.fleet/worktrees/<pet-name>/);
+# stays empty for a normal single-worker checkout
+case "$(pwd)" in
+  */.fleet/worktrees/*) WORKTREE=$(basename "$(pwd)") ;;
+  *) WORKTREE="" ;;
+esac
+
 # Build the image
-docker build -t printer-dashboard .
+NAME="printer-dashboard${WORKTREE:+-$WORKTREE}"
+docker build -t "$NAME" .
 
 # Remove any leftover container from a previous run, then start a new one
-docker rm -f printer-dashboard || true
-docker run -d --name printer-dashboard \
-  -p 8080:8080 \
-  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+docker rm -f "$NAME" || true
+docker run -d --name "$NAME" \
+  -p 0:8080 \
+  -v "${HOME}/.printer-dashboard-${WORKTREE:-default}:/home/app/.printer-dashboard:rw" \
   -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
-  printer-dashboard
+  "$NAME"
+
+# The host port is assigned randomly (to avoid colliding with other containers) —
+# look it up here:
+docker port "$NAME" 8080
 ```
 
-Then open http://localhost:8080 in your browser.
+Then open http://localhost:<port> in your browser, using the port from `docker port`
+above.
 
 Notes:
-- The Bambu Lab token cache (`~/.printer-dashboard/`) lives inside the container's
-  `$HOME` by default and will not persist across `docker rm`. Mount a volume at
-  `/home/app/.printer-dashboard` if you want the Bambu token to survive container
-  recreation (avoids re-authenticating after every restart).
+- The Bambu Lab token cache (`~/.printer-dashboard-${WORKTREE:-default}/`) lives inside
+  the container's `$HOME` by default and will not persist across `docker rm`. Mount a
+  volume at `/home/app/.printer-dashboard` if you want the Bambu token to survive
+  container recreation (avoids re-authenticating after every restart).
 - `-v "$(pwd)/config.yaml:/app/config.yaml:ro"` mounts the config read-only; drop `:ro`
   if you rely on the app's config `Save()` behavior and want it to persist back to disk.
 
