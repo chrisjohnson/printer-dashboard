@@ -20,6 +20,17 @@ import (
 // block for the full policy and rationale.
 const hmsHealthyStreakThreshold = 2
 
+// completeIdleStreakThreshold is the number of consecutive "idle" reports
+// required before handleReport allows an "idle" gcode_state to overwrite a
+// latched State="complete". Bambu firmware briefly reports SUCCESS right
+// after a print finishes, then settles to IDLE on the very next MQTT push —
+// without this latch, State flickers complete->idle within 1-2 reports and a
+// connected dashboard client sees COMPLETE flash and vanish. See
+// handleReport's State block for the full policy. Any non-idle, non-complete
+// state (e.g. a new print starting) still overrides "complete" immediately;
+// only the complete->idle edge is latched.
+const completeIdleStreakThreshold = 2
+
 // Client implements the printers.Printer interface for Bambu Lab printers
 // via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
 type Client struct {
@@ -43,6 +54,14 @@ type Client struct {
 	// sending "hms" once a condition resolves, instead of sending an
 	// explicit "hms: []". See handleReport's HMS block for the full policy.
 	hmsHealthyStreak int
+
+	// completeIdleStreak counts consecutive "idle"-mapped reports seen while
+	// State is latched to "complete". Used by handleReport to require
+	// completeIdleStreakThreshold consecutive idle reports before letting
+	// "idle" overwrite a "complete" state, guarding against the brief
+	// SUCCESS->IDLE flicker Bambu firmware exhibits right after a print
+	// finishes. See handleReport's State block for the full policy.
+	completeIdleStreak int
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -297,8 +316,28 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// Map states. Only update when gcode_state is explicitly provided;
 	// heartbeat-style reports may omit it, and we must not clobber the
 	// last-known state (e.g. "printing") with "idle" in that case.
+	//
+	// complete->idle latch: Bambu firmware reports SUCCESS (-> "complete")
+	// briefly right after a print finishes, then settles to IDLE (-> "idle")
+	// on the very next MQTT push. Applying that "idle" immediately would
+	// clobber "complete" within 1-2 reports, causing a connected dashboard
+	// client to see COMPLETE flash and vanish. Require
+	// completeIdleStreakThreshold consecutive idle reports while latched to
+	// "complete" before allowing the overwrite. Any other newly-reported
+	// state (e.g. "printing" from a new print starting) still overrides
+	// "complete" immediately — only the complete->idle edge is latched.
 	if p.GcodeState != "" {
-		s.State = mapState(p.GcodeState)
+		newState := mapState(p.GcodeState)
+		if s.State == "complete" && newState == "idle" {
+			c.completeIdleStreak++
+			if c.completeIdleStreak >= completeIdleStreakThreshold {
+				s.State = newState
+				c.completeIdleStreak = 0
+			}
+		} else {
+			s.State = newState
+			c.completeIdleStreak = 0
+		}
 	}
 
 	// CurrentFile: set from gcode_file (preferred) or subtask_name (P1S
