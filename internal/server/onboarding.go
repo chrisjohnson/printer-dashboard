@@ -988,6 +988,27 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return merged;
     }
 
+    // Set an input.target's value only when the user isn't editing it, so
+    // a live WS update never clobbers what they're typing. Hoisted to
+    // top-level scope (rather than nested inside updateCard) so it's a
+    // plain global like the other helpers here, reachable from tests.
+    function setTargetInput(row, targetVal) {
+      const inp = row.querySelector('.target');
+      if (inp && document.activeElement !== inp) inp.value = targetVal;
+    }
+
+    // Set a .val span's text only when it actually changed and the user
+    // doesn't have it selected, so a live WS update never (a) fires a
+    // no-op write on every poll tick or (b) clobbers an in-progress text
+    // selection (e.g. the user copying the value) — same intent as
+    // setTargetInput above, adapted for a plain span instead of an input.
+    function setValText(el, newText) {
+      if (!el || el.textContent === newText) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && el.contains(sel.anchorNode)) return;
+      el.textContent = newText;
+    }
+
     function updateCard(p, rebuildCameras) {
       const card = document.getElementById('printer-' + p.id);
       if (!card) { loadPrinters(); return; }
@@ -1061,24 +1082,15 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '--';
         const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
 
-        // Set an input.target's value only when the user isn't editing it, so
-        // a live WS update never clobbers what they're typing.
-        function setTargetInput(row, targetVal) {
-          const inp = row.querySelector('.target');
-          if (inp && document.activeElement !== inp) inp.value = targetVal;
-        }
-
         const rows = temps.querySelectorAll('.temp-row');
         // Row 0: bed
         if (rows[0]) {
-          const val = rows[0].querySelector('.val');
-          if (val) val.textContent = bed + '\u00b0C';
+          setValText(rows[0].querySelector('.val'), bed + '\u00b0C');
           setTargetInput(rows[0], bedT);
         }
         // Row 1: nozzle 1
         if (rows[1]) {
-          const val = rows[1].querySelector('.val');
-          if (val) val.textContent = nozzle + '\u00b0C';
+          setValText(rows[1].querySelector('.val'), nozzle + '\u00b0C');
           setTargetInput(rows[1], nozzleT);
         }
         // Rows 2+: extra nozzles (skip index 0)
@@ -1088,8 +1100,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           if (rows[extraIdx]) {
             const actualStr = nt.actual !== null ? nt.actual.toFixed(1) : '?';
             const targetStr = nt.target !== null ? nt.target.toFixed(1) : '?';
-            const val = rows[extraIdx].querySelector('.val');
-            if (val) val.textContent = actualStr + '\u00b0C';
+            setValText(rows[extraIdx].querySelector('.val'), actualStr + '\u00b0C');
             setTargetInput(rows[extraIdx], targetStr);
           }
           extraIdx++;
@@ -1102,8 +1113,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         // No-op gracefully when the row isn't present.
         const chamberRow = temps.querySelector('.temp-row[data-chamber]');
         if (chamberRow) {
-          const val = chamberRow.querySelector('.val');
-          if (val) val.textContent = chamberVal + '\u00b0C';
+          setValText(chamberRow.querySelector('.val'), chamberVal + '\u00b0C');
           setTargetInput(chamberRow, p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--');
         }
       }
@@ -1207,11 +1217,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (cardPriority === sibPriority && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
       }
 
+      // Skip the DOM move entirely if the card is already in the correct
+      // position. insertBefore/appendChild detach-and-reinsert the node even
+      // when the resulting position is unchanged, which collapses any active
+      // Selection anchored inside it (e.g. a user selecting text in a .val
+      // span) — same intent as setValText/setTargetInput above, applied to
+      // card position instead of a value.
       if (insertBefore) {
-        container.insertBefore(card, insertBefore);
+        if (card.nextElementSibling !== insertBefore) {
+          container.insertBefore(card, insertBefore);
+        }
       } else {
         // Move to end if no earlier sibling fits
-        container.appendChild(card);
+        if (container.lastElementChild !== card) {
+          container.appendChild(card);
+        }
       }
     }
 
