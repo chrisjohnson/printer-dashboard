@@ -337,4 +337,95 @@ test.describe('Dashboard', () => {
       await expect.poll(() => homeCalled).toBe(true);
     });
   });
+
+  // K-069: a live printer_update must never clobber a user's in-progress text
+  // selection inside a .val span (e.g. selecting a temperature to copy it),
+  // and should skip the DOM write entirely when the value hasn't actually
+  // changed (the common case — updates arrive every 1-3s regardless of
+  // whether the temp moved). Regression test for setValText(), the helper
+  // used at all four .val write sites in updateCard()'s temperature block.
+  //
+  // This exercises setValText() directly (a plain global, like the other
+  // onboarding.go helpers — see mergeWithCache() usage in the K-080 test
+  // above) against a real .val span and the real Selection API, rather than
+  // going through the full updateCard()/mergeWithCache() pipeline: updateCard
+  // unconditionally calls reorderCard() at the end, which re-inserts the card
+  // into #printer-list via insertBefore()/appendChild() on *every* call —
+  // even a "no-op" reorder detaches and reattaches the node, which collapses
+  // any live selection inside it regardless of setValText()'s own guard.
+  // That reorder behavior is pre-existing and orthogonal to this fix, so
+  // testing setValText() in isolation avoids a flaky/misleading test.
+  test('setValText skips unchanged writes and does not clobber an active selection', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const bedVal = page.locator('#printer-u1 .temp-row .val').first();
+    await expect(bedVal).toBeAttached();
+    const originalText = await bedVal.textContent();
+    expect(originalText).toBeTruthy();
+
+    // Programmatically select all the text inside the .val span, mirroring
+    // a user selecting the value to copy it.
+    await page.evaluate(() => {
+      const el = document.querySelector('#printer-u1 .temp-row .val')!;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+
+    const isSelected = async () =>
+      page.evaluate(() => {
+        const el = document.querySelector('#printer-u1 .temp-row .val');
+        const sel = window.getSelection();
+        return (
+          !!sel &&
+          !sel.isCollapsed &&
+          !!el &&
+          el.contains(sel.anchorNode) &&
+          sel.toString().length > 0
+        );
+      });
+    expect(await isSelected()).toBe(true);
+
+    // 1. Call setValText() with the SAME text — should no-op on the
+    // unchanged-text check before it even looks at the selection, but
+    // either guard suffices here.
+    await page.evaluate((text) => {
+      const w = window as any;
+      const el = document.querySelector('#printer-u1 .temp-row .val');
+      w.setValText(el, text);
+    }, originalText);
+
+    expect(await bedVal.textContent()).toBe(originalText);
+    expect(await isSelected()).toBe(true);
+
+    // 2. Call setValText() with DIFFERENT text while the selection is still
+    // active. Per the card's spec, setValText() must not clobber an active
+    // selection even when the value genuinely changed — the display write
+    // is deferred until the user clears their selection, same tradeoff
+    // setTargetInput() already makes for a focused input.
+    const differentText = '999.9°C';
+    await page.evaluate((text) => {
+      const w = window as any;
+      const el = document.querySelector('#printer-u1 .temp-row .val');
+      w.setValText(el, text);
+    }, differentText);
+
+    expect(await bedVal.textContent()).toBe(originalText);
+    expect(await isSelected()).toBe(true);
+
+    // 3. Clear the selection and call setValText() with the same changed
+    // text again — the guard must only defer the write, not permanently
+    // suppress it.
+    await page.evaluate(() => window.getSelection()!.removeAllRanges());
+    await page.evaluate((text) => {
+      const w = window as any;
+      const el = document.querySelector('#printer-u1 .temp-row .val');
+      w.setValText(el, text);
+    }, differentText);
+
+    await expect(bedVal).toHaveText(differentText);
+  });
 });
