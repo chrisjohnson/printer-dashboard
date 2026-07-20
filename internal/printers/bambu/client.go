@@ -443,11 +443,16 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 
 // --- Commands ---
 
-// publishCommand publishes a command JSON payload to the printer's request topic.
-func (c *Client) publishCommand(ctx context.Context, payload []byte) error {
+// publishCommand publishes a command JSON payload to the printer's request
+// topic. cmdName is a short, human-readable identifier for the command being
+// sent (e.g. "pause", "set_bed_temp") used only for audit logging — it must
+// never contain the payload or any secrets, just a name.
+func (c *Client) publishCommand(ctx context.Context, cmdName string, payload []byte) error {
 	if c.mqttClient == nil || !c.mqttClient.IsConnected() {
 		return fmt.Errorf("bambu %s: not connected to cloud MQTT", c.cfg.ID)
 	}
+
+	log.Printf("bambu %s: sending command %s", c.cfg.ID, cmdName)
 
 	topic := fmt.Sprintf("device/%s/request", c.cfg.Serial)
 	token := c.mqttClient.Publish(topic, 0, false, payload)
@@ -459,44 +464,44 @@ func (c *Client) publishCommand(ctx context.Context, payload []byte) error {
 
 // Pause pauses the current print job.
 func (c *Client) Pause(ctx context.Context) error {
-	return c.publishCommand(ctx, pauseCommand())
+	return c.publishCommand(ctx, "pause", pauseCommand())
 }
 
 // Resume resumes a paused print job.
 func (c *Client) Resume(ctx context.Context) error {
-	return c.publishCommand(ctx, resumeCommand())
+	return c.publishCommand(ctx, "resume", resumeCommand())
 }
 
 // Cancel stops and cancels the current print job.
 func (c *Client) Cancel(ctx context.Context) error {
-	return c.publishCommand(ctx, stopCommand())
+	return c.publishCommand(ctx, "stop", stopCommand())
 }
 
 // SkipObject attempts to skip the current object.
 // Note: For Bambu, this uses the project_file command with skip_object param.
 // The skip_objects command with obj_list may also work on newer firmware.
 func (c *Client) SkipObject(ctx context.Context) error {
-	return c.publishCommand(ctx, skipObjectCommand())
+	return c.publishCommand(ctx, "skip_object", skipObjectCommand())
 }
 
 // SetBedTemp sets the bed heater target temperature via G-code M140.
 func (c *Client) SetBedTemp(ctx context.Context, temp int) error {
-	return c.publishCommand(ctx, setBedTempCommand(temp))
+	return c.publishCommand(ctx, "set_bed_temp", setBedTempCommand(temp))
 }
 
 // SetNozzleTemp sets the primary nozzle target temperature via G-code M104.
 func (c *Client) SetNozzleTemp(ctx context.Context, temp int) error {
-	return c.publishCommand(ctx, setNozzleTempCommand(temp))
+	return c.publishCommand(ctx, "set_nozzle_temp", setNozzleTempCommand(temp))
 }
 
 // SetChamberTemp sets the chamber heater target temperature via set_ctt.
 func (c *Client) SetChamberTemp(ctx context.Context, temp int) error {
-	return c.publishCommand(ctx, setCTTCommand(temp))
+	return c.publishCommand(ctx, "set_ctt", setCTTCommand(temp))
 }
 
 // SetLight turns the chamber light on or off.
 func (c *Client) SetLight(ctx context.Context, on bool) error {
-	return c.publishCommand(ctx, setLightCommand(on))
+	return c.publishCommand(ctx, "ledctrl", setLightCommand(on))
 }
 
 // Ensure Client satisfies the Printer interface.

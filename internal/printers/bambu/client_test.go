@@ -1,8 +1,10 @@
 package bambu
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -2304,7 +2306,7 @@ func TestPublishCommand_NotConnected_NilClient(t *testing.T) {
 	// Ensure mqttClient is nil.
 	c.mqttClient = nil
 
-	err := c.publishCommand(context.Background(), []byte("test"))
+	err := c.publishCommand(context.Background(), "test-cmd", []byte("test"))
 	if err == nil {
 		t.Fatal("expected error for nil MQTT client")
 	}
@@ -2317,7 +2319,7 @@ func TestPublishCommand_NotConnected_Disconnected(t *testing.T) {
 	c := newTestPrinterClient(nil)
 	c.mqttClient = &mockMQTTClient{isConnected: false}
 
-	err := c.publishCommand(context.Background(), []byte("test"))
+	err := c.publishCommand(context.Background(), "test-cmd", []byte("test"))
 	if err == nil {
 		t.Fatal("expected error for disconnected client")
 	}
@@ -2335,7 +2337,7 @@ func TestPublishCommand_ConnectedSuccess(t *testing.T) {
 		},
 	}
 
-	err := c.publishCommand(context.Background(), []byte("test"))
+	err := c.publishCommand(context.Background(), "test-cmd", []byte("test"))
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -2351,7 +2353,7 @@ func TestPublishCommand_Timeout(t *testing.T) {
 		},
 	}
 
-	err := c.publishCommand(context.Background(), []byte("test"))
+	err := c.publishCommand(context.Background(), "test-cmd", []byte("test"))
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -2372,12 +2374,45 @@ func TestPublishCommand_Error(t *testing.T) {
 		},
 	}
 
-	err := c.publishCommand(context.Background(), []byte("test"))
+	err := c.publishCommand(context.Background(), "test-cmd", []byte("test"))
 	if err == nil {
 		t.Fatal("expected error from token")
 	}
 	if err.Error() != "broker unavailable" {
 		t.Errorf("error = %q; want %q", err.Error(), "broker unavailable")
+	}
+}
+
+func TestPublishCommand_LogsAuditLine(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	c.mqttClient = &mockMQTTClient{
+		isConnected: true,
+		publishFn: func(_ string, _ byte, _ bool, _ interface{}) mqtt.Token {
+			return &mockMQTTToken{doneCh: closedCh()}
+		},
+	}
+
+	var buf bytes.Buffer
+	origOutput := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(&buf)
+	defer func() {
+		log.SetOutput(origOutput)
+		log.SetFlags(origFlags)
+	}()
+
+	err := c.publishCommand(context.Background(), "pause", pauseCommand())
+	if err != nil {
+		t.Fatalf("publishCommand() returned error: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "bambu test-id: sending command pause") {
+		t.Errorf("log output = %q; want it to contain %q", got, "bambu test-id: sending command pause")
+	}
+	// Privacy: the payload/secrets must never be logged, only the command name.
+	if strings.Contains(got, string(pauseCommand())) {
+		t.Errorf("log output = %q; must not contain the raw command payload", got)
 	}
 }
 
