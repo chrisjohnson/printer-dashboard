@@ -108,7 +108,8 @@ protocol reference (movement GCode shapes, safety gates) before starting.
 ## Handoff notes
 Scope finalized with human input. Filed K-092 (backlog) for the backend-
 gating retrofit on existing commands — separate scope, not blocking this
-card. Proceeding with 2-stage implementation: backend first (interface,
-Bambu/Snapmaker commands, server handlers with gating, Go tests), then
-frontend (movement pad UI, Z-confirm modal, Playwright tests) once
-backend lands and is verified.
+card. Stage 1 (backend) Implementer dispatched 2026-07-20T03:48Z, working
+in `.fleet/worktrees/gentle-loris-hazel` on fresh branch
+`worktree-gentle-loris-hazel-k081` (off origin/main). Stage 2 (frontend)
+to follow once stage 1 lands and is verified. Awaiting stage 1
+completion.
