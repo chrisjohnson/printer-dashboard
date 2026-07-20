@@ -36,5 +36,6 @@ Clear CurrentFile on idle. Currently CurrentFile persists after a job completes.
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Research dispatched by gentle-loris-hazel 2026-07-20T02:36Z — checking
+current CurrentFile clearing logic (Bambu + Snapmaker), what K-003 already
+fixed, and whether K-004's hysteresis change interacts with this.
