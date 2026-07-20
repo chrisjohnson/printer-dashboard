@@ -158,3 +158,75 @@ func TestSetLightCommand(t *testing.T) {
 		}
 	})
 }
+
+func TestHomeAllCommand(t *testing.T) {
+	got := homeAllCommand()
+	var gotMap map[string]any
+	if err := json.Unmarshal(got, &gotMap); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	printSection, ok := gotMap["print"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected 'print' key: %v", gotMap)
+	}
+	if printSection["command"] != "gcode_line" {
+		t.Errorf("command = %v; want gcode_line", printSection["command"])
+	}
+	if printSection["param"] != "G28\n" {
+		t.Errorf("param = %v; want \"G28\\n\"", printSection["param"])
+	}
+}
+
+func TestJogCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		x, y, z   float64
+		speed     int
+		wantParam string
+	}{
+		{
+			name:      "x and y move",
+			x:         10,
+			y:         -5,
+			z:         0,
+			speed:     1500,
+			wantParam: "G91\nG1 X10 Y-5 F1500\nG90\n",
+		},
+		{
+			name:      "z only move",
+			x:         0,
+			y:         0,
+			z:         2.5,
+			speed:     600,
+			wantParam: "G91\nG1 Z2.5 F600\nG90\n",
+		},
+		{
+			name:      "all three axes",
+			x:         1,
+			y:         2,
+			z:         3,
+			speed:     3000,
+			wantParam: "G91\nG1 X1 Y2 Z3 F3000\nG90\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := jogCommand(tt.x, tt.y, tt.z, tt.speed)
+			var gotMap map[string]any
+			if err := json.Unmarshal(got, &gotMap); err != nil {
+				t.Fatalf("invalid JSON: %v", err)
+			}
+			printSection, ok := gotMap["print"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected 'print' key: %v", gotMap)
+			}
+			if printSection["command"] != "gcode_line" {
+				t.Errorf("command = %v; want gcode_line", printSection["command"])
+			}
+			if printSection["param"] != tt.wantParam {
+				t.Errorf("param = %q; want %q", printSection["param"], tt.wantParam)
+			}
+		})
+	}
+}

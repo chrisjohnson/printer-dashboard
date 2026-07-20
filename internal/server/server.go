@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -518,6 +519,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/nozzle-temp", s.handleSetNozzleTemp)
 	s.mux.HandleFunc("POST /api/printers/{id}/chamber-temp", s.handleSetChamberTemp)
 	s.mux.HandleFunc("POST /api/printers/{id}/light", s.handleSetLight)
+	s.mux.HandleFunc("POST /api/printers/{id}/home", s.handleHomeAll)
+	s.mux.HandleFunc("POST /api/printers/{id}/jog", s.handleJog)
 	s.mux.HandleFunc("POST /api/printers/{id}/hms/dismiss", s.handleDismissHMS)
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
@@ -903,6 +906,161 @@ func (s *Server) handleSetLight(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := p.SetLight(r.Context(), req.On); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// --- Movement / Homing Handlers ---
+//
+// These are the first command handlers in this app with real backend-side
+// safety gating (rejecting the request outright when the printer isn't
+// idle/online), rather than relying solely on the frontend disabling the
+// button — see requireIdleAndOnline's doc comment. This matters here because,
+// unlike pause/resume/temp/light, jog/home move real hardware and a stray
+// request while a print is running risks crashing the toolhead into the
+// print. K-092 (backlog) tracks retrofitting the same gating onto the
+// existing (currently ungated) command handlers.
+
+const (
+	// jogMaxDeltaMM is the maximum absolute distance (mm) allowed on any
+	// single axis in one jog request. 100mm is a conservative cap chosen to
+	// be safely within the smallest build volume across supported printer
+	// models, regardless of which printer the request targets — it's a
+	// blunt, model-agnostic safety limit, not a precise per-printer bound.
+	jogMaxDeltaMM = 100.0
+
+	// jogDefaultSpeedMMPerMin is used when the request omits "speed".
+	jogDefaultSpeedMMPerMin = 1500
+
+	// jogMaxSpeedMMPerMin is the maximum feedrate (mm/min) accepted for a jog
+	// request.
+	jogMaxSpeedMMPerMin = 6000
+)
+
+// requireIdleAndOnline returns an error if the printer is not in a safe
+// state to accept a physical movement/homing command: it must be online and
+// its State must be exactly "idle". Every other known state (printing,
+// paused, error, complete, or anything unrecognized) is rejected — this
+// errs on the side of the strictest interpretation given the physical risk
+// of an unexpected toolhead move, rather than trying to enumerate every
+// state that's "probably fine". Callers should respond with HTTP 409
+// Conflict when this returns non-nil.
+//
+// This is the first real backend-side state gate in this app (see the
+// "Movement / Homing Handlers" section comment above) — intended as the
+// precedent K-092 will extend to other command handlers.
+func requireIdleAndOnline(status printers.PrinterStatus) error {
+	if !status.Online {
+		return fmt.Errorf("printer is offline")
+	}
+	if status.State != "idle" {
+		return fmt.Errorf("printer is not idle (state: %q)", status.State)
+	}
+	return nil
+}
+
+// handleHomeAll homes all axes (G28). Rejects with 409 if the printer isn't
+// idle and online (see requireIdleAndOnline).
+func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	if err := requireIdleAndOnline(p.Status()); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err := p.HomeAll(r.Context()); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// handleJog moves the toolhead by a relative delta on each axis at an
+// optional feedrate. Expects JSON body: {"x": 10, "y": 0, "z": 0, "speed": 1500}
+// ("speed" is optional; defaults to jogDefaultSpeedMMPerMin).
+//
+// Rejects with 409 if the printer isn't idle and online (see
+// requireIdleAndOnline). Rejects with 400 for a malformed body, non-finite
+// (NaN/Inf) axis values, any axis delta whose magnitude exceeds
+// jogMaxDeltaMM, or a speed outside (0, jogMaxSpeedMMPerMin] — clamping is
+// deliberately NOT applied silently for out-of-range values: a rejected
+// request tells the user their input was too large, whereas silent
+// truncation could make them think a smaller move happened than they
+// intended.
+//
+// The NaN/Inf check is defensive: Go's JSON decoder already rejects both the
+// bare NaN/Infinity tokens and any numeric literal that would overflow
+// float64 at parse time (before this handler ever sees the value), so in
+// practice a non-finite value can't reach this check via a normal HTTP
+// request today. It's kept anyway as a guard against any future change to
+// how the request is decoded (e.g. a different decoder, or constructing the
+// float from some other source) silently letting one through.
+//
+// A request with x=y=z=0 is accepted as a harmless no-op (e.g. a UI that
+// always sends all three fields but the user only touched "speed" or
+// nothing changed) rather than rejected — there's no safety reason to bounce
+// it, and rejecting an effectively-harmless request purely because it does
+// nothing would just be user-hostile.
+func (s *Server) handleJog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
+		return
+	}
+	if err := requireIdleAndOnline(p.Status()); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	var req struct {
+		X     float64 `json:"x"`
+		Y     float64 `json:"y"`
+		Z     float64 `json:"z"`
+		Speed *int    `json:"speed"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "invalid request body")
+		return
+	}
+
+	// Ordered (not a map) so validation failures are reported deterministically
+	// when multiple axes are simultaneously invalid.
+	axes := []struct {
+		name string
+		v    float64
+	}{
+		{"x", req.X},
+		{"y", req.Y},
+		{"z", req.Z},
+	}
+	for _, axis := range axes {
+		if math.IsNaN(axis.v) || math.IsInf(axis.v, 0) {
+			writeError(w, 400, fmt.Sprintf("%s must be a finite number", axis.name))
+			return
+		}
+		if math.Abs(axis.v) > jogMaxDeltaMM {
+			writeError(w, 400, fmt.Sprintf("%s exceeds max jog distance of %gmm", axis.name, jogMaxDeltaMM))
+			return
+		}
+	}
+
+	speed := jogDefaultSpeedMMPerMin
+	if req.Speed != nil {
+		speed = *req.Speed
+	}
+	if speed <= 0 || speed > jogMaxSpeedMMPerMin {
+		writeError(w, 400, fmt.Sprintf("speed must be > 0 and <= %d mm/min", jogMaxSpeedMMPerMin))
+		return
+	}
+
+	if err := p.Jog(r.Context(), req.X, req.Y, req.Z, speed); err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}

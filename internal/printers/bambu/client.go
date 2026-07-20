@@ -534,6 +534,17 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		s.TotalLayers = *p.TotalLayerNum
 	}
 
+	// HomeFlag: Bambu reports this as a bitmask, per the OpenBambuAPI/pybambu
+	// convention — bit 0 (value 1, "AXIS_HOMED") indicates the X/Y/Z axes are
+	// homed; other bits encode unrelated state (e.g. auto-leveling, filament
+	// presence) that we don't need here. Treat bit 0 as the sole "homed"
+	// signal: set when it's on, clear when it's off. home_flag is always
+	// present (not a pointer) on Bambu reports carrying a "print" section, so
+	// this updates on every report rather than being gated on presence like
+	// the pointer fields above.
+	homed := p.HomeFlag&0x1 != 0
+	s.Homed = &homed
+
 	// Check for error state. HMS errors (severity fatal/serious) trip this
 	// independently of print_error/gcode_state — this is the channel a
 	// cover-off event on a P1S (no door sensor) actually surfaces through,
@@ -633,6 +644,17 @@ func (c *Client) SetChamberTemp(ctx context.Context, temp int) error {
 // SetLight turns the chamber light on or off.
 func (c *Client) SetLight(ctx context.Context, on bool) error {
 	return c.publishCommand(ctx, "ledctrl", setLightCommand(on))
+}
+
+// HomeAll homes all axes via G-code G28.
+func (c *Client) HomeAll(ctx context.Context) error {
+	return c.publishCommand(ctx, "home_all", homeAllCommand())
+}
+
+// Jog moves the toolhead by the given relative deltas (mm) at the given
+// feedrate (mm/min) via G-code.
+func (c *Client) Jog(ctx context.Context, x, y, z float64, speedMMPerMin int) error {
+	return c.publishCommand(ctx, "jog", jogCommand(x, y, z, speedMMPerMin))
 }
 
 // Ensure Client satisfies the Printer interface.

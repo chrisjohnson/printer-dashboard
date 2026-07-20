@@ -43,6 +43,8 @@ type MockPrinter struct {
 	setNozzleTempErr  error
 	setChamberTempErr error
 	setLightErr       error
+	homeAllErr        error
+	jogErr            error
 
 	PauseCalled          bool
 	ResumeCalled         bool
@@ -53,6 +55,12 @@ type MockPrinter struct {
 	SetChamberTempCalled bool
 	SetLightCalled       bool
 	LastLightOn          *bool
+	HomeAllCalled        bool
+	JogCalled            bool
+	LastJogX             float64
+	LastJogY             float64
+	LastJogZ             float64
+	LastJogSpeed         int
 }
 
 func (m *MockPrinter) ID() string { return m.id }
@@ -108,6 +116,20 @@ func (m *MockPrinter) SetLight(_ context.Context, on bool) error {
 	m.SetLightCalled = true
 	m.LastLightOn = &on
 	return m.setLightErr
+}
+
+func (m *MockPrinter) HomeAll(_ context.Context) error {
+	m.HomeAllCalled = true
+	return m.homeAllErr
+}
+
+func (m *MockPrinter) Jog(_ context.Context, x, y, z float64, speedMMPerMin int) error {
+	m.JogCalled = true
+	m.LastJogX = x
+	m.LastJogY = y
+	m.LastJogZ = z
+	m.LastJogSpeed = speedMMPerMin
+	return m.jogErr
 }
 
 // ---------------------------------------------------------------------------
@@ -1743,6 +1765,24 @@ func mustPostJSON(t *testing.T, baseURL, path string, body any) *http.Response {
 	return resp
 }
 
+// mustPostRaw is a helper that POSTs a raw string body to a URL and returns
+// the response. Used for cases mustPostJSON can't express, e.g. NaN/Infinity
+// literals — Go's encoding/json refuses to marshal (encode) those from a Go
+// value, so a handwritten body is needed to send them over the wire at all.
+func mustPostRaw(t *testing.T, baseURL, path, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, baseURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("creating POST request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("executing POST %s: %v", path, err)
+	}
+	return resp
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/printers/{id}/bed-temp
 // ---------------------------------------------------------------------------
@@ -1947,6 +1987,431 @@ func TestHandleSetLight(t *testing.T) {
 		decodeBody(t, resp, &body)
 		if body["error"] != "MQTT disconnected" {
 			t.Errorf(`expected error "MQTT disconnected", got %q`, body["error"])
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/home
+// ---------------------------------------------------------------------------
+
+func TestHandleHomeAll(t *testing.T) {
+	t.Run("idle and online succeeds", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "idle", Online: true},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if !p.HomeAllCalled {
+			t.Error("expected HomeAllCalled to be true")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/nonexistent/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("409 when printing", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "printing", Online: true},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+		if p.HomeAllCalled {
+			t.Error("expected HomeAllCalled to remain false")
+		}
+	})
+
+	t.Run("409 when paused", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "paused", Online: true},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("409 when error state", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "error", Online: true},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("409 when offline", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "idle", Online: false},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+		if p.HomeAllCalled {
+			t.Error("expected HomeAllCalled to remain false")
+		}
+	})
+
+	t.Run("error from printer", func(t *testing.T) {
+		p := &MockPrinter{
+			id:         "printer-1",
+			name:       "My Printer",
+			stat:       printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "idle", Online: true},
+			homeAllErr: errors.New("not connected"),
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", resp.StatusCode)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/jog
+// ---------------------------------------------------------------------------
+
+func TestHandleJog(t *testing.T) {
+	idleOnline := printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "idle", Online: true}
+
+	t.Run("valid request succeeds", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 10.0, "y": -5.0, "z": 0.0, "speed": 2000})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if !p.JogCalled {
+			t.Error("expected JogCalled to be true")
+		}
+		if p.LastJogX != 10.0 || p.LastJogY != -5.0 || p.LastJogZ != 0.0 {
+			t.Errorf("unexpected jog deltas: x=%v y=%v z=%v", p.LastJogX, p.LastJogY, p.LastJogZ)
+		}
+		if p.LastJogSpeed != 2000 {
+			t.Errorf("expected speed 2000, got %d", p.LastJogSpeed)
+		}
+	})
+
+	t.Run("omitted speed defaults", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0, "y": 0.0, "z": 0.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if p.LastJogSpeed != jogDefaultSpeedMMPerMin {
+			t.Errorf("expected default speed %d, got %d", jogDefaultSpeedMMPerMin, p.LastJogSpeed)
+		}
+	})
+
+	t.Run("all-zero move is accepted as no-op", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 0.0, "y": 0.0, "z": 0.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200, got %d", resp.StatusCode)
+		}
+		if !p.JogCalled {
+			t.Error("expected JogCalled to be true")
+		}
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		s := newTestServer(nil)
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/nonexistent/jog", map[string]any{"x": 1.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("409 when printing", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "printing", Online: true},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+		if p.JogCalled {
+			t.Error("expected JogCalled to remain false")
+		}
+	})
+
+	t.Run("409 when paused", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "paused", Online: true},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("409 when offline", func(t *testing.T) {
+		p := &MockPrinter{
+			id:   "printer-1",
+			name: "My Printer",
+			stat: printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "idle", Online: false},
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusConflict {
+			t.Errorf("expected 409, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for out-of-range x", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 150.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+		if p.JogCalled {
+			t.Error("expected JogCalled to remain false")
+		}
+	})
+
+	t.Run("400 for out-of-range y", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"y": -101.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for out-of-range z", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"z": 1000.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	// NaN/Infinity literals aren't valid JSON tokens, so Go's decoder rejects
+	// them at parse time (before ever reaching the handler's
+	// math.IsNaN/math.IsInf check) — these two cases exercise that request
+	// body is still correctly bounced with 400, exactly like any other
+	// malformed body. A numeric literal large enough to overflow float64 is
+	// also rejected by the decoder itself (json: cannot unmarshal number...)
+	// rather than silently becoming +Inf, so there is no way to reach the
+	// handler's NaN/Inf check via a real HTTP request today — it exists as a
+	// defensive belt-and-suspenders check per the card's instructions, not
+	// because it's currently reachable.
+	t.Run("400 for NaN literal (rejected at JSON parse)", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostRaw(t, ts.URL, "/api/printers/printer-1/jog", `{"x": NaN, "y": 0, "z": 0}`)
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for Infinity literal (rejected at JSON parse)", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostRaw(t, ts.URL, "/api/printers/printer-1/jog", `{"x": Infinity, "y": 0, "z": 0}`)
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for zero speed", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0, "speed": 0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for negative speed", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0, "speed": -100})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for excessive speed", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0, "speed": 7000})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 for invalid body", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/jog")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("error from printer", func(t *testing.T) {
+		p := &MockPrinter{id: "printer-1", name: "My Printer", stat: idleOnline, jogErr: errors.New("not connected")}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPostJSON(t, ts.URL, "/api/printers/printer-1/jog", map[string]any{"x": 1.0})
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", resp.StatusCode)
 		}
 	})
 }
