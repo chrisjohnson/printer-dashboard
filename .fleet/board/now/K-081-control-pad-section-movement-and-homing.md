@@ -39,5 +39,8 @@ protocol reference (movement GCode shapes, safety gates) before starting.
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Research dispatched by gentle-loris-hazel 2026-07-20T03:08Z — full scope
+(K-054 protocol reference, K-031 existing pattern, Bambu cloud
+movement-command feasibility, safety-gate checklist, implementation
+plan). This is a bigger, safety-sensitive card — expect a thorough report
+before any implementation starts.
