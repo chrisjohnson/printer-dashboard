@@ -19,7 +19,24 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ]
+1. [x] Researcher: found exact code, cadence, and existing pattern. Done
+   — see Decision log.
+2. [ ] Implementer: add a shared `setValText(el, newText)` helper in
+   `internal/server/onboarding.go` applying two guards — (a) skip write
+   if `el.textContent === newText` already (handles the common
+   value-unchanged case, confirmed updates fire even when unchanged), and
+   (b) skip write if there's a non-collapsed text selection anchored
+   inside `el` (`window.getSelection()`, mirroring `setTargetInput`'s
+   `document.activeElement` guard at ~line 987-990, adapted for selection
+   instead of focus since `.val` is a plain span not an input). Use it at
+   all 4 `.val` write sites in `updateCard` (bed ~996, nozzle ~1002,
+   extra nozzles ~1013, chamber ~1027).
+3. [ ] Implementer: add/extend a Playwright test (per K-080's precedent
+   in `tests/dashboard.test.ts`) simulating a WS update with an unchanged
+   or changed temp value while a selection is active inside `.val`,
+   asserting the selection survives.
+4. [ ] Implementer: run full test suite (Go + Playwright), commit, push,
+   open PR.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -34,8 +51,20 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-07-20 — gentle-loris-hazel: Research confirmed: updates are WS
+  push-driven (not client polling), forwarded 1:1 from printer status
+  reports with no throttling (`internal/server/server.go:343-371`
+  `startStatusForwarder`) — the "~2s" cadence traces to the printer's own
+  MQTT push interval. `mergeWithCache()` does no equality diffing, so
+  `updateCard()`'s unconditional `.val.textContent = ...` writes (4
+  sites: bed, nozzle, extra nozzles, chamber) fire on every push
+  regardless of whether the value actually changed — confirming
+  "skip-if-unchanged" alone fixes the common case (temp holding steady).
+  A directly analogous pattern already exists for a related problem:
+  `setTargetInput()` (~line 987-990) guards its input write with
+  `document.activeElement !== inp` specifically so a live WS update never
+  clobbers active typing. This fix mirrors that same intent for text
+  selection instead of input focus.
 
 ## Handoff notes
-Research dispatched by gentle-loris-hazel 2026-07-20T02:48Z — finding the
-exact `.val` update code, cadence, and checking for an existing
-avoid-clobbering-user-interaction pattern to mirror (e.g. from K-080).
+Research complete, plan set. Dispatching Implementer next.
