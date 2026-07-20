@@ -9,8 +9,8 @@ This repo uses a fleet model where multiple AI worker agents may each be running
 build/run verification concurrently, each in their own `.fleet/worktrees/<pet-name>/`
 checkout. A single fixed image name, container name, host port, and volume path would
 let two concurrently-running workers clobber each other's containers mid-test. Instead,
-suffix the image/container name and the token-cache volume path with the current
-worktree name, and publish the app port to a random host port instead of a fixed one:
+suffix the image/container name with the current worktree name, and publish the app
+port to a random host port instead of a fixed one:
 
 - `WORKTREE` is derived automatically: it's set to the worktree's basename when running
   under `.fleet/worktrees/<pet-name>/`, and left empty for a normal single-worker
@@ -23,9 +23,12 @@ worktree name, and publish the app port to a random host port instead of a fixed
 - Host port: published as a random free port (`-p 0:8080`) rather than the fixed
   `8080:8080`, since a fixed host port would also collide across concurrent workers.
   Look it up after starting the container with `docker port "$NAME" 8080`.
-- Token-cache volume: mounted from `${HOME}/.printer-dashboard-${WORKTREE:-default}`
-  instead of a single shared `${HOME}/.printer-dashboard`, so concurrent workers don't
-  share (and clobber) each other's cached Bambu tokens.
+- Token-cache volume and `config.yaml` are mounted from a single shared
+  `${HOME}/.printer-dashboard/` (not per-worktree): the Bambu token cache is small,
+  written only at login, and tied to the cloud account rather than a worktree, so
+  sharing it lets concurrent workers reuse one authenticated session instead of each
+  re-logging in. `config.yaml` describes the host's printers, so it's one canonical
+  file per machine, not duplicated per checkout.
 
 ```bash
 case "$(pwd)" in
@@ -39,8 +42,8 @@ docker build -t "$NAME" .
 docker rm -f "$NAME" || true
 docker run -d --name "$NAME" \
   -p 0:8080 \
-  -v "${HOME}/.printer-dashboard-${WORKTREE:-default}:/home/app/.printer-dashboard:rw" \
-  -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
   "$NAME"
 
 docker port "$NAME" 8080   # shows the assigned host port
