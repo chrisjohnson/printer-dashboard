@@ -31,6 +31,18 @@ const hmsHealthyStreakThreshold = 2
 // only the complete->idle edge is latched.
 const completeIdleStreakThreshold = 2
 
+// initialConnectBackoffBase is the starting backoff duration used by
+// Connect's initial-connect retry loop (1s, 2s, 4s, 8s, 16s, capped at
+// initialConnectBackoffMax). Retries are indefinite — see Connect's doc
+// comment for rationale.
+const initialConnectBackoffBase = 1 * time.Second
+
+// initialConnectBackoffMax caps the doubling backoff in Connect's retry
+// loop, matching the ceiling already used for AutoReconnect via
+// SetMaxReconnectInterval below, for consistency between the two retry
+// paths.
+const initialConnectBackoffMax = 30 * time.Second
+
 // Client implements the printers.Printer interface for Bambu Lab printers
 // via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
 type Client struct {
@@ -62,6 +74,20 @@ type Client struct {
 	// SUCCESS->IDLE flicker Bambu firmware exhibits right after a print
 	// finishes. See handleReport's State block for the full policy.
 	completeIdleStreak int
+
+	// brokerOverride, when non-empty, replaces the derived cloud MQTT broker
+	// address in Connect. Test-only seam so unit tests can point the client
+	// at a local TCP listener instead of Bambu's real cloud broker.
+	brokerOverride string
+
+	// connectBackoffBase overrides initialConnectBackoffBase when non-zero.
+	// Test-only seam to keep the initial-connect retry loop's backoff
+	// schedule fast in unit tests.
+	connectBackoffBase time.Duration
+
+	// connectBackoffMax overrides initialConnectBackoffMax when non-zero.
+	// Test-only seam, paired with connectBackoffBase.
+	connectBackoffMax time.Duration
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -174,8 +200,19 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 
 // Connect establishes the cloud MQTT connection and begins listening for reports.
 // Blocks until the context is cancelled (caller should run in a goroutine).
+//
+// The initial connect attempt is retried indefinitely with doubling backoff
+// (1s, 2s, 4s, ... capped at initialConnectBackoffMax) if it fails or times
+// out. There is no attempt ceiling: once connected, Paho's own AutoReconnect
+// (configured below) takes over for connection-lost-after-success, and that
+// path also retries forever — this keeps the two retry paths consistent, and
+// the current status model has no "permanently failed" state to fall back to
+// anyway. Retries stop promptly if ctx is cancelled.
 func (c *Client) Connect(ctx context.Context) error {
 	broker := "ssl://" + MQTTBroker(c.cloud.region)
+	if c.brokerOverride != "" {
+		broker = c.brokerOverride
+	}
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
@@ -196,18 +233,14 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	c.mqttClient = mqtt.NewClient(opts)
 
-	// Connect with timeout
-	token := c.mqttClient.Connect()
-	if !token.WaitTimeout(15 * time.Second) {
-		return fmt.Errorf("bambu %s: cloud MQTT connection timeout to %s", c.cfg.ID, broker)
-	}
-	if err := token.Error(); err != nil {
-		s := c.Status()
-		s.Online = false
-		s.State = "error"
-		s.ErrorMsg = fmt.Sprintf("MQTT connect failed: %v", err)
-		c.setStatus(s)
-		return fmt.Errorf("bambu %s: cloud MQTT connect: %w", c.cfg.ID, err)
+	if err := c.connectWithRetry(ctx, broker); err != nil {
+		// Only returns non-nil when ctx was cancelled before a successful
+		// connect — report that as a clean (nil) shutdown-triggered return,
+		// matching the pre-retry-loop contract that Connect only returns a
+		// non-nil error for a genuine connect failure. Since retries are
+		// indefinite, the only way out without a successful connect is
+		// cancellation.
+		return nil
 	}
 
 	log.Printf("bambu %s: connected to cloud MQTT at %s (user=%s)", c.cfg.ID, broker, c.cloud.MQTTUsername())
@@ -221,6 +254,65 @@ func (c *Client) Connect(ctx context.Context) error {
 		log.Printf("bambu %s: disconnected from cloud MQTT", c.cfg.ID)
 	}
 	return nil
+}
+
+// connectWithRetry attempts the initial MQTT connect, retrying indefinitely
+// with doubling backoff on failure/timeout until it succeeds or ctx is
+// cancelled. Returns nil on success, or ctx.Err() if ctx was cancelled
+// before a successful connect.
+func (c *Client) connectWithRetry(ctx context.Context, broker string) error {
+	backoffBase := initialConnectBackoffBase
+	if c.connectBackoffBase > 0 {
+		backoffBase = c.connectBackoffBase
+	}
+	backoffMax := initialConnectBackoffMax
+	if c.connectBackoffMax > 0 {
+		backoffMax = c.connectBackoffMax
+	}
+
+	backoff := backoffBase
+	attempt := 0
+	for {
+		attempt++
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		token := c.mqttClient.Connect()
+		var connectErr error
+		if !token.WaitTimeout(15 * time.Second) {
+			connectErr = fmt.Errorf("bambu %s: cloud MQTT connection timeout to %s", c.cfg.ID, broker)
+		} else if err := token.Error(); err != nil {
+			connectErr = fmt.Errorf("bambu %s: cloud MQTT connect: %w", c.cfg.ID, err)
+		}
+
+		if connectErr == nil {
+			return nil
+		}
+
+		s := c.Status()
+		s.Online = false
+		s.State = "error"
+		s.ErrorMsg = fmt.Sprintf("MQTT connect failed: %v", connectErr)
+		c.setStatus(s)
+
+		log.Printf("bambu %s: cloud MQTT initial connect attempt %d failed: %v (retry in %v)",
+			c.cfg.ID, attempt, connectErr, backoff)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+
+		backoff *= 2
+		if backoff > backoffMax {
+			backoff = backoffMax
+		}
+	}
 }
 
 // onConnect is called when the MQTT client connects (or reconnects).
