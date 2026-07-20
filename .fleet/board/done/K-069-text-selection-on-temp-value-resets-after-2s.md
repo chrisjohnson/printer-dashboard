@@ -26,22 +26,20 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
 3. [x] Implementer: added Playwright test. **Caught a second, deeper bug
    during testing** — see Decision log (`reorderCard` unconditional DOM
    move). Dispatched a follow-up fix on the same branch before accepting.
-4. [ ] Implementer (follow-up): add "skip if already in correct position"
-   guard to `reorderCard()` (`updateCard` calls it unconditionally on
-   every WS push, and it always does `insertBefore`/`appendChild` even
-   when position is unchanged — moving a DOM node collapses any active
-   selection inside it in all major browsers, independent of
-   `setValText`'s guard, so this was silently defeating the whole fix for
-   the common case). Add an end-to-end test through the real
-   `mergeWithCache`→`updateCard` pipeline (not just `setValText` in
-   isolation) proving the selection now survives a real WS push.
-5. [ ] Run full test suite, commit, push, open PR.
+4. [x] Implementer (follow-up): added the `reorderCard` position guard
+   and an end-to-end test through the real update pipeline proving the
+   selection now survives a real WS push.
+5. [x] Full test suite passes (Go + Playwright, 1 pre-existing unrelated
+   sandbox failure). I reviewed both diffs, rebased for a clean PR,
+   re-ran the full suite myself, pushed, PR:
+   https://github.com/chrisjohnson/printer-dashboard/pull/10
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: gentle-loris-hazel 2026-07-20T02:48Z — claiming, dispatching researcher to find exact update code and fix approach -->
+<!-- signal: gentle-loris-hazel 2026-07-20T03:35Z — done, PR #10 open (both mechanisms fixed), moved to done/ -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -86,7 +84,7 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
   end-to-end.
 
 ## Handoff notes
-Follow-up implementer dispatched 2026-07-20T03:20Z (same branch,
-`worktree-gentle-loris-hazel-k069`) to add the `reorderCard` position
-guard and an end-to-end test through the real update pipeline. Awaiting
-completion before push/PR.
+PR #10 open against main, not yet merged. Both mechanisms (unconditional
+`.val` write, unconditional `reorderCard` DOM move) are fixed on the same
+branch — this is the complete, end-to-end fix for the reported bug, not
+a partial one.
