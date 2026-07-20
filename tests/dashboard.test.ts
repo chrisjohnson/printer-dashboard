@@ -347,14 +347,16 @@ test.describe('Dashboard', () => {
   //
   // This exercises setValText() directly (a plain global, like the other
   // onboarding.go helpers — see mergeWithCache() usage in the K-080 test
-  // above) against a real .val span and the real Selection API, rather than
-  // going through the full updateCard()/mergeWithCache() pipeline: updateCard
-  // unconditionally calls reorderCard() at the end, which re-inserts the card
-  // into #printer-list via insertBefore()/appendChild() on *every* call —
-  // even a "no-op" reorder detaches and reattaches the node, which collapses
-  // any live selection inside it regardless of setValText()'s own guard.
-  // That reorder behavior is pre-existing and orthogonal to this fix, so
-  // testing setValText() in isolation avoids a flaky/misleading test.
+  // above) against a real .val span and the real Selection API, in isolation
+  // from the rest of the update pipeline. Note that setValText() alone was
+  // NOT sufficient to fix the user-reported bug: updateCard() unconditionally
+  // calls reorderCard() at the end, and reorderCard() used to unconditionally
+  // call insertBefore()/appendChild() to place the card — even a "no-op"
+  // reorder detaches and reattaches the node, which collapses any live
+  // selection inside it regardless of setValText()'s own guard. See the
+  // "a full printer_update through updateCard()..." test below, which
+  // exercises the real mergeWithCache()->updateCard()->reorderCard() pipeline
+  // end-to-end (this test deliberately does not, to isolate setValText()).
   test('setValText skips unchanged writes and does not clobber an active selection', async ({
     page,
   }) => {
@@ -427,5 +429,165 @@ test.describe('Dashboard', () => {
     }, differentText);
 
     await expect(bedVal).toHaveText(differentText);
+  });
+
+  // K-069 follow-up: setValText() alone is not enough. updateCard() (the
+  // real handler for every WS printer_update, ~1-3s cadence) unconditionally
+  // calls reorderCard() at the end, and reorderCard() used to unconditionally
+  // call insertBefore()/appendChild() to place the card — even when the
+  // card's sort position hadn't actually changed. Per the DOM spec, moving a
+  // node (detach + reinsert) collapses any active Selection anchored inside
+  // it, regardless of setValText()'s own guard. This test drives a
+  // printer_update through the REAL mergeWithCache()/updateCard() pipeline
+  // (unlike the test above, which calls setValText() directly) to prove the
+  // end-to-end path — setValText()'s no-op write guard plus reorderCard()'s
+  // no-op move guard together — no longer clobbers the user's selection.
+  test('a full printer_update through updateCard() does not clobber an active selection when sort position is unchanged', async ({
+    page,
+  }) => {
+    // Block the real WebSocket so genuine printer_update pushes (these test
+    // printers cycle through connection-error states) can't race the
+    // deterministic update simulated below — same precaution as the K-080 test.
+    await page.route('**/ws', (route) => route.abort());
+
+    await page.goto('/');
+    const bedVal = page.locator('#printer-u1 .temp-row .val').first();
+    await expect(bedVal).toBeAttached();
+    const originalText = await bedVal.textContent();
+    expect(originalText).toBeTruthy();
+
+    const originalOrder = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map(
+        (c) => c.id,
+      ),
+    );
+
+    // Select the text inside the .val span, mirroring a user copying it.
+    await page.evaluate(() => {
+      const el = document.querySelector('#printer-u1 .temp-row .val')!;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection()!;
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+
+    const isSelected = async () =>
+      page.evaluate(() => {
+        const el = document.querySelector('#printer-u1 .temp-row .val');
+        const sel = window.getSelection();
+        return (
+          !!sel &&
+          !sel.isCollapsed &&
+          !!el &&
+          el.contains(sel.anchorNode) &&
+          sel.toString().length > 0
+        );
+      });
+    expect(await isSelected()).toBe(true);
+
+    // Push a printer_update carrying the SAME bed_temp (parsed back out of
+    // the rendered text) and no other fields — mergeWithCache() layers it
+    // onto the cached printer, so state/name (and therefore reorderCard()'s
+    // sort position) are untouched, exactly matching the common case of a
+    // WS push arriving with no actual change. This goes through the real
+    // mergeWithCache()->updateCard() pipeline, including its trailing
+    // reorderCard(p.id) call — the exact path the prior setValText()-only
+    // test above deliberately avoided.
+    await page.evaluate(() => {
+      const w = window as any;
+      const cached = w._printerCache['u1'];
+      const merged = w.mergeWithCache({ id: 'u1', bed_temp: cached.bed_temp });
+      w.updateCard(merged);
+    });
+
+    // The selection must survive the full pipeline, and the card must stay
+    // in the same position (proving reorderCard() genuinely no-opped rather
+    // than "coincidentally" landing in the same place).
+    expect(await bedVal.textContent()).toBe(originalText);
+    expect(await isSelected()).toBe(true);
+    const orderAfter = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map(
+        (c) => c.id,
+      ),
+    );
+    expect(orderAfter).toEqual(originalOrder);
+  });
+
+  // Companion to the no-op reorder test above: make sure the "skip if
+  // already correct" guard added to reorderCard() doesn't also suppress a
+  // GENUINE reorder. The Bambu-backed test printers (p1s/h2s) don't render
+  // in this sandbox (they require real Bambu cloud auth — same pre-existing
+  // gap as the "chamber temp row" test above), so this injects a second,
+  // synthetic card via the real renderCard() helper (a plain global, like
+  // the other onboarding.go helpers used throughout this file) rather than
+  // depending on Bambu connectivity. Named so it alphabetically sorts after
+  // "Snapmaker U1" while idle, then forced into the 'error' tier (which
+  // sorts first, per reorderCard()'s sortPriority()) to prove it actually
+  // moves to the front of #printer-list.
+  test('reorderCard still moves a card when its sort position genuinely changes', async ({
+    page,
+  }) => {
+    await page.route('**/ws', (route) => route.abort());
+    await page.goto('/');
+    await expect(page.locator('#printer-u1')).toBeAttached();
+
+    await page.evaluate(() => {
+      const w = window as any;
+      const synthetic = {
+        id: 'zz-synthetic',
+        name: 'ZZ Synthetic Printer',
+        state: 'idle',
+        online: true,
+        progress: 0,
+        remaining_time: 0,
+        current_file: null,
+        current_layer: 0,
+        total_layers: 0,
+        bed_temp: 20,
+        bed_target_temp: null,
+        nozzle_temp: 20,
+        nozzle_target_temp: null,
+        chamber_temp: null,
+        chamber_target_temp: null,
+        hms_errors: [],
+        hms_warnings: [],
+      };
+      w._printerCache['zz-synthetic'] = synthetic;
+      document
+        .getElementById('printer-list')!
+        .insertAdjacentHTML('beforeend', w.renderCard(synthetic));
+    });
+    await expect(page.locator('#printer-zz-synthetic')).toBeAttached();
+
+    const orderBefore = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map(
+        (c) => c.id,
+      ),
+    );
+    // Idle sorts last (sortPriority() returns 2 for 'idle'), and "ZZ..."
+    // sorts after "Snapmaker U1" alphabetically either way, so the synthetic
+    // card must already be last — otherwise forcing it to 'error' below
+    // wouldn't prove a move.
+    expect(orderBefore[orderBefore.length - 1]).toBe('printer-zz-synthetic');
+
+    await page.evaluate(() => {
+      const w = window as any;
+      const merged = w.mergeWithCache({ id: 'zz-synthetic', state: 'error' });
+      w.updateCard(merged);
+    });
+
+    await expect(page.locator('#printer-zz-synthetic .tag')).toHaveText(
+      'error',
+    );
+    const orderAfter = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map(
+        (c) => c.id,
+      ),
+    );
+    // Error tier sorts first (sortPriority() returns 0 for 'error'), so the
+    // synthetic card must now be the first card in the DOM.
+    expect(orderAfter[0]).toBe('printer-zz-synthetic');
+    expect(orderAfter).not.toEqual(orderBefore);
   });
 });

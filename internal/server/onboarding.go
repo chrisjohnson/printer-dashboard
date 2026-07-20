@@ -1217,11 +1217,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (cardPriority === sibPriority && cardName.toLowerCase() < sibName.toLowerCase()) { insertBefore = sib; break; }
       }
 
+      // Skip the DOM move entirely if the card is already in the correct
+      // position. insertBefore/appendChild detach-and-reinsert the node even
+      // when the resulting position is unchanged, which collapses any active
+      // Selection anchored inside it (e.g. a user selecting text in a .val
+      // span) — same intent as setValText/setTargetInput above, applied to
+      // card position instead of a value.
       if (insertBefore) {
-        container.insertBefore(card, insertBefore);
+        if (card.nextElementSibling !== insertBefore) {
+          container.insertBefore(card, insertBefore);
+        }
       } else {
         // Move to end if no earlier sibling fits
-        container.appendChild(card);
+        if (container.lastElementChild !== card) {
+          container.appendChild(card);
+        }
       }
     }
 
