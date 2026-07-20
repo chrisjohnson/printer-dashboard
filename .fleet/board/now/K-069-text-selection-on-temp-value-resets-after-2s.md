@@ -36,5 +36,6 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
      without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+Research dispatched by gentle-loris-hazel 2026-07-20T02:48Z — finding the
+exact `.val` update code, cadence, and checking for an existing
+avoid-clobbering-user-interaction pattern to mirror (e.g. from K-080).
