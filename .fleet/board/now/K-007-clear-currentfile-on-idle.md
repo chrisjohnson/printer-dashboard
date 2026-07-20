@@ -70,6 +70,11 @@ Clear CurrentFile on idle. Currently CurrentFile persists after a job completes.
   silently drift again if the latch threshold changes later.
 
 ## Handoff notes
-Research complete, scope set. Dispatching Implementer next for the Bambu
-decoupling fix. K-091 filed separately for the Snapmaker gap (not
-started, backlog).
+Implementer dispatched by gentle-loris-hazel 2026-07-20T02:52Z, working
+in `.fleet/worktrees/gentle-loris-hazel` on fresh branch
+`worktree-gentle-loris-hazel-k007` (off origin/main). Instructed to use
+engineering judgment on exact clear-timing (raw-idle vs. latched-idle) —
+flagged that naively switching to raw state would shift timing earlier by
+one report, not a no-op change as I initially assumed; asked for a
+deliberate, documented decision either way, or to conclude no change is
+warranted if the current coupling is actually fine. Awaiting completion.
