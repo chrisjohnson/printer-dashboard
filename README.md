@@ -39,17 +39,20 @@ file (no required environment variables — everything is configured via YAML). 
 
 If you're working in one of this repo's fleet worktrees (`.fleet/worktrees/<pet-name>/`),
 multiple agents may be building/running containers at the same time, so the image name,
-container name, host port, and token-cache volume are all derived from the current
-worktree instead of being fixed — that way concurrent runs don't collide or clobber each
-other. `WORKTREE` is detected automatically by the commands below; in a normal,
-single-worker checkout it stays empty and the image/container name falls back to plain
-`printer-dashboard` exactly as before (the host port is now always assigned randomly
-and looked up via `docker port`, regardless of worktree).
+container name, and host port are all derived from the current worktree instead of being
+fixed — that way concurrent runs don't collide or clobber each other. `WORKTREE` is
+detected automatically by the commands below; in a normal, single-worker checkout it
+stays empty and the image/container name falls back to plain `printer-dashboard` exactly
+as before (the host port is now always assigned randomly and looked up via
+`docker port`, regardless of worktree). The token cache and `config.yaml` are mounted
+from a single shared `~/.printer-dashboard/`, not per-worktree — see the notes below.
 
 ```bash
-# Copy and edit the configuration (same as above)
-cp config.example.yaml config.yaml
-vim config.yaml
+# Copy and edit the configuration into the shared, machine-wide location (same file
+# used by every checkout — see notes below)
+mkdir -p ~/.printer-dashboard
+cp config.example.yaml ~/.printer-dashboard/config.yaml
+vim ~/.printer-dashboard/config.yaml
 
 # Automatically set when running under a fleet worktree (.fleet/worktrees/<pet-name>/);
 # stays empty for a normal single-worker checkout
@@ -66,8 +69,8 @@ docker build -t "$NAME" .
 docker rm -f "$NAME" || true
 docker run -d --name "$NAME" \
   -p 0:8080 \
-  -v "${HOME}/.printer-dashboard-${WORKTREE:-default}:/home/app/.printer-dashboard:rw" \
-  -v "$(pwd)/config.yaml:/app/config.yaml:rw" \
+  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
   "$NAME"
 
 # The host port is assigned randomly (to avoid colliding with other containers) —
@@ -79,12 +82,17 @@ Then open http://localhost:<port> in your browser, using the port from `docker p
 above.
 
 Notes:
-- The Bambu Lab token cache (`~/.printer-dashboard-${WORKTREE:-default}/`) lives inside
-  the container's `$HOME` by default and will not persist across `docker rm`. Mount a
-  volume at `/home/app/.printer-dashboard` if you want the Bambu token to survive
-  container recreation (avoids re-authenticating after every restart).
-- `-v "$(pwd)/config.yaml:/app/config.yaml:ro"` mounts the config read-only; drop `:ro`
-  if you rely on the app's config `Save()` behavior and want it to persist back to disk.
+- Both the Bambu Lab token cache and `config.yaml` are mounted from a single shared
+  `~/.printer-dashboard/`, not a per-worktree path. The token cache is small,
+  written only when logging in to Bambu Cloud, and belongs to the cloud *account*
+  rather than to any one worktree, so sharing it lets concurrent workers reuse an
+  already-authenticated session instead of each having to log in fresh. Likewise,
+  `config.yaml` describes the printers on this machine (their IPs, credentials), so
+  it doesn't make sense to duplicate it per checkout — edit it once at
+  `~/.printer-dashboard/config.yaml` and every worktree's container uses it.
+- `-v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:ro"` mounts the config
+  read-only; drop `:ro` if you rely on the app's config `Save()` behavior and want it
+  to persist back to disk.
 
 ## Testing
 
