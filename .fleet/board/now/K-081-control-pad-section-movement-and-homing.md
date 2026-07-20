@@ -33,14 +33,8 @@ protocol reference (movement GCode shapes, safety gates) before starting.
    in this app to get real backend gating, not just frontend
    button-disable; Z-axis jog gets a confirmation modal (mirroring the
    existing skip-object modal), X/Y do not.
-3. [ ] Implementer (backend, stage 1): `internal/printers/interface.go`
-   (`HomeAll`/`Jog` on `Printer`, `Homed *bool` on `PrinterStatus`),
-   `internal/printers/bambu/commands.go` (+tests) and `client.go` (wire
-   `HomeFlag` into status), `internal/printers/snapmaker/snapmaker.go`
-   (`sendGCode`-based, no homed-state tracking for now — known gap, see
-   Decision log), `internal/server/server.go` handlers with real state
-   gating (409 if not idle) + distance/speed clamps + input validation
-   (+tests including new 409-on-wrong-state case).
+3. [x] Implementer (backend, stage 1): all files done as scoped. PR:
+   https://github.com/chrisjohnson/printer-dashboard/pull/11
 4. [ ] Implementer (frontend, stage 2, after stage 1 lands): movement pad
    UI in `internal/server/onboarding.go` (`renderCard`+`updateCard` kept
    in sync — watch for the K-053-class drift bug), step-size selector
@@ -104,12 +98,25 @@ protocol reference (movement GCode shapes, safety gates) before starting.
   isn't unique to movement, movement is just the first place it's
   actually dangerous; (3) Z-axis jog gets a confirmation modal (collision
   risk), X/Y do not.
+- 2026-07-20 — gentle-loris-hazel: Stage 1 (backend) implemented and
+  reviewed carefully given the safety stakes — read every line of the
+  gating logic (`requireIdleAndOnline`, jog validation) and the G-code
+  generation for both Bambu and Snapmaker before accepting. Confirmed
+  `requireIdleAndOnline` is correctly the sole gate on `Online`/`State`
+  (not `Homed`), so even the one minor edge case I flagged — `HomeFlag`
+  is a plain `int` not a pointer, unlike other optional-on-heartbeat
+  fields in the same struct, so a sparse heartbeat report could in theory
+  zero it out and cause `Homed` to read `false` when actually unknown —
+  fails in the *safe* direction (would only make a future frontend more
+  conservative about enabling jog, never less). Not confirmed to actually
+  happen in practice; not worth blocking on. Full test suite (build/vet/
+  test/-race) verified myself before pushing. PR #11 opened (stage 1
+  only — backend, no UI yet, so nothing is reachable/triggerable by a
+  real user until stage 2 ships).
 
 ## Handoff notes
-Scope finalized with human input. Filed K-092 (backlog) for the backend-
-gating retrofit on existing commands — separate scope, not blocking this
-card. Stage 1 (backend) Implementer dispatched 2026-07-20T03:48Z, working
-in `.fleet/worktrees/gentle-loris-hazel` on fresh branch
-`worktree-gentle-loris-hazel-k081` (off origin/main). Stage 2 (frontend)
-to follow once stage 1 lands and is verified. Awaiting stage 1
-completion.
+Stage 1 (backend) PR #11 open, not yet merged — establishes HomeAll/Jog
+across both printer backends plus real server-side safety gating (409 on
+non-idle, validated/clamped jog inputs). Proceeding to stage 2 (frontend)
+now on a new branch off the stage-1 branch tip, so the UI can actually
+call these endpoints.
