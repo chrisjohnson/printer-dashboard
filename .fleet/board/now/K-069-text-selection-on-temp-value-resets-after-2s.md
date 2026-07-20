@@ -21,22 +21,21 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
      has been planned out, e.g. "Implementer: apply config change". -->
 1. [x] Researcher: found exact code, cadence, and existing pattern. Done
    — see Decision log.
-2. [ ] Implementer: add a shared `setValText(el, newText)` helper in
-   `internal/server/onboarding.go` applying two guards — (a) skip write
-   if `el.textContent === newText` already (handles the common
-   value-unchanged case, confirmed updates fire even when unchanged), and
-   (b) skip write if there's a non-collapsed text selection anchored
-   inside `el` (`window.getSelection()`, mirroring `setTargetInput`'s
-   `document.activeElement` guard at ~line 987-990, adapted for selection
-   instead of focus since `.val` is a plain span not an input). Use it at
-   all 4 `.val` write sites in `updateCard` (bed ~996, nozzle ~1002,
-   extra nozzles ~1013, chamber ~1027).
-3. [ ] Implementer: add/extend a Playwright test (per K-080's precedent
-   in `tests/dashboard.test.ts`) simulating a WS update with an unchanged
-   or changed temp value while a selection is active inside `.val`,
-   asserting the selection survives.
-4. [ ] Implementer: run full test suite (Go + Playwright), commit, push,
-   open PR.
+2. [x] Implementer: added `setValText(el, newText)` helper with both
+   guards, used at all 4 `.val` write sites. Done.
+3. [x] Implementer: added Playwright test. **Caught a second, deeper bug
+   during testing** — see Decision log (`reorderCard` unconditional DOM
+   move). Dispatched a follow-up fix on the same branch before accepting.
+4. [ ] Implementer (follow-up): add "skip if already in correct position"
+   guard to `reorderCard()` (`updateCard` calls it unconditionally on
+   every WS push, and it always does `insertBefore`/`appendChild` even
+   when position is unchanged — moving a DOM node collapses any active
+   selection inside it in all major browsers, independent of
+   `setValText`'s guard, so this was silently defeating the whole fix for
+   the common case). Add an end-to-end test through the real
+   `mergeWithCache`→`updateCard` pipeline (not just `setValText` in
+   isolation) proving the selection now survives a real WS push.
+5. [ ] Run full test suite, commit, push, open PR.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -65,9 +64,29 @@ Text selection on the temp value resets after ~2s. Periodic WS/polling update re
   `document.activeElement !== inp` specifically so a live WS update never
   clobbers active typing. This fix mirrors that same intent for text
   selection instead of input focus.
+- 2026-07-20 — gentle-loris-hazel: Implementer's first-pass test caught a
+  real, separate problem: testing `setValText` through the *actual*
+  `mergeWithCache`→`updateCard` pipeline (not in isolation) showed the
+  selection still got destroyed, because `updateCard` unconditionally
+  calls `reorderCard()` on every invocation, and `reorderCard()` always
+  does `insertBefore`/`appendChild` — moving the DOM node — even when the
+  card's position hasn't changed. Moving a node (detach+reinsert, which
+  is what `insertBefore`/`appendChild` do per the DOM spec regardless of
+  whether the position actually changes) collapses any active Selection
+  anchored inside it, in all major browsers. Verified this independently
+  (dispatched a separate check) before accepting — confirmed real,
+  confirmed `reorderCard` has no "already correct position" guard
+  (unlike `setTargetInput`/`setValText`'s established skip-if-unchanged
+  pattern elsewhere in this file). Without also fixing this, K-069's
+  `setValText` fix would not actually solve the user-reported bug in the
+  common case. Judgment call: fixing this on the same branch/PR rather
+  than filing a separate follow-up card, since it's directly load-bearing
+  for K-069's stated goal, not a tangential finding — shipping K-069
+  without it would mean claiming a fix that doesn't actually work
+  end-to-end.
 
 ## Handoff notes
-Implementer dispatched by gentle-loris-hazel 2026-07-20T02:56Z, working
-in `.fleet/worktrees/gentle-loris-hazel` on fresh branch
-`worktree-gentle-loris-hazel-k069` (off origin/main). Awaiting
-completion.
+Follow-up implementer dispatched 2026-07-20T03:20Z (same branch,
+`worktree-gentle-loris-hazel-k069`) to add the `reorderCard` position
+guard and an end-to-end test through the real update pipeline. Awaiting
+completion before push/PR.
