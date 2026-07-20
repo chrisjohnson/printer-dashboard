@@ -2221,6 +2221,82 @@ func TestHandleReport_SuccessDoesNotClearCurrentFile(t *testing.T) {
 	}
 }
 
+// TestHandleReport_SuccessIdleIdleSequence_CurrentFileClearsBeforeState
+// locks in the exact real-world SUCCESS -> IDLE -> IDLE firmware sequence
+// and the intended relative timing of CurrentFile vs. State:
+//
+//   - CurrentFile clears off the *raw* per-report mapped state, so it clears
+//     at the FIRST IDLE report — one report before State unlatches.
+//   - State stays latched at "complete" through that first IDLE (K-004's
+//     flicker fix) and only drops to "idle" on the SECOND consecutive IDLE
+//     report (completeIdleStreakThreshold).
+//
+// This is a deliberate decoupling (K-007): CurrentFile's clear condition no
+// longer rides on the complete->idle latch, so future tuning of the latch
+// threshold can't silently shift CurrentFile timing too. If this test ever
+// needs to change, it means the intended relationship between the two has
+// changed and should be a conscious decision, not a side effect.
+func TestHandleReport_SuccessIdleIdleSequence_CurrentFileClearsBeforeState(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	// Printing.
+	payload1 := []byte(`{
+		"print": {
+			"gcode_state": "RUNNING",
+			"gcode_file": "done.gcode",
+			"mc_percent": 99
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload1))
+	if s1 := c.Status(); s1.CurrentFile != "done.gcode" {
+		t.Fatalf("After RUNNING: CurrentFile = %q; want %q", s1.CurrentFile, "done.gcode")
+	}
+
+	// Report 1: SUCCESS — State becomes "complete", CurrentFile preserved.
+	payload2 := []byte(`{
+		"print": {
+			"gcode_state": "SUCCESS",
+			"mc_percent": 100
+		}
+	}`)
+	c.handleReport(nil, newMockMessage(payload2))
+	s2 := c.Status()
+	if s2.State != "complete" {
+		t.Fatalf("After SUCCESS: State = %q; want %q", s2.State, "complete")
+	}
+	if s2.CurrentFile != "done.gcode" {
+		t.Fatalf("After SUCCESS: CurrentFile = %q; want %q (preserved)", s2.CurrentFile, "done.gcode")
+	}
+
+	idlePayload := []byte(`{
+		"print": {
+			"gcode_state": "IDLE"
+		}
+	}`)
+
+	// Report 2: first IDLE. State stays latched at "complete" (K-004), but
+	// CurrentFile clears immediately since the raw mapped state IS "idle".
+	c.handleReport(nil, newMockMessage(idlePayload))
+	s3 := c.Status()
+	if s3.State != "complete" {
+		t.Fatalf("After SUCCESS then 1st IDLE: State = %q; want %q (still latched)", s3.State, "complete")
+	}
+	if s3.CurrentFile != "" {
+		t.Fatalf("After SUCCESS then 1st IDLE: CurrentFile = %q; want empty (clears on raw idle)", s3.CurrentFile)
+	}
+
+	// Report 3: second consecutive IDLE. Threshold met, State finally
+	// settles to "idle" too. CurrentFile remains empty.
+	c.handleReport(nil, newMockMessage(idlePayload))
+	s4 := c.Status()
+	if s4.State != "idle" {
+		t.Fatalf("After SUCCESS then 2nd IDLE: State = %q; want %q (threshold met)", s4.State, "idle")
+	}
+	if s4.CurrentFile != "" {
+		t.Fatalf("After SUCCESS then 2nd IDLE: CurrentFile = %q; want empty", s4.CurrentFile)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // complete->idle latch tests (State flicker fix)
 // ---------------------------------------------------------------------------

@@ -418,8 +418,9 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// "complete" before allowing the overwrite. Any other newly-reported
 	// state (e.g. "printing" from a new print starting) still overrides
 	// "complete" immediately — only the complete->idle edge is latched.
+	var newState string
 	if p.GcodeState != "" {
-		newState := mapState(p.GcodeState)
+		newState = mapState(p.GcodeState)
 		if s.State == "complete" && newState == "idle" {
 			c.completeIdleStreak++
 			if c.completeIdleStreak >= completeIdleStreakThreshold {
@@ -436,7 +437,19 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// fallback).  Clear when the printer is explicitly idle — the print has
 	// finished.  Only when gcode_state is explicitly provided to avoid
 	// clobbering on heartbeat-style reports that omit gcode_state.
-	if p.GcodeState != "" && s.State == "idle" {
+	//
+	// Deliberately keyed off the raw per-report `newState` (computed above),
+	// not the latched `s.State`: CurrentFile clearing should reflect what the
+	// firmware just reported, not the delayed/derived UI-display value from
+	// the complete->idle latch. This means CurrentFile clears one report
+	// earlier than the COMPLETE badge does (at the first IDLE after SUCCESS,
+	// while State is still latched at "complete" for one more report) — the
+	// filename disappears promptly while the COMPLETE badge lingers briefly
+	// by design. This is intentional: it decouples CurrentFile's semantics
+	// from the latch threshold so future latch tuning can't silently shift
+	// CurrentFile timing too. See TestHandleReport_IdleClearsCurrentFile and
+	// TestHandleReport_SuccessIdleIdleSequence for the exact locked-in timing.
+	if p.GcodeState != "" && newState == "idle" {
 		s.CurrentFile = ""
 	} else if p.GcodeFile != nil && *p.GcodeFile != "" {
 		s.CurrentFile = *p.GcodeFile
