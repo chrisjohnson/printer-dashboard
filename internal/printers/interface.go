@@ -47,6 +47,11 @@ type PrinterStatus struct {
 	// LightOn reports the chamber light state when known. nil means unknown
 	// (not yet reported), true = on, false = off.
 	LightOn *bool `json:"light_on,omitempty"`
+	// Homed reports whether the printer's axes are homed, when known. nil
+	// means unknown (not yet reported, or not supported by this driver —
+	// e.g. Snapmaker has no homed-state query wiring today), true = homed,
+	// false = not homed.
+	Homed *bool `json:"homed,omitempty"`
 }
 
 // HMSEntry is one decoded Bambu HMS (Health Management System) event.
@@ -109,4 +114,12 @@ type Printer interface {
 
 	// SetLight turns the chamber light on or off.
 	SetLight(ctx context.Context, on bool) error
+
+	// HomeAll homes all axes (equivalent to G28 with no axis arguments).
+	HomeAll(ctx context.Context) error
+
+	// Jog moves the toolhead by the given relative deltas (in mm) on each
+	// axis at the given feedrate (in mm/min). A zero delta on an axis means
+	// no movement on that axis.
+	Jog(ctx context.Context, x, y, z float64, speedMMPerMin int) error
 }

@@ -520,6 +520,51 @@ func TestHandleReport_FullStatusUpdate(t *testing.T) {
 	}
 }
 
+func TestHandleReport_HomeFlag(t *testing.T) {
+	t.Run("bit 0 set -> homed true", func(t *testing.T) {
+		c := newTestPrinterClient(nil)
+		payload := []byte(`{"print": {"gcode_state": "IDLE", "home_flag": 1}}`)
+		c.handleReport(nil, newMockMessage(payload))
+		s := c.Status()
+		if s.Homed == nil || !*s.Homed {
+			t.Errorf("Homed = %v; want true (home_flag=1)", s.Homed)
+		}
+	})
+
+	t.Run("bit 0 clear -> homed false", func(t *testing.T) {
+		c := newTestPrinterClient(nil)
+		payload := []byte(`{"print": {"gcode_state": "IDLE", "home_flag": 0}}`)
+		c.handleReport(nil, newMockMessage(payload))
+		s := c.Status()
+		if s.Homed == nil || *s.Homed {
+			t.Errorf("Homed = %v; want false (home_flag=0)", s.Homed)
+		}
+	})
+
+	t.Run("other bits set without bit 0 -> homed false", func(t *testing.T) {
+		// Exercises that only bit 0 (value 1) is treated as the "homed"
+		// signal — other bits in the mask (e.g. value 2) must not be
+		// mistaken for it.
+		c := newTestPrinterClient(nil)
+		payload := []byte(`{"print": {"gcode_state": "IDLE", "home_flag": 2}}`)
+		c.handleReport(nil, newMockMessage(payload))
+		s := c.Status()
+		if s.Homed == nil || *s.Homed {
+			t.Errorf("Homed = %v; want false (home_flag=2, bit 0 clear)", s.Homed)
+		}
+	})
+
+	t.Run("bit 0 set alongside other bits -> homed true", func(t *testing.T) {
+		c := newTestPrinterClient(nil)
+		payload := []byte(`{"print": {"gcode_state": "IDLE", "home_flag": 3}}`)
+		c.handleReport(nil, newMockMessage(payload))
+		s := c.Status()
+		if s.Homed == nil || !*s.Homed {
+			t.Errorf("Homed = %v; want true (home_flag=3, bit 0 set)", s.Homed)
+		}
+	})
+}
+
 func TestHandleReport_NilBedTemper(t *testing.T) {
 	c := newTestPrinterClient(nil)
 

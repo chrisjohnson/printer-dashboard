@@ -191,4 +191,150 @@ test.describe('Dashboard', () => {
       await page.evaluate(() => (window as any)._printerCache['u1'].light_on),
     ).toBe(initiallyOn);
   });
+
+  // K-081: movement/homing control pad (jog X/Y/Z + Home All). u1 (Snapmaker)
+  // is used throughout since it's reliably online+idle in this sandbox (the
+  // Bambu test printers require real cloud credentials — see the chamber
+  // temp row test above).
+  test.describe('Movement pad', () => {
+    test('jog and Home All buttons are disabled while printing, enabled while idle', async ({
+      page,
+    }) => {
+      await page.goto('/');
+      await expect(page.locator('#printer-u1 .jog-x-plus')).toBeAttached();
+
+      // u1 starts idle in the test fixture — movement buttons should be enabled.
+      await expect(page.locator('#printer-u1 .jog-x-plus')).toBeEnabled();
+      await expect(page.locator('#printer-u1 .jog-z-plus')).toBeEnabled();
+      await expect(page.locator('#printer-u1 .btn-home-all')).toBeEnabled();
+
+      // Simulate a WS update putting the printer into "printing" — same
+      // mergeWithCache()/updateCard() path a real printer_update message
+      // takes (mirrors the optimistic-light-toggle test's WS simulation
+      // above).
+      await page.evaluate(() => {
+        const w = window as any;
+        const merged = w.mergeWithCache({ id: 'u1', state: 'printing' });
+        w.updateCard(merged);
+      });
+
+      await expect(page.locator('#printer-u1 .jog-x-plus')).toBeDisabled();
+      await expect(page.locator('#printer-u1 .jog-y-plus')).toBeDisabled();
+      await expect(page.locator('#printer-u1 .jog-z-plus')).toBeDisabled();
+      await expect(page.locator('#printer-u1 .btn-home-all')).toBeDisabled();
+
+      // Switching back to idle re-enables them — this is the K-053-class
+      // sync check: renderCard() and updateCard() must agree on which
+      // buttons the .move-section disabled-toggle covers.
+      await page.evaluate(() => {
+        const w = window as any;
+        const merged = w.mergeWithCache({ id: 'u1', state: 'idle' });
+        w.updateCard(merged);
+      });
+
+      await expect(page.locator('#printer-u1 .jog-x-plus')).toBeEnabled();
+      await expect(page.locator('#printer-u1 .btn-home-all')).toBeEnabled();
+    });
+
+    test('X/Y jog buttons send the jog request immediately with no confirmation', async ({
+      page,
+    }) => {
+      let jogBody: any = null;
+      await page.route('**/api/printers/u1/jog', async (route) => {
+        jogBody = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 'ok' }),
+        });
+      });
+
+      await page.goto('/');
+      await expect(page.locator('#printer-u1 .jog-x-plus')).toBeEnabled();
+
+      // Default step size is the smallest/most conservative option (0.1mm).
+      await expect(page.locator('#printer-u1 .step-select')).toHaveValue('0.1');
+
+      // No confirmation dialog should appear for X/Y — fail the test if one does.
+      page.once('dialog', (dialog) => {
+        throw new Error('Unexpected dialog for X jog: ' + dialog.message());
+      });
+
+      await page.locator('#printer-u1 .jog-x-plus').click();
+
+      await expect.poll(() => jogBody).not.toBeNull();
+      expect(jogBody).toEqual({ x: 0.1, y: 0, z: 0 });
+
+      // Y- with a larger step size selected.
+      jogBody = null;
+      await page.locator('#printer-u1 .step-select').selectOption('10');
+      await page.locator('#printer-u1 .jog-y-minus').click();
+
+      await expect.poll(() => jogBody).not.toBeNull();
+      expect(jogBody).toEqual({ x: 0, y: -10, z: 0 });
+    });
+
+    test('Z jog button shows a confirmation dialog and only sends after confirming', async ({
+      page,
+    }) => {
+      let jogBody: any = null;
+      await page.route('**/api/printers/u1/jog', async (route) => {
+        jogBody = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 'ok' }),
+        });
+      });
+
+      await page.goto('/');
+      await expect(page.locator('#printer-u1 .jog-z-plus')).toBeEnabled();
+
+      // Clicking Z+ shows the in-page confirmation modal (not a native
+      // dialog), and must NOT send the request yet.
+      await page.locator('#printer-u1 .jog-z-plus').click();
+      await expect(page.locator('#zjog-modal-u1')).toBeVisible();
+      await expect(page.locator('#zjog-modal-text-u1')).toContainText('Move Z by 0.1mm');
+      expect(jogBody).toBeNull();
+
+      // Cancel — must not send anything.
+      await page.locator('#zjog-modal-u1 .btn-zjog-cancel').click();
+      await expect(page.locator('#zjog-modal-u1')).toBeHidden();
+      expect(jogBody).toBeNull();
+
+      // Click Z+ again and confirm this time.
+      await page.locator('#printer-u1 .jog-z-plus').click();
+      await expect(page.locator('#zjog-modal-u1')).toBeVisible();
+      await page.locator('#zjog-modal-u1 .btn-zjog-confirm').click();
+      await expect(page.locator('#zjog-modal-u1')).toBeHidden();
+
+      await expect.poll(() => jogBody).not.toBeNull();
+      expect(jogBody).toEqual({ x: 0, y: 0, z: 0.1 });
+    });
+
+    test('Home All sends the home request with no confirmation', async ({
+      page,
+    }) => {
+      let homeCalled = false;
+      await page.route('**/api/printers/u1/home', async (route) => {
+        homeCalled = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ status: 'ok' }),
+        });
+      });
+
+      await page.goto('/');
+      await expect(page.locator('#printer-u1 .btn-home-all')).toBeEnabled();
+
+      page.once('dialog', (dialog) => {
+        throw new Error('Unexpected dialog for Home All: ' + dialog.message());
+      });
+
+      await page.locator('#printer-u1 .btn-home-all').click();
+
+      await expect.poll(() => homeCalled).toBe(true);
+    });
+  });
 });

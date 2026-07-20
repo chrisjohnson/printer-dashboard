@@ -605,6 +605,114 @@ func TestSetLight_HTTPError_DoesNotTrackState(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// HomeAll / Jog tests
+// ---------------------------------------------------------------------------
+
+func TestHomeAll_SendsCorrectGCode(t *testing.T) {
+	ts, captureBody := mockGCodeServer(t, 200)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	if err := p.HomeAll(context.Background()); err != nil {
+		t.Errorf("HomeAll() returned error: %v", err)
+	}
+
+	body := captureBody()
+	if body == nil {
+		t.Fatal("no request body captured")
+	}
+	if body["script"] != "G28" {
+		t.Errorf("script = %q; want %q", body["script"], "G28")
+	}
+}
+
+func TestHomeAll_HTTPError(t *testing.T) {
+	ts, _ := mockGCodeServer(t, 500)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	if err := p.HomeAll(context.Background()); err == nil {
+		t.Fatal("expected error for HTTP 500, got nil")
+	}
+}
+
+func TestJog_SendsCorrectGCode(t *testing.T) {
+	tests := []struct {
+		name       string
+		x, y, z    float64
+		speed      int
+		wantScript string
+	}{
+		{
+			name:       "x and y move",
+			x:          10,
+			y:          -5,
+			z:          0,
+			speed:      1500,
+			wantScript: "G91\nG1 X10 Y-5 F1500\nG90",
+		},
+		{
+			name:       "z only move",
+			x:          0,
+			y:          0,
+			z:          2.5,
+			speed:      600,
+			wantScript: "G91\nG1 Z2.5 F600\nG90",
+		},
+		{
+			name:       "all three axes",
+			x:          1,
+			y:          2,
+			z:          3,
+			speed:      3000,
+			wantScript: "G91\nG1 X1 Y2 Z3 F3000\nG90",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts, captureBody := mockGCodeServer(t, 200)
+			defer ts.Close()
+
+			p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+			p.testBaseURL = ts.URL
+			p.httpClient = ts.Client()
+
+			if err := p.Jog(context.Background(), tt.x, tt.y, tt.z, tt.speed); err != nil {
+				t.Errorf("Jog() returned error: %v", err)
+			}
+
+			body := captureBody()
+			if body == nil {
+				t.Fatal("no request body captured")
+			}
+			if body["script"] != tt.wantScript {
+				t.Errorf("script = %q; want %q", body["script"], tt.wantScript)
+			}
+		})
+	}
+}
+
+func TestJog_HTTPError(t *testing.T) {
+	ts, _ := mockGCodeServer(t, 500)
+	defer ts.Close()
+
+	p := New(config.PrinterDef{ID: "test-u1", Name: "Test U1"})
+	p.testBaseURL = ts.URL
+	p.httpClient = ts.Client()
+
+	if err := p.Jog(context.Background(), 1, 0, 0, 1500); err == nil {
+		t.Fatal("expected error for HTTP 500, got nil")
+	}
+}
+
 // mockGCodeErrorServer creates an httptest.Server that responds to POST
 // /printer/gcode/script with HTTP 200 and an embedded Moonraker error body,
 // simulating cases like klippy not being connected.

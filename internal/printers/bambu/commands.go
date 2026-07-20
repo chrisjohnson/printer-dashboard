@@ -107,6 +107,42 @@ func setLightCommand(on bool) []byte {
 	}})
 }
 
+// homeAllCommand returns the JSON payload to home all axes via G-code G28.
+func homeAllCommand() []byte {
+	return mustMarshal(command{Print: printCommand{
+		Command: "gcode_line",
+		Param:   "G28\n",
+	}})
+}
+
+// jogCommand returns the JSON payload to move the toolhead by the given
+// relative deltas (mm) at the given feedrate (mm/min), via G-code. It
+// switches to relative positioning (G91), issues a single G1 move containing
+// only the axes with a non-zero delta (an axis term is omitted entirely
+// rather than emitted as e.g. "Z0", which would be a no-op move but adds
+// noise), and restores absolute positioning (G90) afterward so subsequent
+// commands aren't accidentally interpreted as relative moves. %g formatting
+// avoids trailing zeros (e.g. "10" instead of "10.000000").
+func jogCommand(x, y, z float64, speed int) []byte {
+	move := "G1"
+	if x != 0 {
+		move += fmt.Sprintf(" X%g", x)
+	}
+	if y != 0 {
+		move += fmt.Sprintf(" Y%g", y)
+	}
+	if z != 0 {
+		move += fmt.Sprintf(" Z%g", z)
+	}
+	move += fmt.Sprintf(" F%d", speed)
+
+	gcode := fmt.Sprintf("G91\n%s\nG90\n", move)
+	return mustMarshal(command{Print: printCommand{
+		Command: "gcode_line",
+		Param:   gcode,
+	}})
+}
+
 func mustMarshal(v any) []byte {
 	data, err := json.Marshal(v)
 	if err != nil {

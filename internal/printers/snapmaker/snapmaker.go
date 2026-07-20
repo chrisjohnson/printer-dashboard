@@ -645,6 +645,36 @@ func (p *Printer) SetLight(ctx context.Context, on bool) error {
 	return nil
 }
 
+// HomeAll homes all axes via G-code G28.
+func (p *Printer) HomeAll(ctx context.Context) error {
+	return p.sendGCode(ctx, "G28")
+}
+
+// Jog moves the toolhead by the given relative deltas (mm) at the given
+// feedrate (mm/min). It switches to relative positioning (G91), issues a
+// single G1 move containing only the axes with a non-zero delta, and
+// restores absolute positioning (G90) afterward so subsequent commands
+// aren't accidentally interpreted as relative moves — same shape as Bambu's
+// jogCommand, adapted to a plain multi-line G-code script (sendGCode takes
+// the raw script; no JSON command wrapping needed here, Moonraker's
+// gcode/script endpoint does that).
+func (p *Printer) Jog(ctx context.Context, x, y, z float64, speedMMPerMin int) error {
+	move := "G1"
+	if x != 0 {
+		move += fmt.Sprintf(" X%g", x)
+	}
+	if y != 0 {
+		move += fmt.Sprintf(" Y%g", y)
+	}
+	if z != 0 {
+		move += fmt.Sprintf(" Z%g", z)
+	}
+	move += fmt.Sprintf(" F%d", speedMMPerMin)
+
+	script := fmt.Sprintf("G91\n%s\nG90", move)
+	return p.sendGCode(ctx, script)
+}
+
 // sendGCode sends a GCode command to the printer via Moonraker's
 // POST /printer/gcode/script endpoint.
 func (p *Printer) sendGCode(ctx context.Context, script string) error {

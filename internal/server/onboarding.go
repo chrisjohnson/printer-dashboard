@@ -802,6 +802,85 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }
       .skip-modal-actions button { min-height: 44px; }
     }
+
+    /* Movement pad — step-size selector + X/Y/Z jog buttons + Home All.
+       Laid out as a labeled 3x3 grid (mirroring a physical jog pad: Y+ above
+       Y-, X-/X+ either side, Z+/Z- on the far right) rather than reusing
+       .controls' flex-wrap row, since a directional pad reads far more
+       clearly as a grid than as six same-width buttons in a line. Buttons
+       still reuse .controls button's color/sizing rules below so they match
+       the rest of the card's button styling instead of inventing a new look. */
+    .move-section { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+    .move-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .move-header .label { font-size: 0.75rem; color: var(--text-subtle); font-weight: 600; }
+    .step-select {
+      padding: 4px 8px; border-radius: var(--radius-control); border: 1px solid var(--border-subtle);
+      background: var(--bg-card); color: var(--text); font-size: 0.75rem; font-weight: 600;
+    }
+    .jog-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr) 12px repeat(1, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 6px;
+    }
+    .jog-pad button {
+      background: var(--accent); color: #fff; border: 1px solid var(--accent);
+      padding: 9px 6px; border-radius: var(--radius-control); cursor: pointer;
+      font-size: 0.8125rem; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .jog-pad button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .jog-pad button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .jog-pad .jog-spacer { visibility: hidden; }
+    .jog-x-minus { grid-column: 1; grid-row: 1 / span 2; }
+    .jog-y-plus { grid-column: 2; grid-row: 1; }
+    .jog-y-minus { grid-column: 2; grid-row: 2; }
+    .jog-x-plus { grid-column: 3; grid-row: 1 / span 2; }
+    .jog-z-plus { grid-column: 5; grid-row: 1; background: var(--danger); border-color: var(--danger); }
+    .jog-z-minus { grid-column: 5; grid-row: 2; background: var(--danger); border-color: var(--danger); }
+    .jog-z-plus:hover:not(:disabled), .jog-z-minus:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+    .btn-home-all {
+      background: var(--bg-card); color: var(--text); border: 1px solid var(--border-subtle);
+      padding: 9px 14px; border-radius: var(--radius-control); cursor: pointer;
+      font-size: 0.8125rem; font-weight: 700;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .btn-home-all:hover:not(:disabled) { background: #e9ebee; border-color: #d0d0d6; }
+    .btn-home-all:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Z-axis jog confirmation modal — mirrors .skip-modal exactly (same
+       fixed-overlay-plus-centered-card structure) since both are "confirm a
+       physically consequential action" dialogs. Kept as a visually distinct
+       class rather than reusing .skip-modal directly so each has its own
+       per-printer element id without colliding. */
+    .zjog-modal {
+      position: fixed; inset: 0; z-index: 1000;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .zjog-modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
+    .zjog-modal-content {
+      position: relative; background: var(--bg-card); border-radius: var(--radius-card);
+      max-width: 400px; width: calc(100% - 32px); padding: 20px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.2);
+    }
+    .zjog-modal-content h3 { margin: 0 0 8px; font-size: 1.0625rem; }
+    .zjog-modal-content p { margin: 0 0 12px; color: var(--text-muted); font-size: 0.875rem; }
+    .zjog-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .zjog-modal-actions button {
+      padding: 9px 16px; border-radius: var(--radius-control); border: 1px solid transparent;
+      font-size: 0.8125rem; font-weight: 700; cursor: pointer;
+    }
+    .btn-zjog-confirm { background: var(--danger); color: #fff; }
+    .btn-zjog-confirm:hover { background: var(--danger-hover); }
+    .btn-zjog-cancel { background: var(--bg-card); border-color: var(--border-subtle); color: var(--text-muted); }
+    .btn-zjog-cancel:hover { background: #e9ebee; }
+    @media (max-width: 767px) {
+      .zjog-modal-content {
+        width: 100%; height: 100%; max-width: none; border-radius: 0;
+        display: flex; flex-direction: column; justify-content: center;
+      }
+      .zjog-modal-actions button { min-height: 44px; }
+    }
   </style>
 </head>
 <body>
@@ -1067,6 +1146,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (resumeBtn) resumeBtn.disabled = st !== 'paused';
       if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
       if (skipBtn) skipBtn.disabled = st !== 'printing';
+
+      // 9b. Movement-pad buttons (jog X/Y/Z + Home All) — enabled only when
+      // online and idle, same condition moveSectionHtml() used at initial
+      // render (see its comment: this is a UX mirror of the backend's real
+      // requireIdleAndOnline gate, not the safety-critical layer itself).
+      // Must stay in sync with renderCard()/moveSectionHtml() the same way
+      // pause/resume/cancel/skip already do above — this is exactly the
+      // "K-053-class" drift this file's comments warn about elsewhere.
+      const moveDisabled = !p.online || st !== 'idle';
+      const moveSection = card.querySelector('.move-section');
+      if (moveSection) {
+        moveSection.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
+          btn.disabled = moveDisabled;
+        });
+      }
 
       // 10. Light toggle — update the CSS switch state from data-light row.
       const lightRow = card.querySelector('[data-light]');
@@ -1435,7 +1529,45 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
         '</div>' +
         '<button class="skipped-badge" id="skipped-badge-' + p.id + '" onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" style="display:none;"></button>' +
+        moveSectionHtml(p) +
         skipModalHtml(p.id) +
+        zJogModalHtml(p.id) +
+      '</div>';
+    }
+
+    // Movement pad: step-size selector + X/Y/Z jog buttons + Home All.
+    // Buttons are enabled only when the printer is online and idle (moving
+    // the toolhead mid-print risks crashing it into the print) — mirrors the
+    // st !== 'printing' disabled-ternary convention already used for
+    // pause/resume/cancel/skip above, gated on moveDisabled here instead.
+    // This is a UX nicety only: the backend's requireIdleAndOnline is the
+    // real enforcement (see server.go), so the exact disabled condition here
+    // doesn't need to be perfectly authoritative — just a reasonable mirror.
+    function moveSectionHtml(p) {
+      const st = p.state || 'unknown';
+      const moveDisabled = !p.online || st !== 'idle';
+      const dis = moveDisabled ? 'disabled' : '';
+      const safeId = escapeJsString(p.id);
+      return '<div class="move-section" id="move-section-' + p.id + '">' +
+        '<div class="move-header">' +
+          '<span class="label">Move</span>' +
+          '<select class="step-select" id="step-select-' + p.id + '">' +
+            '<option value="0.1">0.1 mm</option>' +
+            '<option value="1">1 mm</option>' +
+            '<option value="10">10 mm</option>' +
+            '<option value="100">100 mm</option>' +
+          '</select>' +
+        '</div>' +
+        '<div class="jog-pad">' +
+          '<button class="jog-x-minus" onclick="jog(\'' + safeId + '\',\'x\',-1)" ' + dis + '>X-</button>' +
+          '<button class="jog-y-plus" onclick="jog(\'' + safeId + '\',\'y\',1)" ' + dis + '>Y+</button>' +
+          '<button class="jog-y-minus" onclick="jog(\'' + safeId + '\',\'y\',-1)" ' + dis + '>Y-</button>' +
+          '<button class="jog-x-plus" onclick="jog(\'' + safeId + '\',\'x\',1)" ' + dis + '>X+</button>' +
+          '<span class="jog-spacer"></span>' +
+          '<button class="jog-z-plus" onclick="jog(\'' + safeId + '\',\'z\',1)" ' + dis + '>Z+</button>' +
+          '<button class="jog-z-minus" onclick="jog(\'' + safeId + '\',\'z\',-1)" ' + dis + '>Z-</button>' +
+        '</div>' +
+        '<button class="btn-home-all" onclick="homeAll(\'' + safeId + '\')" ' + dis + '>Home All</button>' +
       '</div>';
     }
 
@@ -1455,6 +1587,27 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<div class="skip-modal-actions">' +
             '<button class="btn-skip-confirm" onclick="confirmSkip(\'' + safeId + '\')">Skip Object</button>' +
             '<button class="btn-skip-cancel" onclick="closeSkipModal(\'' + safeId + '\')">Cancel</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // Z-axis jog confirmation modal markup for one printer card. Mirrors
+    // skipModalHtml() exactly (always-in-DOM, hidden via display:none,
+    // overlay-click-to-cancel) since both are "confirm before a physically
+    // consequential action" dialogs. The message text is filled in by
+    // openZJogModal() right before the modal is shown, since the delta/axis
+    // being confirmed is only known at click time.
+    function zJogModalHtml(id) {
+      var safeId = escapeJsString(id);
+      return '<div class="zjog-modal" id="zjog-modal-' + id + '" style="display:none">' +
+        '<div class="zjog-modal-overlay" onclick="closeZJogModal(\'' + safeId + '\')"></div>' +
+        '<div class="zjog-modal-content">' +
+          '<h3>Move Z axis?</h3>' +
+          '<p id="zjog-modal-text-' + id + '"></p>' +
+          '<div class="zjog-modal-actions">' +
+            '<button class="btn-zjog-confirm" id="zjog-modal-confirm-' + id + '">Move Z</button>' +
+            '<button class="btn-zjog-cancel" onclick="closeZJogModal(\'' + safeId + '\')">Cancel</button>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -1538,6 +1691,88 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .then(r => r.json())
         .then(d => { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
         .catch(() => alert('Network error'));
+    }
+
+    // homeAll sends G28 (home all axes). No confirmation — homing is the
+    // safe/recovery action here, not the risky one (see jog()'s Z-axis
+    // confirmation below). Mirrors cmd()'s fetch/error-handling shape; the
+    // backend responds 409 if the printer isn't idle/online right now (see
+    // requireIdleAndOnline in server.go), which reads as a plain "Command
+    // failed: printer is not idle ..." alert here, same as any other
+    // rejected command — the UI doesn't try to distinguish 409 from other
+    // failures since the message text already explains it.
+    function homeAll(id) {
+      fetch('/api/printers/' + id + '/home', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
+        .catch(() => alert('Network error'));
+    }
+
+    // getStepSize reads the currently-selected jog step size (mm) for a
+    // printer's movement pad. Falls back to the smallest/most conservative
+    // step (0.1mm, the <select>'s first/default option) if the element can't
+    // be found for some reason.
+    function getStepSize(id) {
+      var sel = document.getElementById('step-select-' + id);
+      var v = sel ? parseFloat(sel.value) : 0.1;
+      return isNaN(v) ? 0.1 : v;
+    }
+
+    // jog handles a single jog-pad button click. axis is 'x'|'y'|'z',
+    // direction is 1 or -1. X/Y send immediately; Z shows a confirmation
+    // dialog first (collision risk — nozzle moving toward the bed/print) via
+    // openZJogModal(), mirroring the skip-object modal's confirm-then-fire
+    // pattern above.
+    function jog(id, axis, direction) {
+      const delta = getStepSize(id) * direction;
+      const body = { x: 0, y: 0, z: 0 };
+      body[axis] = delta;
+      if (axis === 'z') {
+        openZJogModal(id, delta, body);
+        return;
+      }
+      sendJog(id, body);
+    }
+
+    // sendJog POSTs the jog request. The backend cannot confirm the toolhead
+    // physically finished moving (no firmware ack) — a 200 here only means
+    // the command was accepted and sent, not that the move completed. Errors
+    // (400 invalid request, 409 not idle/online) surface via alert(), same
+    // convention as cmd()/homeAll() above.
+    function sendJog(id, body) {
+      fetch('/api/printers/' + id + '/jog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function(r) { return r.json(); })
+        .then(function(d) { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
+        .catch(function() { alert('Network error'); });
+    }
+
+    // openZJogModal fills in the confirmation message for this specific move
+    // and shows the Z-jog modal. The confirm button's onclick is (re)wired
+    // here rather than baked into zJogModalHtml() at render time, since the
+    // delta/body being confirmed is only known now, at click time.
+    function openZJogModal(id, delta, body) {
+      var modal = document.getElementById('zjog-modal-' + id);
+      if (!modal) return;
+      var text = document.getElementById('zjog-modal-text-' + id);
+      if (text) {
+        text.textContent = 'Move Z by ' + delta + 'mm? This can crash the nozzle into the bed or the print if not homed correctly.';
+      }
+      var confirmBtn = document.getElementById('zjog-modal-confirm-' + id);
+      if (confirmBtn) {
+        confirmBtn.onclick = function() {
+          closeZJogModal(id);
+          sendJog(id, body);
+        };
+      }
+      modal.style.display = 'flex';
+    }
+
+    function closeZJogModal(id) {
+      var modal = document.getElementById('zjog-modal-' + id);
+      if (modal) modal.style.display = 'none';
     }
 
     // openSkipModal shows the skip-object confirmation modal and refreshes
