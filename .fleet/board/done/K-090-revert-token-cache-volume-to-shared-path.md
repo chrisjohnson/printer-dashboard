@@ -60,40 +60,24 @@ Confirmed on disk: `~/.printer-dashboard/` already exists predating K-088
 `config.yaml` exists at the main checkout root.
 
 ## Plan
-1. [ ] Implementer: update `AGENTS.md` and `README.md`'s "Running with
-   Docker" docker run command:
-   - Token cache mount: change
-     `-v "${HOME}/.printer-dashboard-${WORKTREE:-default}:/home/app/.printer-dashboard:rw"`
-     back to shared: `-v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw"`
-     (drop the `${WORKTREE:-default}` suffix here only — keep it for
-     image/container name).
-   - config.yaml mount: change
-     `-v "$(pwd)/config.yaml:/app/config.yaml:rw"` to
-     `-v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw"` —
-     config.yaml now lives in the shared host dir, not per-checkout.
-   - Update the "copy config.example.yaml" first-time-setup step to
-     target `~/.printer-dashboard/config.yaml` instead of a repo-local
-     copy.
-2. [ ] Implementer: update surrounding prose in both files: explain why
-   token cache + config.yaml are intentionally shared (account-scoped,
-   rarely-written/self-healing for the token; config is host-machine-wide
-   printer configuration, not per-checkout) while image/container/port
-   remain per-worker (live resources that collide destructively).
-3. [ ] Implementer: copy the human's real config from
-   `/Users/chrisjohnson/src/chrisjohnson/printer-dashboard/config.yaml`
-   to `~/.printer-dashboard/config.yaml` (create the target dir if
-   needed — it already exists here, but don't assume that generally).
-   Do NOT print/log the file contents (may contain real credentials).
-4. [ ] Implementer: the container already running from K-089
-   (`printer-dashboard-gentle-loris-hazel`, host port 55001) was launched
-   with the old per-worktree mount scheme and a placeholder config —
-   restart it (`docker rm -f` + re-`docker run`) using the corrected
-   shared mounts and the now-real `config.yaml`, so the human's dashboard
-   actually reflects their real printers. Report the resulting host port
-   (may change since it's still `-p 0:8080` random-assigned) so the human
-   can get an updated URL if it differs from 55001.
-5. [ ] Run full test suite (docs-only change, but sanity check nothing
-   else broke), commit, push, open PR.
+1. [x] Implementer: updated both files' docker run commands — token cache
+   mount reverted to shared `${HOME}/.printer-dashboard`, config.yaml
+   mount changed to `${HOME}/.printer-dashboard/config.yaml`, first-time
+   setup snippet updated to target the shared path.
+2. [x] Implementer: updated surrounding prose in both files explaining
+   the shared-vs-per-worker rationale.
+3. [x] Implementer: copied real config from main checkout root to
+   `~/.printer-dashboard/config.yaml` (no backup needed, nothing existed
+   at destination). Did not log contents.
+4. [x] Implementer: restarted the K-089 container with corrected mounts.
+   **New host port: 55002.** Logs confirm healthy — no crash-loop, and
+   critically: it loaded the existing cached Bambu token from the shared
+   cache and did NOT need a fresh login, validating the whole premise of
+   this fix. All 3 real printers registered, MQTT connected, camera
+   connected.
+5. [x] Implementer: full test suite passes, committed. I reviewed the
+   diff, rebased for a clean PR, re-verified tests myself, pushed, PR:
+   https://github.com/chrisjohnson/printer-dashboard/pull/8
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -101,6 +85,7 @@ Confirmed on disk: `~/.printer-dashboard/` already exists predating K-088
 -->
 <!-- signal: gentle-loris-hazel 2026-07-20T02:35Z — filed to backlog per §2 (self-correction of my own K-088 work, discovered via human question during K-089); human said hold off on fixing now, not started -->
 <!-- signal: gentle-loris-hazel 2026-07-20T02:29Z — human confirmed + expanded scope (config.yaml consolidation), promoting to now/ and claiming -->
+<!-- signal: gentle-loris-hazel 2026-07-20T03:05Z — done, PR #8 open, container restarted on port 55002 with real config, moved to done/ -->
 
 ## Working context
 - Files: `AGENTS.md` (~lines 12-44), `README.md` (~lines 37-71) — both
@@ -119,12 +104,16 @@ Confirmed on disk: `~/.printer-dashboard/` already exists predating K-088
   config.yaml into `~/.printer-dashboard`, using their real config at the
   main checkout root. Promoting to now/ and claiming per §2 (human
   request is the promotion).
+- 2026-07-20 — gentle-loris-hazel: Implementer completed both the docs
+  change and the operational work. The restarted container's own logs
+  are the empirical proof this fix is correct: it found and reused the
+  pre-existing cached token from `~/.printer-dashboard` (predating K-088,
+  from 2026-07-08) rather than requiring a fresh Bambu Cloud login — the
+  exact scenario this card exists to fix. PR #8 opened, build/vet/test
+  all pass. Closing as done.
 
 ## Handoff notes
-Implementer dispatched by gentle-loris-hazel 2026-07-20T02:29Z, working in
-`.fleet/worktrees/gentle-loris-hazel` on a fresh branch off origin/main.
-Scope: doc changes (token cache + config.yaml mounts, both files) + copy
-real config.yaml to `~/.printer-dashboard/config.yaml` (backing up any
-existing one) + restart the K-089 container with corrected mounts. PR
-not to be opened until I review the operational steps. Awaiting
-completion.
+PR #8 open against main, not yet merged. Dashboard is live at
+`http://192.168.1.170:55002` (port changed from K-089's 55001 due to the
+container restart) with real printer data now, since it's using the
+human's actual `config.yaml`.
