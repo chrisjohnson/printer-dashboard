@@ -3,8 +3,8 @@ id: K-081
 # Filename pattern: {ID}-{slugified-title}.md
 title: Control pad section movement and homing
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: gentle-loris-hazel   # pet name of the agent session working this card, e.g. otter
+claimed_at: 2026-07-20T03:08Z    # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
 related_cards: []
@@ -28,6 +28,7 @@ protocol reference (movement GCode shapes, safety gates) before starting.
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
+<!-- signal: gentle-loris-hazel 2026-07-20T03:08Z — claiming, dispatching researcher first (safety-sensitive: physical printer movement) to review K-054 protocol notes, existing K-031 pattern, and safety gates before any implementation -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
