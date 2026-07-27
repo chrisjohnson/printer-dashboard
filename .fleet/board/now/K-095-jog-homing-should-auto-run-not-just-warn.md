@@ -17,4 +17,8 @@ related_cards: []
 When a user tries to jog a Snapmaker printer that hasn't been homed, the frontend currently shows a warning and blocks the jog. The user requested that instead of just warning, it should offer/prompt to run homing first, and unless the user hits cancel, automatically execute the homing sequence before proceeding with the jog.
 
 ## Plan
-1. [ ]
+1. [ ] Determine if printer is homed — check `p.homed` in printer card data
+2. [ ] If homed: show existing Z-jog confirmation modal (unchanged behavior)
+3. [ ] If NOT homed: modify modal to add "Run Homing" button alongside cancel
+4. [ ] Implement homing flow: click "Run Homing" → call home API → wait → show Z-jog confirmation
+5. [ ] Update tests in dashboard.test.ts
