@@ -17,15 +17,20 @@ related_cards: []
 P1S cloud MQTT field audit. gcode_file vs subtask_name, temps, fallback parsing. Closely related to K-032 parser work.
 
 ## Plan
-1. [ ] Researcher: Investigate current MQTT payload structure for P1S printers.
+1. [x] Researcher: Investigate current MQTT payload structure for P1S printers.
 2. [ ] Researcher: Identify discrepancies between `gcode_file` and `subtask_name` fields.
 3. [ ] Researcher: Audit temperature field parsing logic and identify fallback edge cases.
 4. [ ] Implementer: Propose parser improvements based on audit findings.
 
 ## Signals
 <!-- signal: opencode 2025-07-27T12:00:00Z — claimed card and started research -->
+<!-- signal: opencode 2025-07-27T12:05:00Z — completed initial research on MQTT structure and fallback logic -->
 
 ## Working context
+Initial research shows:
+- `subtask_name` is used in P1S-style reports for the filename (instead of `gcode_file`).
+- `print.info.temp` acts as a fallback for chamber/ambient temperature.
+- Temperatures are `float64` pointers.
 
 ## Decision log
 
