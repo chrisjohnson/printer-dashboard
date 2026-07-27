@@ -3,8 +3,8 @@ id: K-095
 # Filename pattern: {ID}-{slugified-title}.md
 title: Jog homing prompt should auto-run homing, not just warn
 initiative_id: null
-claimed_by: null
-claimed_at: null
+claimed_by: opencode
+claimed_at: 2025-07-27T12:00:00Z
 blocks: null
 blocked_by: null
 related_cards: []
