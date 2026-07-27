@@ -21,11 +21,14 @@ P1S cloud MQTT field audit. gcode_file vs subtask_name, temps, fallback parsing.
 2. [x] Researcher: Identify discrepancies between `gcode_file` and `subtask_name` fields.
 3. [x] Researcher: Audit temperature field parsing logic and identify fallback edge cases.
 4. [x] Implementer: Propose parser improvements based on audit findings.
+5. [x] Implementer: Apply all improvements to `client.go`.
 
 ## Signals
 <!-- signal: opencode 2025-07-27T12:00:00Z — claimed card and started research -->
 <!-- signal: opencode 2025-07-27T12:05:00Z — completed initial research on MQTT structure and fallback logic -->
 <!-- signal: opencode 2025-07-27T12:10:00Z — completed full audit of file fields and temperature fallback logic -->
+<!-- signal: opencode 2025-07-27T12:15:00Z — implemented all parser improvements -->
+<!-- signal: opencode 2025-07-27T12:16:00Z — all tests pass -->
 
 ## Working context
 
@@ -54,18 +57,24 @@ Test coverage is thorough (`client_test.go` lines 1900-2298). Idle-clear logic w
 - Currently not a problem (Bambu always sends integers), but latent fragility with no defensive logging.
 
 ## Decision log
+- Applied `validateTemp(id, value, min, max) *float64` helper at `client.go:46-58` to centralize all temperature validation logic.
+- Added range validation to direct-wire `ChamberTemper` and `ChamberTargetTemper` in `client.go:517-522` and `client.go:552-557`.
+- Added truncation warning for `info.temp` fractional parts at `client.go:530-533`.
+- Documented asymmetric range validation: `-50..100` for ambient (can dip below zero) vs `0..100` for heater target (always non-negative).
+- All tests pass (`go test ./internal/printers/bambu/...`).
 
 ## Handoff notes
 
-### Recommended Parser Improvements
+### Changes Applied to `client.go`
 
-1. **Add range validation to direct-wire temperature fields**: Apply the same `-50 <= temp <= 100` bounds check to `ChamberTemper` and `ChamberTargetTemper` from the Bambu wire to prevent silently accepting corrupted values.
+1. **New helper**: `validateTemp(id, value, min, max) *float64` — returns pointer to value if in range, or nil with log warning if out of range.
 
-2. **Log truncation warnings for `info.temp`**: When `int64(*p.Info.Temp)` is called, add a check: if `*p.Info.Temp != float64(int64(*p.Info.Temp))`, log a warning. This catches future firmware changes that might send non-integer values.
+2. **Direct-wire validation**: `ChamberTemper` now validates `-50..100`, `ChamberTargetTemper` validates `0..100`. Both skip update if out of range (preserving previous readings).
 
-3. **Document the asymmetric range validation**: Add a comment explaining why `ChamberTargetTemp` uses `0-100` while `ChamberTemp` uses `-50-100`. This prevents future developers from thinking it's a bug.
+3. **Truncation warning**: Logs when `info.temp` has a fractional part that would be discarded by `int64()`.
 
-4. **Consider unifying temperature validation**: Extract a `validateTemp(value float64, min, max float64) *float64` helper to centralize validation logic and ensure all paths use consistent bounds.
+4. **Unified validation**: Replaced inline range checks with calls to `validateTemp` for `info.temp` decoded current/target values.
 
-These improvements should be applied in `client.go` as part of the temperature mapping logic in `handleReport`.
+### Related Cards
+- K-032: Parser work (this card's improvements may affect HMS/AMS parsing in K-032).
 
