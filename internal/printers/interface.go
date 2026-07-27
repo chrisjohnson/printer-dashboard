@@ -34,6 +34,7 @@ type PrinterStatus struct {
 	CurrentLayer  int               `json:"current_layer"`
 	TotalLayers   int               `json:"total_layers"`
 	ErrorMsg      string            `json:"error_msg,omitempty"`
+	PositionZ     float64           `json:"position_z,omitempty"`
 	NozzleTemps   []NozzleTempEntry `json:"nozzle_temps,omitempty"`
 	CameraStreams []CameraStream    `json:"camera_streams,omitempty"`
 	// HMSErrors holds decoded Bambu HMS (Health Management System) events of
@@ -122,4 +123,9 @@ type Printer interface {
 	// axis at the given feedrate (in mm/min). A zero delta on an axis means
 	// no movement on that axis.
 	Jog(ctx context.Context, x, y, z float64, speedMMPerMin int) error
+
+	// SetHomed marks the printer as homed (or not). Used when firmware
+	// doesn't expose homed_axes (e.g. Paxx/Snapmaker U1). nil clears the
+	// cached homed state.
+	SetHomed(homed *bool)
 }

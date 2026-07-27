@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,9 @@ const (
 // non-printing state is latched.
 const completeIdleStreakThreshold = 2
 
+// boolPtr returns a pointer to the given bool value.
+func boolPtr(v bool) *bool { return &v }
+
 // Printer implements the printers.Printer interface for Snapmaker U1 printers
 // running Paxx firmware.
 type Printer struct {
@@ -67,6 +71,10 @@ type Printer struct {
 
 	// httpClient is used for all REST API calls to the printer.
 	httpClient *http.Client
+
+	// gcodeClient has a longer timeout for G-code commands that can
+	// take >10s (e.g. G28 homing takes 30+ seconds on the U1).
+	gcodeClient *http.Client
 
 	// testBaseURL overrides baseURL() when set (for unit tests only).
 	testBaseURL string
@@ -102,6 +110,9 @@ func New(cfg config.PrinterDef) *Printer {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		// gcodeClient has a longer timeout for G-code commands that can
+		// take >10s (e.g. G28 homing takes 30+ seconds on the U1).
+		gcodeClient: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -147,9 +158,9 @@ func (p *Printer) Connect(ctx context.Context) error {
 		p.wsConnect(ctx, wsCh)
 	}()
 
-	// REST polling timer — only active when WS is down.
+	// REST polling timer — always active to fetch Moonraker query data
+	// (gcode_move for homing state). WS-only path doesn't include this data.
 	pollTicker := time.NewTicker(pollInterval)
-	pollTicker.Stop()
 	defer pollTicker.Stop()
 
 	// WS reconnection timer — fires periodically to retry WebSocket.
@@ -366,10 +377,10 @@ func (p *Printer) fetchStatus(ctx context.Context) (*apiPrinterResponse, error) 
 }
 
 // fetchQueryStatus performs a GET /printer/objects/query to retrieve
-// Moonraker-style print progress data (file, layers, progress).
+// Moonraker-style print progress data (file, layers, progress, homed state).
 // This is a secondary data source — failure is non-fatal.
 func (p *Printer) fetchQueryStatus(ctx context.Context) (*moonrakerQueryResponse, error) {
-	req, err := p.buildRequest(http.MethodGet, "/printer/objects/query?print_stats&virtual_sdcard", nil)
+	req, err := p.buildRequest(http.MethodGet, "/printer/objects/query?print_stats&virtual_sdcard&gcode_move", nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
@@ -462,9 +473,9 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 	p.setStatus(current)
 }
 
-// handleQueryReport merges Moonraker query data (file, layers, progress)
-// into the cached PrinterStatus. This is a secondary data source so it
-// only updates specific fields and preserves the rest.
+// handleQueryReport merges Moonraker query data (file, layers, progress,
+// homed state) into the cached PrinterStatus. This is a secondary data source
+// so it only updates specific fields and preserves the rest.
 func (p *Printer) handleQueryReport(q *moonrakerQueryResponse) {
 	if q == nil || q.Result.Status == nil {
 		return
@@ -482,6 +493,17 @@ func (p *Printer) handleQueryReport(q *moonrakerQueryResponse) {
 	}
 	if vsd := q.Result.Status.VirtualSDCard; vsd != nil {
 		current.Progress = vsd.Progress
+	}
+	if gm := q.Result.Status.GcodeMove; gm != nil {
+		// Paxx firmware doesn't expose homed_axes in gcode_move status.
+		// We track homing state via G28 commands sent from the frontend
+		// (handleHomeAll in server.go marks homed=true on G28 success).
+		// Clear homed when a print starts (updateCard in onboarding.go).
+		// Don't try to infer from Z position — Paxx parks Z at ~9.9mm
+		// after homing, which is far from the bed.
+		if len(gm.Position) >= 3 {
+			current.PositionZ = gm.Position[2]
+		}
 	}
 
 	p.setStatus(current)
@@ -690,7 +712,7 @@ func (p *Printer) sendGCode(ctx context.Context, script string) error {
 	req = req.WithContext(ctx)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.gcodeClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("snapmaker %s: gcode request failed: %w", p.cfg.ID, err)
 	}
@@ -699,15 +721,42 @@ func (p *Printer) sendGCode(ctx context.Context, script string) error {
 	respBody, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("snapmaker %s: gcode returned HTTP %d: %s", p.cfg.ID, resp.StatusCode, string(respBody))
+		errMsg := fmt.Errorf("snapmaker %s: gcode returned HTTP %d: %s", p.cfg.ID, resp.StatusCode, string(respBody))
+		p.maybeMarkUnhomed(respBody)
+		return errMsg
 	}
 
 	// Moonraker can return HTTP 200 with an embedded error in the JSON body
 	// (e.g. klippy not connected, invalid GCode) — check for that too.
 	if err := parseMoonrakerError(respBody); err != nil {
+		p.maybeMarkUnhomed(respBody)
 		return fmt.Errorf("snapmaker %s: gcode failed: %w", p.cfg.ID, err)
 	}
 	return nil
+}
+
+// maybeMarkUnhomed checks an error response body for "Must home" messages
+// and, if found, sets status.Homed to false so the frontend can offer
+// homing (see openZJogModal which checks cache.homed === false).
+func (p *Printer) maybeMarkUnhomed(respBody []byte) {
+	bodyStr := string(respBody)
+	if !strings.Contains(bodyStr, "Must home") {
+		return
+	}
+	p.mu.Lock()
+	if p.status.Homed != nil && !*p.status.Homed {
+		p.mu.Unlock()
+		return
+	}
+	p.status.Homed = boolPtr(false)
+	s := p.status
+	p.mu.Unlock()
+	if p.StatusCh != nil {
+		select {
+		case p.StatusCh <- s:
+		default:
+		}
+	}
 }
 
 // CameraStreams returns the available camera/display streams for this printer.
@@ -743,4 +792,13 @@ func (p *Printer) CameraStreams() []printers.CameraStream {
 		{URL: withAuth("/webcam/stream.mjpg"), Type: "internal", Label: "Camera"},
 		{URL: withAuth("/screen/snapshot"), Type: "touchscreen", Label: "Touchscreen"},
 	}
+}
+
+// SetHomed marks the printer as homed (or not). Used when firmware
+// doesn't expose homed_axes (e.g. Paxx/Snapmaker U1). nil clears the
+// cached homed state.
+func (p *Printer) SetHomed(homed *bool) {
+	st := p.Status()
+	st.Homed = homed
+	p.setStatus(st)
 }

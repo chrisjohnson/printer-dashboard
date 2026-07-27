@@ -126,6 +126,13 @@ type virtualSDCardReport struct {
 type queryStatus struct {
 	PrintStats    *printStatsReport    `json:"print_stats,omitempty"`
 	VirtualSDCard *virtualSDCardReport `json:"virtual_sdcard,omitempty"`
+	GcodeMove     *gcodeMoveReport     `json:"gcode_move,omitempty"`
+}
+
+type gcodeMoveReport struct {
+	HomedAxes  string    `json:"homed_axes"` // e.g. "xyz" when homed, "" when not
+	Position   []float64 `json:"position"`   // [x, y, z, e] toolhead position
+	HomingOrigin []float64 `json:"homing_origin"`
 }
 
 type moonrakerQueryResponse struct {
