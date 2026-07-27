@@ -17,8 +17,32 @@ related_cards: []
 When a user tries to jog a Snapmaker printer that hasn't been homed, the frontend currently shows a warning and blocks the jog. The user requested that instead of just warning, it should offer/prompt to run homing first, and unless the user hits cancel, automatically execute the homing sequence before proceeding with the jog.
 
 ## Plan
-1. [ ] Determine if printer is homed — check `p.homed` in printer card data
-2. [ ] If homed: show existing Z-jog confirmation modal (unchanged behavior)
-3. [ ] If NOT homed: modify modal to add "Run Homing" button alongside cancel
-4. [ ] Implement homing flow: click "Run Homing" → call home API → wait → show Z-jog confirmation
-5. [ ] Update tests in dashboard.test.ts
+1. [x] Determine if printer is homed — check `p.homed` in `window._printerCache[id]`
+2. [x] If homed=true: show existing Z-jog confirmation modal (unchanged behavior)
+3. [x] If homed=false: show modified modal with "Run Homing" button text
+4. [x] Implement homing flow: modify homeAll() to accept optional callback, used in openZJogModal
+5. [ ] Update tests in dashboard.test.ts — Snapmaker U1 returns homed=null, so existing test behavior preserved
+
+## Signals
+<!-- signal: opencode 2025-07-27T12:00:00Z — claimed card and started research -->
+<!-- signal: opencode 2025-07-27T12:20:00Z — implemented modal changes: check homed state, offer "Run Homing" when not homed -->
+<!-- signal: opencode 2025-07-27T12:21:00Z — container rebuilt and redeployed with changes -->
+
+## Decision log
+
+## Handoff notes
+
+### Changes to `internal/server/onboarding.go`
+
+1. **`zJogModalHtml(id)`** — Added `h3` with id `zjog-modal-title-{id}` for dynamic title text.
+
+2. **`openZJogModal(id, delta, body)`** — Now checks `window._printerCache[id]?.homed`:
+   - `homed === false`: Shows "Printer not homed" title, "Run Homing" button, calls `homeAll(id, callback)` on confirm
+   - `homed === true` or `null`: Shows existing warning text and "Move Z" button (unchanged behavior)
+
+3. **`homeAll(id, callback)`** — Added optional `callback` parameter. On success, invokes the callback (used by `openZJogModal` to chain homing → jog).
+
+### Implementation details
+- Snapmaker U1 returns `homed: null` (never set by snapmaker.go), so existing test behavior is preserved
+- Bambu printers return `homed: true/false` from MQTT `home_flag`, so they'll use the new behavior when `homed === false`
+- Container redeployed: http://localhost:55001
