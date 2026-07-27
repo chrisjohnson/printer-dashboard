@@ -3,10 +3,10 @@ id: K-005
 # Filename pattern: {ID}-{slugified-title}.md
 title: P1S cloud MQTT field audit
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: opencode
+claimed_at: 2025-07-27T12:00:00Z
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
-blocked_by: null                     # set on a card that can't proceed until another card finishes
+blocked_by: null                 # set on a card that can't proceed until another card finishes
 related_cards: []
 ---
 
@@ -17,23 +17,17 @@ related_cards: []
 P1S cloud MQTT field audit. gcode_file vs subtask_name, temps, fallback parsing. Closely related to K-032 parser work.
 
 ## Plan
-<!-- ordered checklist. Prefix steps with the role expected to do them once a card
-     has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ]
+1. [ ] Researcher: Investigate current MQTT payload structure for P1S printers.
+2. [ ] Researcher: Identify discrepancies between `gcode_file` and `subtask_name` fields.
+3. [ ] Researcher: Audit temperature field parsing logic and identify fallback edge cases.
+4. [ ] Implementer: Propose parser improvements based on audit findings.
 
 ## Signals
-<!-- append-only. Leave signals for other agents. Format:
-     <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
--->
+<!-- signal: opencode 2025-07-27T12:00:00Z — claimed card and started research -->
 
 ## Working context
-<!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
-     belongs in a linked doc, not here. -->
 
 ## Decision log
-<!-- append-only, one line per entry, newest last. Never move this card to done/
-     without a line here explaining why. -->
 
 ## Handoff notes
-<!-- written by whichever role/session was last active on this card, before handing
-     off or ending a session. What's half-done, what the next role should do first. -->
+
