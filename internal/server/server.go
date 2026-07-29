@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -1163,6 +1164,32 @@ func (s *Server) cameraStreamStatus(rawURL string) (bool, string) {
 		}
 		if lastErr := s.rtspMgr.LastError(streamKey); lastErr != nil {
 			return false, lastErr.Error()
+		}
+		return true, ""
+
+	case "bambus":
+		if s.cameraMgr == nil {
+			return false, "camera service is not available"
+		}
+		host := parsedURL.Hostname()
+		portStr := parsedURL.Port()
+		if portStr == "" {
+			portStr = "6000"
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return false, fmt.Sprintf("invalid camera port: %s", portStr)
+		}
+		accessCode := parsedURL.Query().Get("token")
+		if accessCode == "" {
+			return false, "camera access code is not configured"
+		}
+		buffer := s.cameraMgr.GetBuffer(host, port, accessCode)
+		if buffer == nil {
+			return false, "camera buffer not available — click Refresh to restart"
+		}
+		if buffer.Latest() == nil {
+			return false, "camera stream not active — check printer power/LAN mode"
 		}
 		return true, ""
 

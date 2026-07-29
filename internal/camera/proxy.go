@@ -2,6 +2,7 @@ package camera
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +26,26 @@ const ConnectTimeout = 5 * time.Second
 // camera's stream for both.
 func RTSPStreamKey(u *url.URL) string {
 	return u.Hostname() + ":" + u.Port() + strings.ReplaceAll(u.Path, "/", "_")
+}
+
+// setCameraError stores a camera error on the go2rtc instance, but only if
+// the error is NOT a context-cancellation — those are transient (browser
+// closing the image load, request timeout) and would cause false-positive
+// auth error banners that keep recurring even after refresh.
+func setCameraError(rtspMgr *Go2RTCManager, streamKey string, err error) {
+	if err == nil {
+		return
+	}
+	if err == context.Canceled || err == context.DeadlineExceeded {
+		return
+	}
+	if strings.Contains(err.Error(), "context canceled") {
+		return
+	}
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		return
+	}
+	rtspMgr.SetLastError(streamKey, err)
 }
 
 // Handler returns an http.HandlerFunc that proxies MJPEG/snapshot camera streams.
@@ -363,13 +384,13 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			streamKey := RTSPStreamKey(parsedURL)
 			fb := frameCache.get("rtsps:" + streamKey)
 			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
-				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: start streaming: %w", err))
+				setCameraError(rtspMgr, streamKey, err)
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			frameURL, ok := rtspMgr.FrameURL(streamKey)
 			if !ok {
-				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: stream not started"))
+				setCameraError(rtspMgr, streamKey, fmt.Errorf("rtsps: stream not started"))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
@@ -379,23 +400,29 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 					Timeout: ConnectTimeout,
 				}).DialContext,
 			}
+			// Use a fixed timeout context (not r.Context()) so that a
+			// browser closing/breaking the image load (which cancels r.Context)
+			// does not cause spurious "context canceled" errors to be stored
+			// as persistent camera errors.
+			timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer timeoutCancel()
 			client := &http.Client{Transport: transport}
 
-			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, frameURL, nil)
+			req, err := http.NewRequestWithContext(timeoutCtx, http.MethodGet, frameURL, nil)
 			if err != nil {
-				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: create request: %w", err))
+				setCameraError(rtspMgr, streamKey, fmt.Errorf("rtsps: create request: %w", err))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			resp, err := client.Do(req)
 			if err != nil {
-				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: fetch frame: %w", err))
+				setCameraError(rtspMgr, streamKey, err)
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusServiceUnavailable {
 				resp.Body.Close()
-				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: stream unavailable (status %d) — access code may be expired", resp.StatusCode))
+				setCameraError(rtspMgr, streamKey, fmt.Errorf("rtsps: stream unavailable (status %d) — access code may be expired", resp.StatusCode))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
@@ -403,7 +430,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 
 			body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 			if err != nil {
-				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: read frame: %w", err))
+				setCameraError(rtspMgr, streamKey, err)
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
