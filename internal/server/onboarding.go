@@ -836,8 +836,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .jog-y-plus { grid-column: 2; grid-row: 1; }
     .jog-y-minus { grid-column: 2; grid-row: 2; }
     .jog-x-plus { grid-column: 3; grid-row: 1 / span 2; }
-    .jog-z-plus { grid-column: 5; grid-row: 1; background: var(--danger); border-color: var(--danger); }
-    .jog-z-minus { grid-column: 5; grid-row: 2; background: var(--danger); border-color: var(--danger); }
+    .jog-z-plus { grid-column: 5; grid-row: 2; background: var(--danger); border-color: var(--danger); }
+    .jog-z-minus { grid-column: 5; grid-row: 1; background: var(--danger); border-color: var(--danger); }
     .jog-z-plus:hover:not(:disabled), .jog-z-minus:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
     .btn-home-all {
       background: var(--bg-card); color: var(--text); border: 1px solid var(--border-subtle);
@@ -1589,13 +1589,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '</select>' +
         '</div>' +
         '<div class="jog-pad">' +
-          '<button class="jog-x-minus" onclick="jog(\'' + safeId + '\',\'x\',-1)" ' + dis + '>&#8592;</button>' +
-          '<button class="jog-y-plus" onclick="jog(\'' + safeId + '\',\'y\',1)" ' + dis + '>&#8593;</button>' +
-          '<button class="jog-y-minus" onclick="jog(\'' + safeId + '\',\'y\',-1)" ' + dis + '>&#8595;</button>' +
-          '<button class="jog-x-plus" onclick="jog(\'' + safeId + '\',\'x\',1)" ' + dis + '>&#8594;</button>' +
+          '<button class="jog-x-minus" onclick="jog(\'' + safeId + '\',\'x\',-1)" ' + dis + '>X &#8592;</button>' +
+          '<button class="jog-y-plus" onclick="jog(\'' + safeId + '\',\'y\',1)" ' + dis + '>Y &#8593;</button>' +
+          '<button class="jog-y-minus" onclick="jog(\'' + safeId + '\',\'y\',-1)" ' + dis + '>Y &#8595;</button>' +
+          '<button class="jog-x-plus" onclick="jog(\'' + safeId + '\',\'x\',1)" ' + dis + '>X &#8594;</button>' +
           '<span class="jog-spacer"></span>' +
-          '<button class="jog-z-plus" onclick="jog(\'' + safeId + '\',\'z\',1)" ' + dis + '>&#8593;</button>' +
-          '<button class="jog-z-minus" onclick="jog(\'' + safeId + '\',\'z\',-1)" ' + dis + '>&#8595;</button>' +
+          '<button class="jog-z-minus" onclick="jog(\'' + safeId + '\',\'z\',-1)" ' + dis + '>Z &#8593;</button>' +
+          '<button class="jog-z-plus" onclick="jog(\'' + safeId + '\',\'z\',1)" ' + dis + '>Z &#8595;</button>' +
         '</div>' +
         '<button class="btn-home-all" onclick="homeAll(\'' + safeId + '\')" ' + dis + '>Home All</button>' +
       '</div>';
