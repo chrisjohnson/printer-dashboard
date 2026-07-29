@@ -21,12 +21,13 @@ When a user tries to jog a Snapmaker printer that hasn't been homed, the fronten
 2. [x] If homed=true: show existing Z-jog confirmation modal (unchanged behavior)
 3. [x] If homed=false: show modified modal with "Run Homing" button text
 4. [x] Implement homing flow: modify homeAll() to accept optional callback, used in openZJogModal
-5. [ ] Update tests in dashboard.test.ts — Snapmaker U1 returns homed=null, so existing test behavior preserved
+5. [x] Update tests in dashboard.test.ts — all 15 tests pass, including 4 Movement pad tests. Fixed `id` → `p.id` bug in updateCard homed-clearing logic.
 
 ## Signals
 <!-- signal: opencode 2025-07-27T12:00:00Z — claimed card and started research -->
 <!-- signal: opencode 2025-07-27T12:20:00Z — implemented modal changes: check homed state, offer "Run Homing" when not homed -->
 <!-- signal: opencode 2025-07-27T12:21:00Z — container rebuilt and redeployed with changes -->
+<!-- signal: opencode 2025-07-27T12:30:00Z — fixed p.id bug in updateCard, all 15 tests pass, ready for user testing -->
 
 ## Decision log
 
