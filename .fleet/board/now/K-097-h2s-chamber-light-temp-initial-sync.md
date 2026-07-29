@@ -1,12 +1,12 @@
 ---
 id: K-097
-title: H2S chamber light/temp data not synced initially after restart
+title: Chamber light/temp not synced initially after restart (all printers)
 initiative_id: null
-claimed_by: null
-claimed_at: null
+claimed_by: opencode
+claimed_at: 2026-07-29T18:30:00Z
 blocks: null
 blocked_by: null
-related_cards: [K-005]
+related_cards: [K-005, K-013, K-086, K-087]
 ---
 
 # K-097 — H2S chamber light/temp data not synced initially after restart
@@ -33,12 +33,15 @@ After turning machines on fresh (powered off over the weekend), the dashboard sh
 - U1 gets initial temperature immediately via `GET /api/printer` during Connect(); H2S depends on cloud MQTT pushall response timing
 
 ## Plan
-1. [ ] Researcher: Investigate Bambu MQTT pushall response timing and lights_report presence
-2. [ ] Implementer: Add initial state fetch/polling when printer connects
-3. [ ] Implementer: Show "loading" state instead of "off" for chamber light when `LightOn == nil`
-4. [ ] Implementer: Ensure temperature data refreshes on reconnect
+1. [x] Broaden scope: apply findings/fixes to ALL printers (not just H2S) — chamber light nil→"loading", temperature nil→"loading"
+2. [ ] Researcher: Investigate Bambu MQTT pushall response timing and lights_report presence
+3. [ ] Implementer: Add initial state fetch/polling when printer connects
+4. [ ] Implementer: Show "loading" state instead of "off" for chamber light when `LightOn == nil`
+5. [ ] Implementer: Ensure temperature data refreshes on reconnect
 
 ## Signals
+<!-- signal: opencode 2026-07-29T18:30:00Z — claiming K-097, broadening scope to all printers -->
+
 
 ## Decision log
 
