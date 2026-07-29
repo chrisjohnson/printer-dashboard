@@ -1064,8 +1064,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // When a print starts, clear homed state — the printer will move
       // down to the bed and the cached "homed" flag from G28 is no longer
       // valid (Paxx doesn't expose homed_axes to track this).
-      if (isActivePrint && !wasActivePrint && window._printerCache[id]) {
-        window._printerCache[id].homed = null;
+      if (isActivePrint && !wasActivePrint && window._printerCache[p.id]) {
+        window._printerCache[p.id].homed = null;
       }
 
       // 2. Online indicator
