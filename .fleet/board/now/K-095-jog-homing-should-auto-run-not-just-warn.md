@@ -28,22 +28,27 @@ When a user tries to jog a Snapmaker printer that hasn't been homed, the fronten
 <!-- signal: opencode 2025-07-27T12:20:00Z — implemented modal changes: check homed state, offer "Run Homing" when not homed -->
 <!-- signal: opencode 2025-07-27T12:21:00Z — container rebuilt and redeployed with changes -->
 <!-- signal: opencode 2025-07-27T12:30:00Z — fixed p.id bug in updateCard, all 15 tests pass, ready for user testing -->
+<!-- signal: opencode 2025-07-27T14:00:00Z — button labels updated with axis names + arrows, Z positions swapped, all 21 tests pass, PR #12 created -->
 
 ## Decision log
+- Button labels: replaced "X-", "Y+", "Y-", "X+", "Z+", "Z-" with axis+arrow ("X ←", "Y ↑", "Z ↓", etc.) per user request — no plus/minus signs, arrows correlate to nozzle/bed movement direction
+- Z button CSS grid positions swapped: bed-up (Z ↑) on top, bed-down (Z ↓) on bottom — arrow direction matches physical movement
+- X buttons: left arrow on left button (nozzle moves left), right arrow on right button (nozzle moves right)
+- Y buttons: up arrow on top (nozzle moves to back), down arrow on bottom (nozzle moves to front)
 
 ## Handoff notes
-
 ### Changes to `internal/server/onboarding.go`
-
 1. **`zJogModalHtml(id)`** — Added `h3` with id `zjog-modal-title-{id}` for dynamic title text.
-
-2. **`openZJogModal(id, delta, body)`** — Now checks `window._printerCache[id]?.homed`:
-   - `homed === false`: Shows "Printer not homed" title, "Run Homing" button, calls `homeAll(id, callback)` on confirm
-   - `homed === true` or `null`: Shows existing warning text and "Move Z" button (unchanged behavior)
-
-3. **`homeAll(id, callback)`** — Added optional `callback` parameter. On success, invokes the callback (used by `openZJogModal` to chain homing → jog).
+2. **`openZJogModal(id, delta, body)`** — Checks `window._printerCache[id]?.homed`:
+   - `homed === false`: "Printer not homed" title, "Run Homing" button, calls `homeAll(id, callback)` on confirm
+   - `homed === true` or `null`: existing warning text and "Move Z" button
+3. **`homeAll(id, callback)`** — Optional `callback` param; invokes on success to chain homing → jog. Sets `_jogBusy` and disables buttons during operation.
+4. **Jog buttons** — Labels now include axis name + arrow; Z CSS grid positions swapped for correct directionality.
+5. **`mergeWithCache`** — Skips overriding `homed: true` with `homed: false` from server.
+6. **`updateCard`** — Clears `homed` to null when print starts (Paxx doesn't expose homed_axes).
 
 ### Implementation details
 - Snapmaker U1 returns `homed: null` (never set by snapmaker.go), so existing test behavior is preserved
 - Bambu printers return `homed: true/false` from MQTT `home_flag`, so they'll use the new behavior when `homed === false`
-- Container redeployed: http://localhost:55001
+- All 21 tests pass (15 dashboard + 6 camera)
+- PR: https://github.com/chrisjohnson/printer-dashboard/pull/12
