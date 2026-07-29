@@ -836,8 +836,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .jog-y-plus { grid-column: 2; grid-row: 1; }
     .jog-y-minus { grid-column: 2; grid-row: 2; }
     .jog-x-plus { grid-column: 3; grid-row: 1 / span 2; }
-    .jog-z-plus { grid-column: 5; grid-row: 1; background: var(--danger); border-color: var(--danger); }
-    .jog-z-minus { grid-column: 5; grid-row: 2; background: var(--danger); border-color: var(--danger); }
+    .jog-z-plus { grid-column: 5; grid-row: 2; background: var(--danger); border-color: var(--danger); }
+    .jog-z-minus { grid-column: 5; grid-row: 1; background: var(--danger); border-color: var(--danger); }
     .jog-z-plus:hover:not(:disabled), .jog-z-minus:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
     .btn-home-all {
       background: var(--bg-card); color: var(--text); border: 1px solid var(--border-subtle);
@@ -957,6 +957,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
   <script>
     window._printerCache = {};
     window._skippedCounts = {};
+    window._jogBusy = {};
     window._wsReconnectDelay = 1000;
     // Fields with an optimistic write in flight, keyed by printer id then
     // field name (e.g. window._pendingFields['p1']['light_on'] === true).
@@ -978,8 +979,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // skip fields that have an optimistic write in flight — otherwise a
       // WS push reporting the printer's pre-command state would overwrite
       // the optimistic value before the command has had a chance to land.
+      // Also skip homed: false from server when we just homed (cached true)
+      // — Paxx firmware doesn't expose homed_axes, so we track it via G28.
       Object.keys(p).forEach(k => {
         if (pending[k]) return;
+        if (k === 'homed' && cached[k] === true && p[k] === false) return;
         if (p[k] !== null && p[k] !== undefined) {
           merged[k] = p[k];
         }
@@ -1056,6 +1060,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         // printer's SkipTracker (see clearSkippedOnPrintEnd) — re-fetch so
         // the badge/modal list reflect that instead of the stale cached count.
         refreshSkippedList(p.id);
+      }
+      // When a print starts, clear homed state — the printer will move
+      // down to the bed and the cached "homed" flag from G28 is no longer
+      // valid (Paxx doesn't expose homed_axes to track this).
+      if (isActivePrint && !wasActivePrint && window._printerCache[p.id]) {
+        window._printerCache[p.id].homed = null;
       }
 
       // 2. Online indicator
@@ -1579,13 +1589,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '</select>' +
         '</div>' +
         '<div class="jog-pad">' +
-          '<button class="jog-x-minus" onclick="jog(\'' + safeId + '\',\'x\',-1)" ' + dis + '>X-</button>' +
-          '<button class="jog-y-plus" onclick="jog(\'' + safeId + '\',\'y\',1)" ' + dis + '>Y+</button>' +
-          '<button class="jog-y-minus" onclick="jog(\'' + safeId + '\',\'y\',-1)" ' + dis + '>Y-</button>' +
-          '<button class="jog-x-plus" onclick="jog(\'' + safeId + '\',\'x\',1)" ' + dis + '>X+</button>' +
+          '<button class="jog-x-minus" onclick="jog(\'' + safeId + '\',\'x\',-1)" ' + dis + '>X &#8592;</button>' +
+          '<button class="jog-y-plus" onclick="jog(\'' + safeId + '\',\'y\',1)" ' + dis + '>Y &#8593;</button>' +
+          '<button class="jog-y-minus" onclick="jog(\'' + safeId + '\',\'y\',-1)" ' + dis + '>Y &#8595;</button>' +
+          '<button class="jog-x-plus" onclick="jog(\'' + safeId + '\',\'x\',1)" ' + dis + '>X &#8594;</button>' +
           '<span class="jog-spacer"></span>' +
-          '<button class="jog-z-plus" onclick="jog(\'' + safeId + '\',\'z\',1)" ' + dis + '>Z+</button>' +
-          '<button class="jog-z-minus" onclick="jog(\'' + safeId + '\',\'z\',-1)" ' + dis + '>Z-</button>' +
+          '<button class="jog-z-minus" onclick="jog(\'' + safeId + '\',\'z\',-1)" ' + dis + '>Z &#8593;</button>' +
+          '<button class="jog-z-plus" onclick="jog(\'' + safeId + '\',\'z\',1)" ' + dis + '>Z &#8595;</button>' +
         '</div>' +
         '<button class="btn-home-all" onclick="homeAll(\'' + safeId + '\')" ' + dis + '>Home All</button>' +
       '</div>';
@@ -1615,15 +1625,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // Z-axis jog confirmation modal markup for one printer card. Mirrors
     // skipModalHtml() exactly (always-in-DOM, hidden via display:none,
     // overlay-click-to-cancel) since both are "confirm before a physically
-    // consequential action" dialogs. The message text is filled in by
-    // openZJogModal() right before the modal is shown, since the delta/axis
-    // being confirmed is only known at click time.
+    // consequential action" dialogs. The message text, button text, and
+    // button onclick are all filled in by openZJogModal() right before the
+    // modal is shown, since the delta/body/homed state is only known at
+    // click time.
     function zJogModalHtml(id) {
       var safeId = escapeJsString(id);
       return '<div class="zjog-modal" id="zjog-modal-' + id + '" style="display:none">' +
         '<div class="zjog-modal-overlay" onclick="closeZJogModal(\'' + safeId + '\')"></div>' +
         '<div class="zjog-modal-content">' +
-          '<h3>Move Z axis?</h3>' +
+          '<h3 id="zjog-modal-title-' + id + '">Move Z axis?</h3>' +
           '<p id="zjog-modal-text-' + id + '"></p>' +
           '<div class="zjog-modal-actions">' +
             '<button class="btn-zjog-confirm" id="zjog-modal-confirm-' + id + '">Move Z</button>' +
@@ -1721,11 +1732,35 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // failed: printer is not idle ..." alert here, same as any other
     // rejected command — the UI doesn't try to distinguish 409 from other
     // failures since the message text already explains it.
-    function homeAll(id) {
+    //
+    // When called with a callback (used by openZJogModal when the printer
+    // is not homed), the callback is invoked on success so the caller can
+    // proceed (e.g. send the pending jog command).
+    function homeAll(id, callback) {
+      window._jogBusy[id] = true;
+      var card = document.getElementById('card-' + id);
+      if (card) {
+        card.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
+          btn.disabled = true;
+        });
+      }
       fetch('/api/printers/' + id + '/home', { method: 'POST' })
         .then(r => r.json())
-        .then(d => { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
-        .catch(() => alert('Network error'));
+        .then(d => {
+          if (d.status !== 'ok') { alert(d.error || 'Command failed'); return; }
+          // Paxx firmware doesn't expose homed_axes, so mark as homed
+          // immediately on successful G28 — the printer will park at ~9.9mm
+          // but is technically homed.
+          if (window._printerCache[id]) {
+            window._printerCache[id].homed = true;
+          }
+          if (typeof callback === 'function') callback();
+        })
+        .catch(() => alert('Network error'))
+        .finally(function() {
+          window._jogBusy[id] = false;
+          window._printerCache[id] && updateCard(window._printerCache[id]);
+        });
     }
 
     // getStepSize reads the currently-selected jog step size (mm) for a
@@ -1744,10 +1779,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // openZJogModal(), mirroring the skip-object modal's confirm-then-fire
     // pattern above.
     function jog(id, axis, direction) {
+      if (window._jogBusy[id]) return; // don't queue while homing/moving
       const delta = getStepSize(id) * direction;
       const body = { x: 0, y: 0, z: 0 };
       body[axis] = delta;
       if (axis === 'z') {
+        var cache = window._printerCache[id];
+        var isHomed = cache ? cache.homed : null;
+        if (isHomed === true) {
+          // Printer is confirmed homed — move directly, no modal.
+          sendJog(id, body);
+          return;
+        }
         openZJogModal(id, delta, body);
         return;
       }
@@ -1760,32 +1803,71 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // (400 invalid request, 409 not idle/online) surface via alert(), same
     // convention as cmd()/homeAll() above.
     function sendJog(id, body) {
+      window._jogBusy[id] = true;
+      var card = document.getElementById('card-' + id);
+      if (card) {
+        card.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
+          btn.disabled = true;
+        });
+      }
       fetch('/api/printers/' + id + '/jog', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then(function(r) { return r.json(); })
         .then(function(d) { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
-        .catch(function() { alert('Network error'); });
+        .catch(function() { alert('Network error'); })
+        .finally(function() {
+          window._jogBusy[id] = false;
+          window._printerCache[id] && updateCard(window._printerCache[id]);
+        });
     }
 
     // openZJogModal fills in the confirmation message for this specific move
     // and shows the Z-jog modal. The confirm button's onclick is (re)wired
     // here rather than baked into zJogModalHtml() at render time, since the
-    // delta/body being confirmed is only known now, at click time.
+    // delta/body/homed state is only known now, at click time.
+    //
+    // When the printer is homed: shows a warning and proceeds directly to
+    // jog on confirm (existing behavior).
+    // When NOT homed: offers to run homing first; the confirm button becomes
+    // "Run Homing" and calls homeAll() before sendJog().
+    // When homed state is unknown (null): shows a warning but proceeds
+    // directly to jog on confirm (conservative — don't block users
+    // unnecessarily when we can't determine the state).
     function openZJogModal(id, delta, body) {
       var modal = document.getElementById('zjog-modal-' + id);
       if (!modal) return;
       var text = document.getElementById('zjog-modal-text-' + id);
-      if (text) {
-        text.textContent = 'Move Z by ' + delta + 'mm? This can crash the nozzle into the bed or the print if not homed correctly.';
-      }
+      var title = document.getElementById('zjog-modal-title-' + id);
       var confirmBtn = document.getElementById('zjog-modal-confirm-' + id);
-      if (confirmBtn) {
-        confirmBtn.onclick = function() {
-          closeZJogModal(id);
-          sendJog(id, body);
-        };
+
+      var cache = window._printerCache[id];
+      var isHomed = cache ? cache.homed : null;
+      var needsHoming = isHomed === false;
+
+      if (needsHoming) {
+        // Printer is known to be unhomed — offer homing first.
+        if (title) title.textContent = 'Printer not homed';
+        if (text) text.textContent = 'Move Z by ' + delta + 'mm, but the printer is not homed. Run homing first?';
+        if (confirmBtn) confirmBtn.textContent = 'Run Homing';
+        if (confirmBtn) {
+          confirmBtn.onclick = function() {
+            closeZJogModal(id);
+            homeAll(id, function() { sendJog(id, body); });
+          };
+        }
+      } else {
+        // Homed or unknown — show standard warning and send jog on confirm.
+        if (title) title.textContent = 'Move Z axis?';
+        if (text) text.textContent = 'Move Z by ' + delta + 'mm? This can crash the nozzle into the bed or the print if not homed correctly.';
+        if (confirmBtn) confirmBtn.textContent = 'Move Z';
+        if (confirmBtn) {
+          confirmBtn.onclick = function() {
+            closeZJogModal(id);
+            sendJog(id, body);
+          };
+        }
       }
       modal.style.display = 'flex';
     }

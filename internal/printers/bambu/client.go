@@ -43,6 +43,20 @@ const initialConnectBackoffBase = 1 * time.Second
 // paths.
 const initialConnectBackoffMax = 30 * time.Second
 
+// validateTemp checks that a temperature value is within [min, max] and
+// returns a pointer to it if valid, or nil (with a log warning) if out
+// of range.  The current codebase uses two temperature ranges for chamber
+// values: -50..100 for ChamberTemp (ambient temperatures can dip below
+// zero) and 0..100 for ChamberTargetTemp (the chamber heater can only
+// raise temperature from ambient, never below it).
+func validateTemp(id string, value float64, min, max float64) *float64 {
+	if value < min || value > max {
+		log.Printf("bambu %s: temperature %.1f out of range [%.0f, %.0f], ignoring", id, value, min, max)
+		return nil
+	}
+	return &value
+}
+
 // Client implements the printers.Printer interface for Bambu Lab printers
 // via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
 type Client struct {
@@ -475,27 +489,45 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		s.NozzleTargetTemp = p.NozzleTarget
 	}
 	if p.ChamberTemper != nil {
-		s.ChamberTemp = p.ChamberTemper
+		// Direct-wire chamber_temper — validate against the same bounds as
+		// info.temp fallback (-50..100): ambient temperatures can dip
+		// below zero, unlike the heater target which is always non-negative.
+		// Only update status on valid values; out-of-range values are
+		// ignored to avoid clobbering a previously-good reading.
+		if v := validateTemp(c.cfg.ID, *p.ChamberTemper, -50, 100); v != nil {
+			s.ChamberTemp = v
+		}
 	} else if p.Info != nil && p.Info.Temp != nil {
 		// H2S sends info.temp as a packed 32-bit integer:
 		//   Low 16 bits  (val & 0xFFFF)      = current temperature in °C
 		//   High 16 bits ((val >> 16) & 0xFFFF) = target temperature in °C
+		//
+		// If the wire sends a non-integer (e.g. firmware changes the
+		// encoding in the future), int64() truncates silently — warn so
+		// that drift surfaces during testing rather than silently
+		// discarding fractional parts in production.
+		if *p.Info.Temp != float64(int64(*p.Info.Temp)) {
+			log.Printf("bambu %s: info.temp has fractional part %.4f, truncating to %d",
+				c.cfg.ID, *p.Info.Temp, int64(*p.Info.Temp))
+		}
 		raw := int64(*p.Info.Temp)
 		current := float64(raw & 0xFFFF)
 		target := float64((raw >> 16) & 0xFFFF)
-		if current >= -50 && current <= 100 {
-			s.ChamberTemp = &current
-		} else {
-			log.Printf("bambu %s: info.temp current out of range (raw=%d, current=%.0f), ignoring",
-				c.cfg.ID, raw, current)
+		if v := validateTemp(c.cfg.ID, current, -50, 100); v != nil {
+			s.ChamberTemp = v
 		}
-		if target >= 0 && target <= 100 {
-			s.ChamberTargetTemp = &target
+		if v := validateTemp(c.cfg.ID, target, 0, 100); v != nil {
+			s.ChamberTargetTemp = v
 		}
 	}
 	// Don't overwrite ChamberTargetTemp if it was already decoded from info.temp.
 	if p.ChamberTargetTemper != nil && s.ChamberTargetTemp == nil {
-		s.ChamberTargetTemp = p.ChamberTargetTemper
+		// Direct-wire chamber_target_temper — heater target is always
+		// non-negative (0..100) since the chamber can only heat above
+		// ambient, never cool below it.
+		if v := validateTemp(c.cfg.ID, *p.ChamberTargetTemper, 0, 100); v != nil {
+			s.ChamberTargetTemp = v
+		}
 	}
 
 	// HMS (Health Management System) codes — only update when the "hms" key
@@ -668,6 +700,12 @@ func (c *Client) HomeAll(ctx context.Context) error {
 // feedrate (mm/min) via G-code.
 func (c *Client) Jog(ctx context.Context, x, y, z float64, speedMMPerMin int) error {
 	return c.publishCommand(ctx, "jog", jogCommand(x, y, z, speedMMPerMin))
+}
+
+// SetHomed is a no-op for Bambu printers — they expose homed_axes in the
+// device report so we don't need to track homing state client-side.
+func (c *Client) SetHomed(homed *bool) {
+	// No-op: Bambu devices report homed_axes natively.
 }
 
 // Ensure Client satisfies the Printer interface.

@@ -962,7 +962,9 @@ func requireIdleAndOnline(status printers.PrinterStatus) error {
 }
 
 // handleHomeAll homes all axes (G28). Rejects with 409 if the printer isn't
-// idle and online (see requireIdleAndOnline).
+// idle and online (see requireIdleAndOnline). On success, marks the printer
+// as homed — Paxx firmware doesn't expose homed_axes, so we track this
+// via the G28 command itself.
 func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	p, ok := s.getPrinter(id)
@@ -978,6 +980,11 @@ func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, err.Error())
 		return
 	}
+	// Mark as homed — Paxx/Snapmaker don't expose homed_axes, so we
+	// infer it from the successful G28 command. The printer will park
+	// Z at ~9.9mm but is technically homed.
+	homed := true
+	p.SetHomed(&homed)
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 
