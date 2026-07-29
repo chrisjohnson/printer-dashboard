@@ -526,6 +526,10 @@ func (s *Server) registerRoutes() {
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
 	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr, s.rtspMgr))
 	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandler(s.cameraMgr, s.rtspMgr))
+
+	// Camera status & reconnect (for surfacing auth/stream errors with refresh)
+	s.mux.HandleFunc("GET /api/printers/{id}/camera-status", s.handleCameraStatus)
+	s.mux.HandleFunc("POST /api/printers/{id}/camera-reconnect", s.handleCameraReconnect)
 }
 
 // renderTemplate is a helper that executes a Go template and writes to the response.
@@ -1098,4 +1102,139 @@ func (s *Server) handleDismissHMS(w http.ResponseWriter, r *http.Request) {
 	}
 	s.hmsDismissTracker.Dismiss(id, req.Code)
 	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// handleCameraStatus returns the health of a printer's camera stream.
+// If the stream is OK, returns {"ok": true}. If there's an auth/stream
+// error, returns {"ok": false, "error": "..."} so the frontend can
+// show a clickable refresh action.
+func (s *Server) handleCameraStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, "printer not found")
+		return
+	}
+
+	streams := p.CameraStreams()
+	if len(streams) == 0 {
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+
+	for _, cs := range streams {
+		if cs.Type == "touchscreen" || cs.Type == "external" {
+			continue
+		}
+		status, errMsg := s.cameraStreamStatus(cs.URL)
+		if !status {
+			writeJSON(w, 200, map[string]any{
+				"ok":    false,
+				"error": errMsg,
+			})
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// cameraStreamStatus checks whether a single camera stream URL is healthy.
+// Returns (true, "") on success or (false, errorMessage) on failure.
+func (s *Server) cameraStreamStatus(rawURL string) (bool, string) {
+	if rawURL == "" {
+		return false, "camera URL is not configured"
+	}
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false, fmt.Sprintf("invalid camera URL: %v", err)
+	}
+
+	switch parsedURL.Scheme {
+	case "rtsps":
+		if s.rtspMgr == nil {
+			return false, "go2rtc camera service is not available"
+		}
+		streamKey := camera.RTSPStreamKey(parsedURL)
+		if !s.rtspMgr.IsRunning(streamKey) {
+			return false, "camera service not started — click Refresh to start"
+		}
+		if !s.rtspMgr.Healthy(streamKey) {
+			return false, "camera service is unresponsive — click Refresh to restart"
+		}
+		if lastErr := s.rtspMgr.LastError(streamKey); lastErr != nil {
+			return false, lastErr.Error()
+		}
+		return true, ""
+
+	case "http", "https":
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(rawURL)
+		if err != nil {
+			return false, fmt.Sprintf("camera stream unreachable: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			return false, fmt.Sprintf("camera returned HTTP %d", resp.StatusCode)
+		}
+		return true, ""
+
+	default:
+		return false, fmt.Sprintf("unsupported camera protocol: %s", parsedURL.Scheme)
+	}
+}
+
+// handleCameraReconnect restarts the go2rtc instance (or clears the error
+// state) for a printer's camera stream, giving the user a "refresh" action
+// when auth/stream errors have been detected.
+func (s *Server) handleCameraReconnect(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	p, ok := s.getPrinter(id)
+	if !ok {
+		writeError(w, 404, "printer not found")
+		return
+	}
+
+	streams := p.CameraStreams()
+	if len(streams) == 0 {
+		writeJSON(w, 200, map[string]any{
+			"status":  "ok",
+			"message": "no camera streams to reconnect",
+		})
+		return
+	}
+
+	reconnected := 0
+	for _, cs := range streams {
+		if cs.Type == "touchscreen" || cs.Type == "external" {
+			continue
+		}
+		if s.reconnectCameraStream(cs.URL) {
+			reconnected++
+		}
+	}
+
+	writeJSON(w, 200, map[string]any{
+		"status":       "ok",
+		"reconnected":  reconnected,
+		"message":     fmt.Sprintf("reconnected %d camera stream(s)", reconnected),
+	})
+}
+
+// reconnectCameraStream stops and clears the error state for a single
+// camera stream URL. The go2rtc instance will be restarted lazily on the
+// next frame request.
+func (s *Server) reconnectCameraStream(rawURL string) bool {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if parsedURL.Scheme != "rtsps" {
+		return true
+	}
+	if s.rtspMgr == nil {
+		return false
+	}
+	streamKey := camera.RTSPStreamKey(parsedURL)
+	s.rtspMgr.Stop(streamKey)
+	return true
 }

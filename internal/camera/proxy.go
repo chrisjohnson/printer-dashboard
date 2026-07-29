@@ -363,11 +363,13 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			streamKey := RTSPStreamKey(parsedURL)
 			fb := frameCache.get("rtsps:" + streamKey)
 			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
+				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: start streaming: %w", err))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			frameURL, ok := rtspMgr.FrameURL(streamKey)
 			if !ok {
+				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: stream not started"))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
@@ -381,11 +383,19 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 
 			req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, frameURL, nil)
 			if err != nil {
+				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: create request: %w", err))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
 			resp, err := client.Do(req)
 			if err != nil {
+				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: fetch frame: %w", err))
+				serveLastGoodOrPlaceholder(w, fb)
+				return
+			}
+			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusServiceUnavailable {
+				resp.Body.Close()
+				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: stream unavailable (status %d) — access code may be expired", resp.StatusCode))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
@@ -393,6 +403,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 
 			body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 			if err != nil {
+				rtspMgr.SetLastError(streamKey, fmt.Errorf("rtsps: read frame: %w", err))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}

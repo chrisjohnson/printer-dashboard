@@ -2606,7 +2606,148 @@ func TestHandleGetPrinter_FiltersDismissedHMS(t *testing.T) {
 	var body map[string]any
 	decodeBody(t, resp, &body)
 
-	if hmsErrors, ok := body["hms_errors"]; ok {
+ 	if hmsErrors, ok := body["hms_errors"]; ok {
 		t.Errorf("expected hms_errors to be filtered out entirely (omitempty), got %v", hmsErrors)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/printers/{id}/camera-status
+// ---------------------------------------------------------------------------
+
+func TestCameraStatus_NoCameraStreams(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{
+		"p1": &MockPrinter{id: "p1", name: "Test"},
+	})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1/camera-status")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["ok"] != true {
+		t.Errorf("expected ok=true, got %v", body["ok"])
+	}
+}
+
+func TestCameraStatus_PrinterNotFound(t *testing.T) {
+	s := newTestServer(nil)
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/api/printers/nonexistent/camera-status")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestCameraStatus_InternalHTTPStream(t *testing.T) {
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: "http://camera.local/stream", Type: "internal", Label: "Camera"},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1/camera-status")
+	defer resp.Body.Close()
+
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["ok"] != false {
+		t.Errorf("expected ok=false (unreachable HTTP camera), got %v", body["ok"])
+	}
+}
+
+func TestCameraStatus_SkipsExternalAndTouchscreen(t *testing.T) {
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: "http://camera.local/stream", Type: "external", Label: "Front"},
+			{URL: "http://camera.local/touch", Type: "touchscreen", Label: "Screen"},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1/camera-status")
+	defer resp.Body.Close()
+
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["ok"] != true {
+		t.Errorf("expected ok=true (external/touchscreen skipped), got %v", body["ok"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/printers/{id}/camera-reconnect
+// ---------------------------------------------------------------------------
+
+func TestCameraReconnect_NoCameraStreams(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{
+		"p1": &MockPrinter{id: "p1", name: "Test"},
+	})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL, "/api/printers/p1/camera-reconnect")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["status"] != "ok" {
+		t.Errorf("expected status=ok, got %v", body["status"])
+	}
+}
+
+func TestCameraReconnect_PrinterNotFound(t *testing.T) {
+	s := newTestServer(nil)
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL, "/api/printers/nonexistent/camera-reconnect")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", resp.StatusCode)
+	}
+}
+
+func TestCameraReconnect_WithInternalStream(t *testing.T) {
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: "http://camera.local/stream", Type: "internal", Label: "Camera"},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustPost(t, ts.URL, "/api/printers/p1/camera-reconnect")
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["status"] != "ok" {
+		t.Errorf("expected status=ok, got %v", body["status"])
 	}
 }

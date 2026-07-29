@@ -741,6 +741,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .camera-nav button svg { width: 20px; height: 20px; flex-shrink: 0; display: block; }
     .camera-nav button:hover { background: #e9ebee; border-color: #d0d0d6; }
     .camera-nav .cam-label { font-size: 0.6875rem; color: var(--text-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cam-error {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; padding: 8px 12px; background: var(--tag-error-bg); color: var(--tag-error-text);
+      font-size: 0.8125rem; line-height: 1.4; word-break: break-word;
+      border-radius: var(--radius-control); margin: 4px 8px 0 8px;
+    }
+    .cam-error .cam-error-msg { flex: 1; }
+    .cam-refresh-btn {
+      background: var(--tag-error-text); color: var(--tag-error-bg);
+      border: none; border-radius: var(--radius-control); cursor: pointer;
+      padding: 4px 10px; font-size: 0.75rem; line-height: 1.2;
+      flex-shrink: 0;
+    }
+    .cam-refresh-btn:hover { background: var(--tag-error-text); opacity: 0.85; }
+    .cam-refresh-btn:disabled { opacity: 0.5; cursor: default; }
     .camera-placeholder {
       display: flex; align-items: center; justify-content: center;
       width: 100%; min-height: 80px;
@@ -905,7 +920,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       </div>
       <div class="camera-section">
         <div class="camera-slot">
-          <div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>
+          <div class="cam-error" style="display:none;"><span class="cam-error-msg"></span><button class="cam-refresh-btn" style="display:none;">Refresh</button></div>
           <div class="camera-nav">
             <button class="cam-prev" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>
             <span class="cam-label">&nbsp;</span>
@@ -1283,9 +1298,73 @@ const indexDashboardTemplate = `<!DOCTYPE html>
               });
             }, 2000);
           }
+          // Periodic camera health check: if the camera stream is failing
+          // (e.g. auth token expired), surface the error with a refresh button.
+          if (!window._camHealthInterval) {
+            window._camHealthInterval = setInterval(function() {
+              document.querySelectorAll('.camera-slot[data-type="internal"]').forEach(function(slot) {
+                const printerId = slot.id.replace(/^cam-/, '').replace(/-\d+$/, '');
+                checkCameraStatus(printerId, slot);
+              });
+            }, 5000);
+          }
+          // Initial health check.
+          list.forEach(function(p) {
+            const slot = document.getElementById('cam-' + p.id + '-0');
+            if (slot && slot.getAttribute('data-type') === 'internal') {
+              checkCameraStatus(p.id, slot);
+            }
+          });
         })
         .catch(() => {
           document.getElementById('printer-list').innerHTML = '<p class="error-message">Error loading printers.</p>';
+        });
+    }
+
+    function checkCameraStatus(printerId, slot) {
+      var img = slot.querySelector('img');
+      // Skip if already showing an error.
+      var errorDiv = slot.querySelector('.cam-error');
+      if (!errorDiv) return;
+      fetch('/api/printers/' + encodeURIComponent(printerId) + '/camera-status')
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) {
+            errorDiv.style.display = 'none';
+            errorDiv.querySelector('.cam-error-msg').textContent = '';
+            errorDiv.querySelector('.cam-refresh-btn').style.display = 'none';
+            if (img) img.style.display = 'block';
+          } else {
+            var msgEl = errorDiv.querySelector('.cam-error-msg');
+            var btnEl = errorDiv.querySelector('.cam-refresh-btn');
+            if (msgEl) msgEl.textContent = data.error || 'Camera stream unavailable';
+            if (btnEl) {
+              btnEl.style.display = 'inline-block';
+              btnEl.onclick = function() {
+                btnEl.disabled = true;
+                btnEl.textContent = 'Refreshing…';
+                fetch('/api/printers/' + encodeURIComponent(printerId) + '/camera-reconnect', {method: 'POST'})
+                  .then(r => r.json())
+                  .then(() => {
+                    btnEl.disabled = false;
+                    btnEl.textContent = 'Refresh';
+                    // Re-check after reconnect.
+                    setTimeout(function() { checkCameraStatus(printerId, slot); }, 2000);
+                  })
+                  .catch(() => {
+                    btnEl.disabled = false;
+                    btnEl.textContent = 'Refresh';
+                  });
+              };
+            }
+            errorDiv.style.display = 'flex';
+            errorDiv.style.alignItems = 'center';
+            errorDiv.style.justifyContent = 'space-between';
+            if (img) img.style.display = 'none';
+          }
+        })
+        .catch(() => {
+          // Network error — leave the camera image as-is, don't show error.
         });
     }
 
@@ -1501,7 +1580,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             var frameUrl = '/api/camera/frame?url=' + encodeURIComponent(rawCameraUrl);
             html += '<img id="cam-' + p.id + '" src="' + frameUrl + '&_t=' + Date.now() + '" alt="' + label + '" style="display:block;width:100%;object-fit:contain;background:#000;" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\';" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';" data-frame-url="' + escapeHtml(frameUrl) + '">';
           }
-          html += '<div class="cam-error" style="display:none;"><span>Stream unavailable</span></div>';
+          html += '<div class="cam-error" style="display:none;"><span class="cam-error-msg"></span><button class="cam-refresh-btn" title="Refresh camera" style="display:none;">Refresh</button></div>';
           html += '<div class="camera-nav">';
           html += '<button class="cam-prev" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',-1)">' + svgChevron('left') + '</button>';
           html += '<span class="cam-label">' + label + '</span>';

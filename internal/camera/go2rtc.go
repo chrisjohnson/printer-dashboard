@@ -42,6 +42,10 @@ type go2rtcInstance struct {
 	cancel     context.CancelFunc
 	startedAt  time.Time
 	configPath string
+	// lastError stores the most recent error from Start or frame fetch.
+	// It's checked by the camera-status endpoint to surface auth/stream
+	// errors to the UI with a clickable refresh action.
+	lastError  error
 }
 
 // go2rtcConfig is the YAML configuration written for each go2rtc instance.
@@ -365,4 +369,39 @@ func (m *Go2RTCManager) FrameURL(streamKey string) (string, bool) {
 // virtual stream that Start configures to transcode via ffmpeg.
 func (inst *go2rtcInstance) mjpegURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/api/stream.mjpeg?src=%s", inst.localPort, inst.streamKey+"_mjpeg")
+}
+
+// SetLastError stores the most recent camera/RTPS error on the instance
+// identified by streamKey. Returns false if no instance exists for that key.
+func (m *Go2RTCManager) SetLastError(streamKey string, err error) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.instances[streamKey]
+	if !ok {
+		return false
+	}
+	inst.lastError = err
+	return true
+}
+
+// LastError returns the most recent camera/RTPS error for the stream
+// identified by streamKey, or nil if no error has been recorded.
+func (m *Go2RTCManager) LastError(streamKey string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.instances[streamKey]
+	if !ok {
+		return nil
+	}
+	return inst.lastError
+}
+
+// ClearLastError clears the stored error for the stream identified by
+// streamKey. Called when a reconnect/restart is initiated.
+func (m *Go2RTCManager) ClearLastError(streamKey string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.instances[streamKey]; ok {
+		inst.lastError = nil
+	}
 }
