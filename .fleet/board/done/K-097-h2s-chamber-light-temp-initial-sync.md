@@ -34,15 +34,22 @@ After turning machines on fresh (powered off over the weekend), the dashboard sh
 
 ## Plan
 1. [x] Broaden scope: apply findings/fixes to ALL printers (not just H2S) — chamber light nil→"loading", temperature nil→"loading"
-2. [ ] Researcher: Investigate Bambu MQTT pushall response timing and lights_report presence
-3. [ ] Implementer: Add initial state fetch/polling when printer connects
-4. [ ] Implementer: Show "loading" state instead of "off" for chamber light when `LightOn == nil`
-5. [ ] Implementer: Ensure temperature data refreshes on reconnect
+2. [x] Implementer: Show "—" for chamber light when `LightOn == nil` (renderCard + updateCard)
+3. [x] Implementer: Show "—" for temperature when `ChamberTemp == nil` (renderCard + updateCard)
 
 ## Signals
 <!-- signal: opencode 2026-07-29T18:30:00Z — claiming K-097, broadening scope to all printers -->
+<!-- signal: opencode 2026-07-30T05:22:00Z — done: PR #15 merged to main -->
 
 
 ## Decision log
 
+- **Root cause**: Backend drivers already request initial state on connect (Bambu: `requestPushAll()` in `onConnect()`, Snapmaker: `fetchStatus()` in `Connect()`). The problem was purely frontend rendering — `null` values displayed as "off" or "?" before the first real data arrived via MQTT/REST.
+- **Fix**: `light_on === null` → "—" (en-dash), `chamber_temp === null` → "—" (en-dash). Applied in both `renderCard()` (initial render) and `updateCard()` (WS/live updates).
+- **Why "—" not "loading"**: En-dash matches the existing placeholder style used for other unloaded fields (filename, layer info). It reads as "no data yet" rather than implying an active loading process.
+
 ## Handoff notes
+
+- **PR**: https://github.com/chrisjohnson/printer-dashboard/pull/15
+- **Branch**: `k-097-loading-state` (merged to main)
+- **Files changed**: `internal/server/onboarding.go` (4 lines in embedded frontend template)
