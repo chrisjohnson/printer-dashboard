@@ -27,12 +27,18 @@ typedef enum {
     audio_adts
 } Bambu_FormatType;
 
+// Named struct types for the two variants of Bambu_StreamInfo's anonymous
+// "format" union, so Go code can reinterpret the union's raw bytes via a
+// cast to the appropriate named type (see Session.Open below).
+typedef struct { int width; int height; int frame_rate; } Bambu_VideoFormat;
+typedef struct { int sample_rate; int channel_count; int sample_size; } Bambu_AudioFormat;
+
 typedef struct {
     int type;
     int sub_type;
     union {
-        struct { int width; int height; int frame_rate; } video;
-        struct { int sample_rate; int channel_count; int sample_size; } audio;
+        Bambu_VideoFormat video;
+        Bambu_AudioFormat audio;
     } format;
     int format_type;
     int format_size;
@@ -306,12 +312,16 @@ func (s *Session) Open(ctx context.Context) error {
 	// Log stream info for diagnostics.
 	var info C.Bambu_StreamInfo
 	if ret := C.Bambu_GetStreamInfo_wrap(tunnel, 1, &info); ret == 0 {
+		// cgo has no representation for anonymous C unions, so the "format"
+		// union comes through as an opaque byte array. Reinterpret it via
+		// unsafe.Pointer as the named video-variant struct to read its fields.
+		videoFmt := (*C.Bambu_VideoFormat)(unsafe.Pointer(&info.format))
 		log.Printf("[tutk] stream: type=%d sub_type=%d width=%d height=%d fps=%d",
 			// cgo renames C struct fields that collide with Go keywords by
 			// prefixing an underscore, so the C field "type" becomes "_type".
 			int(info._type), int(info.sub_type),
-			int(info.format.video.width), int(info.format.video.height),
-			int(info.format.video.frame_rate))
+			int(videoFmt.width), int(videoFmt.height),
+			int(videoFmt.frame_rate))
 	}
 
 	return nil

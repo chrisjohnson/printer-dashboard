@@ -26,5 +26,4 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: false
           tags: printer-dashboard:pr-check
-          cache-from: type=gha,scope=pr-check
-          cache-to: type=gha,mode=max,scope=pr-check
+          cache-from: type=gha
