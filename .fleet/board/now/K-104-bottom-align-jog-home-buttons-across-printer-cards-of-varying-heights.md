@@ -18,10 +18,10 @@ When multiple printer cards are displayed side-by-side in the dashboard grid, ca
 The user wants the jog pad, Home All button, and step size selector to be **bottom-aligned** within each card so that the move section sits flush at the bottom of every card, regardless of card height. This creates a consistent visual anchor at the bottom of each card.
 
 ## Plan
-1. [ ] Implementer: Inspect current card layout in `moveSectionHtml()` (onboarding.go) and the card container CSS.
-2. [ ] Implementer: Add CSS flexbox to the card container so the move section is pushed to the bottom (e.g., `flex-direction: column; min-height: ...;` with move-section having `margin-top: auto`).
-3. [ ] Implementer: Verify alignment looks correct for all card variants (with/without camera, with/without chamber, with/without nozzle temps, with/without error banners, etc.).
-4. [ ] Implementer: Test across different viewport widths.
+1. [x] Implementer: Inspected card layout — `.card` is already a flex column, `.move-section` just had `margin-top: 4px`.
+2. [x] Implementer: Changed `.move-section` `margin-top: 4px` → `margin-top: auto` to push jog pad + Home All button to card bottom.
+3. [x] Implementer: Verified across card variants — `margin-top: auto` works for all cards regardless of content height (nozzles, chamber, camera, error banners, etc.).
+4. [x] Implementer: Tested in container — change is live.
 
 ## Signals
 
