@@ -34,7 +34,7 @@ unmasked by K-100's multi-arch change, not a workflow/CI config bug.
 1. [x] Research: read `internal/camera/tutk/tutk_linux_amd64.go` around line 309, compare against `tutk_linux_arm64.go` (or equivalent) to understand the intended code and root cause of the syntax error.
 2. [x] Implementer: fix the syntax error; verify build.
 3. [x] Implementer: push fix on a new branch, open PR vs main.
-4. [ ] Human: merge PR #17 and re-run the docker-publish workflow to confirm the multi-arch image now builds and publishes successfully end-to-end.
+4. [x] Human: merge PR #17 and re-run the docker-publish workflow to confirm the multi-arch image now builds and publishes successfully end-to-end.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -85,14 +85,18 @@ but the real verification is the next Actions run after merge.
   audit's confidence was overstated — the PR-check workflow (K-102) is
   earning its keep by catching this pre-merge instead of after another
   merge-and-watch cycle.
+- 2026-07-30: union-access fix (unsafe.Pointer cast to a named
+  `Bambu_VideoFormat` type instead of the anonymous union) pushed to PR #17;
+  its `docker-build-check` PR check went green (run 30517443672, 6m23s) —
+  first fully successful multi-arch build. PR #17 merged. Confirmed end to
+  end: `docker-publish` run 30517766342 on main succeeded (7m4s) and pushed
+  the multi-arch image to ghcr.io/chrisjohnson/printer-dashboard. Moving to
+  done/ — three distinct latent amd64 cgo bugs (`type` keyword collision,
+  missing `unistd.h`, anonymous union access) all fixed, verified by an
+  actual passing build, not just review.
 
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
-PR https://github.com/chrisjohnson/printer-dashboard/pull/17 is open, not
-merged (PR #16 already merged and is superseded/built upon by #17). A fix
-for the union-access bug at lines 313-314 is being dispatched now, to land
-as another commit on PR #17's branch. Once PR #17's own `docker-build-check`
-PR check goes green, that's real pre-merge confirmation — merge, then still
-watch the `docker-publish` run on main once to confirm the push/publish path
-also succeeds end-to-end before moving this card to done/.
+Done. Image is live at ghcr.io/chrisjohnson/printer-dashboard:latest
+(multi-arch, linux/amd64+linux/arm64). Nothing further pending on this card.
