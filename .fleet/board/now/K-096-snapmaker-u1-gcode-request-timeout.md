@@ -46,5 +46,12 @@ This creates a false sense of readiness: the dashboard shows the printer as "hom
 - 2026-07-30: Fixed `handleHomeAll` (server.go:984-1003) — added "Must home" detection in error path. When Klipper rejects G28 with "Must home Z axis first", returns 400 and skips `SetHomed(true)` so backend state stays consistent.
 - 2026-07-30: Fixed `sendJog` (onboarding.go:1884-1917) — detects "Must home" in jog error response; updates `window._printerCache[id].homed = false` and opens homing modal instead of showing raw alert. This closes the UX gap where the user got an ugly alert instead of being offered homing.
 - 2026-07-30: Fixed MockPrinter — added missing `SetHomed` method (pre-existing test bug causing panic in TestHandleHomeAll/idle_and_online_succeeds). Added test case "400 on Must home error — does not mark homed".
+- 2026-07-30: PR #19 merged (d8bb1d3). User can now test the homing flow on the U1 — jog or G28 that triggers "Must home" will show the homing modal instead of an ugly alert.
 
 ## Handoff notes
+
+- **PR**: https://github.com/chrisjohnson/printer-dashboard/pull/19 (merged to main)
+- **Branch**: `k-096-home-error-ux`
+- **Files changed**: `internal/server/server.go`, `internal/server/onboarding.go`, `internal/server/server_test.go`
+- **Next**: Test the homing flow on the live U1 — try jogging Z when the printer needs homing. It should now show the "Printer not homed → Run Homing?" modal instead of an ugly Klipper error alert.
+- **Still open**: Steps 4-7 (Klipper Z home state persistence research, optional `query_endstops` polling, original 10s timeout fix).
