@@ -36,6 +36,8 @@ The dashboard's current workaround is in-memory last-commanded-state tracking (`
 - Bambu printers use `ledctrl` via Cloud MQTT, and `LightOn` is populated from real `lights_report` MQTT data — Bambu can read actual LED state from the printer.
 - Snapmaker U1 has no equivalent real-state feedback mechanism.
 
+## Signals
+
 ## Plan
 1. [ ] Researcher: Check if Paxx firmware exposes any Klipper alias/custom command for LED state (e.g., via `QUERY_FIRMWARE_VERSION`, custom Klipper macros, or alternative Moonraker objects like `output_pin cavity_led`).
 2. [ ] Researcher: Check if the U1 has any non-Klipper API endpoint (HTTP/WS) that exposes LED state.
