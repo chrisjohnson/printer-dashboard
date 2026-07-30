@@ -982,6 +982,17 @@ func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := p.HomeAll(r.Context()); err != nil {
+		// Paxx/Snapmaker firmware may accept the G28 HTTP request (200)
+		// but return an embedded Klipper error (e.g. "Must home Z axis
+		// first").  sendGCode detects this via maybeMarkUnhomed and
+		// mutates status.Homed = false, but handleHomeAll still sees
+		// a nil error and would mark homed = true on the next line —
+		// the exact bug reported for the U1.  Detect "Must home" here
+		// so we don't clobber the backend state.
+		if strings.Contains(err.Error(), "Must home") {
+			writeError(w, 400, err.Error())
+			return
+		}
 		writeError(w, 500, err.Error())
 		return
 	}

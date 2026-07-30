@@ -132,6 +132,10 @@ func (m *MockPrinter) Jog(_ context.Context, x, y, z float64, speedMMPerMin int)
 	return m.jogErr
 }
 
+func (m *MockPrinter) SetHomed(homed *bool) {
+	m.stat.Homed = homed
+}
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -2124,6 +2128,28 @@ func TestHandleHomeAll(t *testing.T) {
 
 		if resp.StatusCode != http.StatusInternalServerError {
 			t.Errorf("expected 500, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("400 on Must home error — does not mark homed", func(t *testing.T) {
+		p := &MockPrinter{
+			id:         "printer-1",
+			name:       "My Printer",
+			stat:       printers.PrinterStatus{ID: "printer-1", Name: "My Printer", State: "idle", Online: true},
+			homeAllErr: errors.New("snapmaker printer-1: gcode returned HTTP 400: {\"error\": {\"code\": 400, \"message\": \"Must home Z axis first: 5.130 4.947 199.982\"}}"),
+		}
+		s := newTestServer(map[string]printers.Printer{"printer-1": p})
+		ts := httptest.NewServer(s.mux)
+		t.Cleanup(ts.Close)
+
+		resp := mustPost(t, ts.URL, "/api/printers/printer-1/home")
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", resp.StatusCode)
+		}
+		if p.stat.Homed != nil && *p.stat.Homed {
+			t.Error("expected Homed to remain nil/unset after Must home error")
 		}
 	})
 }

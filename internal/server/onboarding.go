@@ -1881,6 +1881,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // the command was accepted and sent, not that the move completed. Errors
     // (400 invalid request, 409 not idle/online) surface via alert(), same
     // convention as cmd()/homeAll() above.
+    //
+    // Special case: if the error contains "Must home" (e.g. Paxx/Snapmaker
+    // firmware requires a physical Z home after power cycle), update the
+    // cache to homed=false and offer homing instead of a raw alert.
     function sendJog(id, body) {
       window._jogBusy[id] = true;
       var card = document.getElementById('card-' + id);
@@ -1894,7 +1898,20 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then(function(r) { return r.json(); })
-        .then(function(d) { if (d.status !== 'ok') alert(d.error || 'Command failed'); })
+        .then(function(d) {
+          if (d.status !== 'ok') {
+            if (d.error && d.error.indexOf('Must home') !== -1) {
+              // Klipper rejected the jog — printer needs a physical home.
+              // Update cache so the next Z-jog offers homing first.
+              if (!window._printerCache[id]) window._printerCache[id] = {};
+              window._printerCache[id].homed = false;
+              updateCard(window._printerCache[id]);
+              openZJogModal(id, body.z || body.x || body.y, body);
+            } else {
+              alert(d.error || 'Command failed');
+            }
+          }
+        })
         .catch(function() { alert('Network error'); })
         .finally(function() {
           window._jogBusy[id] = false;
