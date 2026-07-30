@@ -28,3 +28,8 @@ The user wants the jog pad, Home All button, and step size selector to be **bott
 ## Decision log
 
 ## Handoff notes
+
+- **PR**: https://github.com/chrisjohnson/printer-dashboard/pull/20 (open, base: main)
+- **Branch**: `k-104-bottom-align-controls`
+- **Files changed**: `internal/server/onboarding.go` (2 lines — `.controls` and `.move-section` `margin-top: 4px` → `auto`)
+- **Effect**: Pause/resume/cancel/skip row and jog pad + Home All row both push to card bottom, consistent across all card heights.
