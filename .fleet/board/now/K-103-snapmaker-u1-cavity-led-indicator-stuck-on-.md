@@ -2,8 +2,8 @@
 id: K-103
 title: Snapmaker U1 cavity LED indicator stuck on "-" — no real-state feedback
 initiative_id: null
-claimed_by: null
-claimed_at: null
+claimed_by: happy-otter
+claimed_at: "2026-07-30T17:05Z"
 blocks: null
 blocked_by: null
 related_cards: [K-005, K-077, K-096]
