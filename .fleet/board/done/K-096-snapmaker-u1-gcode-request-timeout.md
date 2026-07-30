@@ -53,5 +53,4 @@ This creates a false sense of readiness: the dashboard shows the printer as "hom
 - **PR**: https://github.com/chrisjohnson/printer-dashboard/pull/19 (merged to main)
 - **Branch**: `k-096-home-error-ux`
 - **Files changed**: `internal/server/server.go`, `internal/server/onboarding.go`, `internal/server/server_test.go`
-- **Next**: Test the homing flow on the live U1 — try jogging Z when the printer needs homing. It should now show the "Printer not homed → Run Homing?" modal instead of an ugly Klipper error alert.
-- **Still open**: Steps 4-7 (Klipper Z home state persistence research, optional `query_endstops` polling, original 10s timeout fix).
+- **Moved to done**: The "Must home" error UX is fixed and verified. Steps 4-7 (proactive Klipper Z home state research, original 10s timeout fix) are deferred to future tickets if the user reports issues.
