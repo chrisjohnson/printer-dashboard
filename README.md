@@ -94,6 +94,44 @@ Notes:
   read-only; drop `:ro` if you rely on the app's config `Save()` behavior and want it
   to persist back to disk.
 
+### Running a published image on another machine
+
+Every push to `main` (and every `v*.*.*` tag) is built and published to GitHub
+Container Registry by `.github/workflows/docker-publish.yml`, for both `linux/amd64`
+and `linux/arm64`. To run a stable instance on another machine without building
+locally, pull the published image instead:
+
+```bash
+docker pull ghcr.io/chrisjohnson/printer-dashboard:latest
+```
+
+GHCR packages are private by default, so on a fresh machine you'll first need to
+authenticate:
+
+- Easiest: make the package public in the repo's GitHub package settings
+  (`ghcr.io/chrisjohnson/printer-dashboard` → Package settings → Change visibility), or
+- `docker login ghcr.io` on that machine using a GitHub Personal Access Token with the
+  `read:packages` scope.
+
+Then run it the same way as a local build, but with a fixed host port (this is a
+standalone stable instance, not a fleet worktree, so there's no concurrent-container
+port collision to avoid):
+
+```bash
+mkdir -p ~/.printer-dashboard
+cp config.example.yaml ~/.printer-dashboard/config.yaml
+vim ~/.printer-dashboard/config.yaml
+
+docker rm -f printer-dashboard || true
+docker run -d --name printer-dashboard \
+  -p 8080:8080 \
+  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
+  ghcr.io/chrisjohnson/printer-dashboard:latest
+```
+
+Then open http://localhost:8080 in your browser.
+
 ## Testing
 
 All new features are developed test-first (TDD). Tests use only the Go standard library
