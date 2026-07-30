@@ -4,6 +4,7 @@ package tutk
 #include <stdlib.h>
 #include <string.h>
 #include <dlfcn.h>
+#include <unistd.h>
 
 // BambuTunnel types (from Bambu Studio's BambuTunnel.h)
 typedef void* Bambu_Tunnel;
