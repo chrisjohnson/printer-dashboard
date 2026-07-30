@@ -34,7 +34,7 @@ unmasked by K-100's multi-arch change, not a workflow/CI config bug.
 1. [x] Research: read `internal/camera/tutk/tutk_linux_amd64.go` around line 309, compare against `tutk_linux_arm64.go` (or equivalent) to understand the intended code and root cause of the syntax error.
 2. [x] Implementer: fix the syntax error; verify build.
 3. [x] Implementer: push fix on a new branch, open PR vs main.
-4. [ ] Human: merge PR #16 and re-run the docker-publish workflow to confirm the multi-arch image now builds and publishes successfully end-to-end.
+4. [ ] Human: merge PR #17 and re-run the docker-publish workflow to confirm the multi-arch image now builds and publishes successfully end-to-end.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
@@ -42,6 +42,7 @@ unmasked by K-100's multi-arch change, not a workflow/CI config bug.
 -->
 <!-- signal: claude 2026-07-30T04:10:00Z — claiming, fixing amd64 build break surfaced by K-100 -->
 <!-- signal: claude 2026-07-30T04:35:00Z — PR #16 open with fix, awaiting human merge + CI verification -->
+<!-- signal: claude 2026-07-30T04:45:00Z — PR #16 merged but run 30514402320 hit a 2nd cgo error (missing unistd.h); PR #17 opened after a full-file audit, awaiting merge + CI verification -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -65,11 +66,22 @@ but the real verification is the next Actions run after merge.
   egress) — leaving card in now/ rather than done/ until a human merges
   PR #16 and confirms the Actions run succeeds; this is a real external
   verification gap, not a formality.
+- 2026-07-30: PR #16 merged; next Actions run (30514402320) hit a *different*
+  compile error at the same file — `C.usleep`/`C.useconds_t` undeclared,
+  missing `#include <unistd.h>` in the cgo preamble. Confirms this file has
+  never actually compiled for amd64 before, so more latent issues were
+  plausible. Rather than fix-and-CI-retry one error at a time, dispatched a
+  full manual audit of every `C.xxx` symbol against its required header and
+  every Go-reserved-keyword struct selector in the file — PR #17 adds the
+  missing include; audit found nothing else needing a fix.
 
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
-PR https://github.com/chrisjohnson/printer-dashboard/pull/16 is open, not
-merged. Once merged, watch the docker-publish workflow run on main; if it
-succeeds, move this card to done/ with that confirmation noted in the
-decision log. If it fails differently, reopen investigation.
+PR https://github.com/chrisjohnson/printer-dashboard/pull/17 is open, not
+merged (PR #16 already merged and is superseded/built upon by #17). Once #17
+merges, watch the docker-publish workflow run on main; if it succeeds, move
+this card to done/ with that confirmation noted in the decision log. If it
+fails on a third distinct error, this file may need review by someone who
+can actually compile it (Linux/amd64 machine or a sandbox with Docker
+network egress) rather than another blind audit pass.
