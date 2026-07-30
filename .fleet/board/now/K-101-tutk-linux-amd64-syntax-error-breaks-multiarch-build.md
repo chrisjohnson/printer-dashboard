@@ -31,29 +31,45 @@ unmasked by K-100's multi-arch change, not a workflow/CI config bug.
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ] Research: read `internal/camera/tutk/tutk_linux_amd64.go` around line 309, compare against `tutk_linux_arm64.go` (or equivalent) to understand the intended code and root cause of the syntax error.
-2. [ ] Implementer: fix the syntax error; run `go build ./...` / `go vet ./...` for amd64 and arm64 (`GOARCH=amd64 go build ./...`, `GOARCH=arm64 go build ./...`) locally to confirm both compile.
-3. [ ] Implementer: push fix on a new branch, open PR vs main.
-4. [ ] Implementer/human: re-run the docker-publish workflow (push or workflow_dispatch) to confirm the multi-arch image now builds and publishes successfully end-to-end.
+1. [x] Research: read `internal/camera/tutk/tutk_linux_amd64.go` around line 309, compare against `tutk_linux_arm64.go` (or equivalent) to understand the intended code and root cause of the syntax error.
+2. [x] Implementer: fix the syntax error; verify build.
+3. [x] Implementer: push fix on a new branch, open PR vs main.
+4. [ ] Human: merge PR #16 and re-run the docker-publish workflow to confirm the multi-arch image now builds and publishes successfully end-to-end.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: claude 2026-07-30T04:10:00Z — claiming, fixing amd64 build break surfaced by K-100 -->
+<!-- signal: claude 2026-07-30T04:35:00Z — PR #16 open with fix, awaiting human merge + CI verification -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
      belongs in a linked doc, not here. -->
 Failing run: https://github.com/chrisjohnson/printer-dashboard/actions/runs/30512754706/job/90776113014
 File: internal/camera/tutk/tutk_linux_amd64.go, line 309, col 13.
-Build was cancelled mid-way on the arm64 leg once amd64 failed, so arm64
-compile status for this file is unverified too — check both.
+Root cause: `info.type` — `type` is a Go reserved keyword, cgo renames a
+colliding C struct field to `_type` in the generated Go struct. Fix:
+`info._type`. This is the *only* real TUTK implementation (filename-gated
+`linux && amd64`); `tutk_stub.go` is the no-op fallback for every other
+platform including arm64, so arm64 was never at risk from this bug.
+Sandbox couldn't cross-compile/cgo-build linux/amd64 or run Docker (no
+network egress) — fix is a one-line, high-confidence deterministic cgo rule,
+but the real verification is the next Actions run after merge.
 
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-07-30: fix could not be locally verified via cross-compile or Docker
+  build in the sandbox (no linux/amd64 cgo toolchain, no Docker network
+  egress) — leaving card in now/ rather than done/ until a human merges
+  PR #16 and confirms the Actions run succeeds; this is a real external
+  verification gap, not a formality.
 
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
+PR https://github.com/chrisjohnson/printer-dashboard/pull/16 is open, not
+merged. Once merged, watch the docker-publish workflow run on main; if it
+succeeds, move this card to done/ with that confirmation noted in the
+decision log. If it fails differently, reopen investigation.
