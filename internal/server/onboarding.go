@@ -1105,7 +1105,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '--';
         const nozzle = p.nozzle_temp !== null ? p.nozzle_temp.toFixed(1) : '?';
         const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '--';
-        const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
+        const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '\u2014';
 
         const rows = temps.querySelectorAll('.temp-row');
         // Row 0: bed
@@ -1203,7 +1203,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         const toggle = lightRow.querySelector('.toggle input');
         if (toggle) toggle.checked = p.light_on === true;
         const thumb = lightRow.querySelector('.toggle .thumb');
-        if (thumb) thumb.textContent = p.light_on === true ? 'on' : 'off';
+        if (thumb) thumb.textContent = p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014';
       }
 
       reorderCard(p.id);
@@ -1483,7 +1483,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const bedT = p.bed_target_temp !== null ? p.bed_target_temp.toFixed(1) : '--';
       const nozzle = p.nozzle_temp !== null ? p.nozzle_temp.toFixed(1) : '?';
       const nozzleT = p.nozzle_target_temp !== null ? p.nozzle_target_temp.toFixed(1) : '--';
-      const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '?';
+      const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '\u2014';
       const chamberT = p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--';
 
       // Online indicator
@@ -1624,7 +1624,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           // The data-light marker lets updateCard() find it directly.
           '<span class="light-row" data-light>' +
             '<span class="label"><span class="temp-icon">' + svgLight() + '</span>Light</span>' +
-            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : 'off') + '</span></span></label></span>' +
+            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014') + '</span></span></label></span>' +
           '</span>' +
         '</div>' +
         fileHtml +
