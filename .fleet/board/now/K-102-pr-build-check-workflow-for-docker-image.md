@@ -27,15 +27,17 @@ fully fixed the amd64 build, before merge.
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ] Implementer: add `.github/workflows/docker-build-check.yml` (or a `pull_request` trigger + conditional push in the existing workflow — prefer a separate file for clarity) that builds `linux/amd64,linux/arm64` via buildx with `push: false`, triggered on `pull_request` targeting `main`, using GHA layer cache.
-2. [ ] Implementer: commit on the existing `K-101-tutk-amd64-full-audit` branch (not a new branch) and push, so it lands on PR #17 and runs against it immediately.
-3. [ ] Implementer/human: watch the new workflow's run on PR #17 to confirm the amd64 build now succeeds (or surfaces a 3rd distinct error).
+1. [x] Implementer: add `.github/workflows/docker-build-check.yml` that builds `linux/amd64,linux/arm64` via buildx with `push: false`, triggered on `pull_request` targeting `main`, using GHA layer cache (distinct `pr-check` scope).
+2. [x] Implementer: commit on the existing `K-101-tutk-amd64-full-audit` branch (not a new branch) and push, so it lands on PR #17 and runs against it immediately.
+3. [ ] Human: watch the new workflow's run on PR #17 to confirm the amd64 build now succeeds (or surfaces a 3rd distinct error).
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
 <!-- signal: claude 2026-07-30T05:05:00Z — claiming, adding PR-triggered build-only check per direct human request -->
+<!-- signal: claude 2026-07-30T05:20:00Z — docker-build-check.yml pushed to PR #17, awaiting its first run for real signal -->
+<!-- signal: claude 2026-07-30T05:20:00Z — note: a subagent checked out K-101's branch directly in REPO_ROOT (same checkout used for board commits), causing transient working-tree drift on board files; no commits were lost (verified against origin/main), but a subagent touching a feature branch should use its own worktree, not REPO_ROOT, when REPO_ROOT is also being used for board commits -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
