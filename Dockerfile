@@ -20,13 +20,14 @@ RUN mkdir -p /out && \
 # Stage 2: Download go2rtc pre-built binary for RTSPS camera streaming support
 # (independent of source/deps, so it stays cached across app rebuilds)
 FROM alpine:latest AS go2rtc
+ARG TARGETARCH
 RUN apk add --no-cache curl jq
 RUN mkdir -p /out && \
     GO2RTC_VERSION=$(curl -sf "https://api.github.com/repos/AlexxIT/go2rtc/releases/latest" | jq -r '.tag_name' | sed 's/^v//') && \
-    curl -sfL "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_arm64" \
+    curl -sfL "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_${TARGETARCH}" \
       -o /out/go2rtc && \
     chmod +x /out/go2rtc && \
-    echo "go2rtc ${GO2RTC_VERSION} downloaded successfully"
+    echo "go2rtc ${GO2RTC_VERSION} (${TARGETARCH}) downloaded successfully"
 
 # Stage 3: Build printer-dashboard
 FROM golang:1.26-bookworm AS builder
