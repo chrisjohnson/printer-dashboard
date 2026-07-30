@@ -72,11 +72,13 @@ workflows' triggers.
   original ask, but a direct consequence of it — noticed while watching CI
   during this session that non-code board commits were triggering full
   builds) — leaving card in now/ until merged and confirmed.
+- 2026-07-30: PR #18 merged. Confirmed: board-only commit (c73c63f, "done K-102")
+  did not trigger docker-publish.yml — only the PR-merge commit (6f53200)
+  triggered a run (expected, as it includes the workflow file change).
 
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
-PR https://github.com/chrisjohnson/printer-dashboard/pull/18 is open, not
-merged. Once merged, confirm a board-only commit to main doesn't trigger
-`docker-publish.yml` (check the Actions tab / `gh run list`), then move this
-card to done/ with that confirmation in the decision log.
+PR #18 merged (https://github.com/chrisjohnson/printer-dashboard/pull/18).
+Paths filter verified — board-only commits no longer trigger Docker builds.
+Card moved to done/ with this confirmation in the decision log.
