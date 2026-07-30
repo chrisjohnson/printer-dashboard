@@ -663,7 +663,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .filename { display: none; font-size: 0.75rem; color: var(--text-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Controls — always visible but less buttons on mobile */
-    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
     .controls button {
       flex: 1; min-width: 0;
       background: var(--accent); color: #fff; border: 1px solid var(--accent);
@@ -825,7 +825,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        clearly as a grid than as six same-width buttons in a line. Buttons
        still reuse .controls button's color/sizing rules below so they match
        the rest of the card's button styling instead of inventing a new look. */
-    .move-section { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+     .move-section { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
     .move-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .move-header .label { font-size: 0.75rem; color: var(--text-subtle); font-weight: 600; }
     .step-select {
