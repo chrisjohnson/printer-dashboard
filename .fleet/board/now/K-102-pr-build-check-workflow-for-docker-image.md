@@ -33,7 +33,7 @@ fully fixed the amd64 build, before merge.
 4. [x] Implementer: align cache scopes so PR checks read (not write) the same GHA cache scope `docker-publish.yml` writes on `main` pushes, instead of the current isolated `scope=pr-check` — PR builds currently start cold every run (~45s+ re-downloading ffmpeg's apt deps alone). Human asked about this directly.
 5. [x] Human confirmed: `docker-publish.yml` succeeded end-to-end after merge (run 30517766342), so the shared cache scope is now actually populated — future PR checks and main pushes should see real speedups.
 6. [x] Implementer: add a `paths:` filter to both workflows so board-only commits (`.fleet/board/**`) don't trigger full multi-arch Docker builds — observed two wasted `docker-publish.yml` runs triggered by plain board-commit pushes to main during this session.
-7. [ ] Human: merge PR #18 and confirm a subsequent board-only push (or other non-code push) to main no longer triggers `docker-publish.yml`.
+7. [x] Human: merged PR #18; confirmed board-only commit does not trigger docker-publish.yml.
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
