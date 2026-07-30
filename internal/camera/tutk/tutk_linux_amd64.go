@@ -306,7 +306,9 @@ func (s *Session) Open(ctx context.Context) error {
 	var info C.Bambu_StreamInfo
 	if ret := C.Bambu_GetStreamInfo_wrap(tunnel, 1, &info); ret == 0 {
 		log.Printf("[tutk] stream: type=%d sub_type=%d width=%d height=%d fps=%d",
-			int(info.type), int(info.sub_type),
+			// cgo renames C struct fields that collide with Go keywords by
+			// prefixing an underscore, so the C field "type" becomes "_type".
+			int(info._type), int(info.sub_type),
 			int(info.format.video.width), int(info.format.video.height),
 			int(info.format.video.frame_rate))
 	}
