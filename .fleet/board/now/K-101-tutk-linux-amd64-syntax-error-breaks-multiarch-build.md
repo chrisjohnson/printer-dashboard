@@ -74,14 +74,25 @@ but the real verification is the next Actions run after merge.
   full manual audit of every `C.xxx` symbol against its required header and
   every Go-reserved-keyword struct selector in the file — PR #17 adds the
   missing include; audit found nothing else needing a fix.
+- 2026-07-30: K-102's new PR-triggered build-check workflow (pushed onto
+  PR #17 itself) ran and caught a *third* distinct error before merge:
+  `info.format.video undefined (type [12]byte has no field or method video)`
+  at lines 313-314. Root cause: `format` is a C union in the cgo struct
+  preamble; cgo represents unions as an opaque byte array (no named Go
+  fields), so `info.format.video` is invalid — needs an `unsafe.Pointer`
+  cast to the right union member's Go type. This is a materially different
+  class of bug than the audit's header/keyword checks and confirms the
+  audit's confidence was overstated — the PR-check workflow (K-102) is
+  earning its keep by catching this pre-merge instead of after another
+  merge-and-watch cycle.
 
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
 PR https://github.com/chrisjohnson/printer-dashboard/pull/17 is open, not
-merged (PR #16 already merged and is superseded/built upon by #17). Once #17
-merges, watch the docker-publish workflow run on main; if it succeeds, move
-this card to done/ with that confirmation noted in the decision log. If it
-fails on a third distinct error, this file may need review by someone who
-can actually compile it (Linux/amd64 machine or a sandbox with Docker
-network egress) rather than another blind audit pass.
+merged (PR #16 already merged and is superseded/built upon by #17). A fix
+for the union-access bug at lines 313-314 is being dispatched now, to land
+as another commit on PR #17's branch. Once PR #17's own `docker-build-check`
+PR check goes green, that's real pre-merge confirmation — merge, then still
+watch the `docker-publish` run on main once to confirm the push/publish path
+also succeeds end-to-end before moving this card to done/.
