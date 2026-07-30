@@ -32,14 +32,19 @@ This creates a false sense of readiness: the dashboard shows the printer as "hom
 - If Klippy is not connected to Moonraker, the endpoint may hang
 
 ## Plan
-1. [ ] Researcher: Understand Klipper Z home persistence — when does Klipper report Z as "homed" vs when does it require a fresh home?
-2. [ ] Researcher: Investigate what Klipper status/macro exposes the actual Z home state (not just saved Z position)
-3. [ ] Implementer: Add detection for "Must home Z axis first" error from Klipper → clear dashboard's home state and show error to user
-4. [ ] Implementer: Consider polling Klipper's `printer.query_endstops` or equivalent to verify physical home state vs saved state
-5. [ ] Implementer: Fix the original 10s timeout issue (separate concern) — add configurable timeout and retry for G-code/script endpoint
+1. [x] Implementer: Fix `handleHomeAll` (server.go) — detect "Must home" in HomeAll error response; return 400 instead of marking homed=true
+2. [x] Implementer: Fix `sendJog` (onboarding.go) — detect "Must home" in jog error response; update cache homed=false and trigger homing modal instead of raw alert
+3. [x] Implementer: Fix MockPrinter — add missing `SetHomed` method (pre-existing test bug)
+4. [ ] Researcher: Understand Klipper Z home persistence — when does Klipper report Z as "homed" vs when does it require a fresh home?
+5. [ ] Researcher: Investigate what Klipper status/macro exposes the actual Z home state (not just saved Z position)
+6. [ ] Implementer: Consider polling Klipper's `printer.query_endstops` or equivalent to verify physical home state vs saved state
+7. [ ] Implementer: Fix the original 10s timeout issue (separate concern) — add configurable timeout and retry for G-code/script endpoint
 
 ## Signals
 
 ## Decision log
+- 2026-07-30: Fixed `handleHomeAll` (server.go:984-1003) — added "Must home" detection in error path. When Klipper rejects G28 with "Must home Z axis first", returns 400 and skips `SetHomed(true)` so backend state stays consistent.
+- 2026-07-30: Fixed `sendJog` (onboarding.go:1884-1917) — detects "Must home" in jog error response; updates `window._printerCache[id].homed = false` and opens homing modal instead of showing raw alert. This closes the UX gap where the user got an ugly alert instead of being offered homing.
+- 2026-07-30: Fixed MockPrinter — added missing `SetHomed` method (pre-existing test bug causing panic in TestHandleHomeAll/idle_and_online_succeeds). Added test case "400 on Must home error — does not mark homed".
 
 ## Handoff notes
