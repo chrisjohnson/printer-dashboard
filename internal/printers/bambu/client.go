@@ -212,7 +212,7 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 
 	// Fallback: construct URL from config (host + access code)
 	if c.cfg.Host != "" && c.cfg.AccessCode != "" {
-		if IsH2S(c.model) {
+		if UsesRTSPS(c.model) {
 			// RTSPS stream on port 322 (requires LAN mode enabled on printer).
 			streams = append(streams, printers.CameraStream{
 				URL:   fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", c.cfg.AccessCode, c.cfg.Host),
@@ -220,7 +220,7 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 				Label: "BirdsEye Camera",
 			})
 		} else {
-			// P1S, A1, X1 series use bambus:// binary TLS protocol on port 6000.
+			// P1S, A1 series use bambus:// binary TLS protocol on port 6000.
 			streams = append(streams, printers.CameraStream{
 				URL:   fmt.Sprintf("bambus://%s:6000?token=%s", c.cfg.Host, c.cfg.AccessCode),
 				Type:  "internal",
@@ -776,8 +776,28 @@ func (c *Client) SetHomed(homed *bool) {
 // Ensure Client satisfies the Printer interface.
 var _ printers.Printer = (*Client)(nil)
 
+// UsesRTSPS returns true if the model's camera uses the RTSPS protocol
+// on port 322 (requires LAN mode enabled on printer). This covers both
+// the H2 series (which also has H2-specific semantics via IsH2S) and
+// the X1 series, which serves RTSPS but does NOT share H2 semantics
+// like multi-camera or HasChamber.
+func UsesRTSPS(model string) bool {
+	return IsH2S(model) || IsX1Series(model)
+}
+
+// IsX1Series returns true if the model name indicates an X1-series printer
+// (X1, X1 Carbon, X1E) whose camera serves RTSPS on port 322 rather than
+// the bambus:// binary protocol on port 6000 used by P1/A1 series.
+func IsX1Series(model string) bool {
+	switch strings.ToUpper(model) {
+	case "BL-P001": // X1 Carbon
+		return true
+	}
+	return false
+}
+
 // IsH2S returns true if the model name indicates an H2-series (or similar)
-// printer with multiple cameras and RTSPS protocol.
+// printer with H2-specific semantics (HasChamber, multi-camera handling).
 // It matches both marketing names (e.g. "H2S") and Bambu Cloud API internal
 // model codes (e.g. "O1S").
 func IsH2S(model string) bool {
