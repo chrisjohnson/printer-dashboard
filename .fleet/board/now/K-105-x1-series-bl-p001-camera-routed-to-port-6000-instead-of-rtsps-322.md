@@ -41,11 +41,22 @@ Route X1-series models to the RTSPS path. A `UsesRTSPS(model)` predicate coverin
 
 ## Plan
 <!-- ordered checklist -->
-1. [ ] Audit all model codes the codebase knows about and identify which need RTSPS vs bambus://
-2. [ ] Extract a `UsesRTSPS(model)` predicate from the `IsH2S()` split in `client.go` and `server.go`
-3. [ ] Ensure `IsH2S()` semantics (HasChamber, multi-camera) are preserved for H2-only behavior
-4. [ ] Verify the fix works for BL-P001 and doesn't regress existing model paths
-5. [ ] Add tests covering both protocol paths
+1. [x] Audit all model codes the codebase knows about and identify which need RTSPS vs bambus://
+2. [x] Extract a `UsesRTSPS(model)` predicate from the `IsH2S()` split in `client.go` and `server.go`
+3. [x] Ensure `IsH2S()` semantics (HasChamber, multi-camera) are preserved for H2-only behavior
+4. [x] Verify the fix works for BL-P001 and doesn't regress existing model paths
+5. [x] Add tests covering both protocol paths
+
+## Signals
+<!-- append-only. Leave signals for other agents. Format:
+     <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
+     Examples:
+     <!-- signal: otter 2025-07-15T14:30Z — claiming, will work on API layer -->
+     <!-- signal: otter 2025-07-15T15:10Z — blocked on K-003, need schema first -->
+     <!-- signal: otter 2025-07-15T15:45Z — done, moved to done/ -->
+-->
+<!-- signal: pi 2026-07-31T00:00Z — implementing fix -->
+<!-- signal: pi 2026-07-31T00:00Z — done, ready for review -->
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
