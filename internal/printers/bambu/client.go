@@ -43,6 +43,14 @@ const initialConnectBackoffBase = 1 * time.Second
 // paths.
 const initialConnectBackoffMax = 30 * time.Second
 
+// reportSilenceTimeout is the duration to wait after subscribing and sending
+// pushall before warning that the printer may be in LAN Mode (which prevents
+// cloud MQTT reports from arriving). A printer in LAN Mode stops publishing
+// to Bambu's cloud MQTT broker by design, so the dashboard shows it as
+// permanently offline with no indication of why. This timeout surfaces that
+// condition as a actionable warning rather than silent failure.
+const reportSilenceTimeout = 60 * time.Second
+
 // validateTemp checks that a temperature value is within [min, max] and
 // returns a pointer to it if valid, or nil (with a log warning) if out
 // of range.  The current codebase uses two temperature ranges for chamber
@@ -57,8 +65,12 @@ func validateTemp(id string, value float64, min, max float64) *float64 {
 	return &value
 }
 
-// Client implements the printers.Printer interface for Bambu Lab printers
-// via Bambu's cloud MQTT infrastructure. No LAN mode or developer mode required.
+// Client implements the printers.Printer interface for Bambu Lab printers.
+//
+// Default mode: cloud MQTT via Bambu's infrastructure (no LAN mode required).
+// LAN Mode support: surface a warning if no reports arrive within
+// reportSilenceTimeout (see K-106). Full local broker support is tracked
+// separately and not implemented here.
 type Client struct {
 	cfg         config.PrinterDef
 	cloud       *BambuCloudClient
@@ -102,6 +114,15 @@ type Client struct {
 	// connectBackoffMax overrides initialConnectBackoffMax when non-zero.
 	// Test-only seam, paired with connectBackoffBase.
 	connectBackoffMax time.Duration
+
+	// firstReportCh is closed when the first report arrives after a
+	// (re)connection. Used by the silence-warning goroutine started in
+	// onConnect to stop waiting once a report has been received.
+	firstReportCh chan struct{}
+
+	// reportSilenceWarned guards against logging the LAN Mode silence
+	// warning more than once per connection lifecycle.
+	reportSilenceWarned sync.Once
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -333,6 +354,12 @@ func (c *Client) connectWithRetry(ctx context.Context, broker string) error {
 func (c *Client) onConnect(client mqtt.Client) {
 	log.Printf("bambu %s: cloud MQTT connected (or reconnected)", c.cfg.ID)
 
+	// Reset the first-report channel so the silence warning timer can
+	// monitor the next connection's report stream.
+	c.mu.Lock()
+	c.firstReportCh = make(chan struct{})
+	c.mu.Unlock()
+
 	// Subscribe to the printer's report topic
 	topic := fmt.Sprintf("device/%s/report", c.cfg.Serial)
 	token := client.Subscribe(topic, 0, c.handleReport)
@@ -346,6 +373,30 @@ func (c *Client) onConnect(client mqtt.Client) {
 
 	// Request a full status push to get current state
 	c.requestPushAll(client)
+
+	// Start a goroutine that warns if no reports arrive within the
+	// silence timeout. This catches the common case of a printer in
+	// LAN Mode (which stops publishing to cloud MQTT by design) —
+	// without this warning, the dashboard shows the printer as
+	// permanently offline with no indication of why.
+	go c.silenceWarning(client)
+}
+
+// silenceWarning waits for the first report after connection. If none
+// arrives within reportSilenceTimeout, it logs a warning that the
+// printer may be in LAN Mode.
+func (c *Client) silenceWarning(_ mqtt.Client) {
+	select {
+	case <-c.firstReportCh:
+		return // first report arrived — nothing to warn about
+	case <-time.After(reportSilenceTimeout):
+		c.mu.RLock()
+		serial := c.cfg.Serial
+		c.mu.RUnlock()
+		c.reportSilenceWarned.Do(func() {
+			log.Printf("bambu %s: no MQTT reports received in %.0f seconds after subscribing — printer may be in LAN Mode (which stops publishing to cloud MQTT by design). See GitHub issue #22.", serial, reportSilenceTimeout.Seconds())
+		})
+	}
 }
 
 // requestPushAll sends a pushall command to get the full printer state.
@@ -377,6 +428,20 @@ func (c *Client) onReconnecting(client mqtt.Client, opts *mqtt.ClientOptions) {
 
 // handleReport processes incoming MQTT messages on the report topic.
 func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
+	// Signal the silence-warning goroutine that a report arrived, so it
+	// stops waiting and doesn't emit a false LAN Mode warning.
+	c.mu.RLock()
+	firstCh := c.firstReportCh
+	c.mu.RUnlock()
+	if firstCh != nil {
+		select {
+		case <-firstCh:
+			// Already closed (first report already arrived).
+		default:
+			close(firstCh)
+		}
+	}
+
 	r, err := parseReport(msg.Payload())
 	if err != nil {
 		log.Printf("bambu %s: failed to parse report: %v", c.cfg.ID, err)
