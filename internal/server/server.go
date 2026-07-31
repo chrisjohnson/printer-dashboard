@@ -97,23 +97,23 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 		if pdef.Type != "bambu" || pdef.Host == "" || pdef.AccessCode == "" {
 			continue
 		}
-		if bambu.IsH2S(pdef.Model) {
-			// H2-series: try RTSPS streams (port 322, requires LAN mode).
+		if bambu.UsesRTSPS(pdef.Model) {
+			// H2-series / X1-series: try RTSPS streams (port 322, requires LAN mode).
 			// Only pre-connects the BirdsEye (/live/1) feed to eliminate the
 			// broken-image flash on first load; the Toolhead (/live/2) feed
 			// is started lazily on first request via camera.RTSPStreamKey.
 			rtspsURL := fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", pdef.AccessCode, pdef.Host)
 			parsedURL, err := url.Parse(rtspsURL)
 			if err != nil {
-				log.Printf("camera: failed to parse H2S camera URL for %s: %v", pdef.Name, err)
+				log.Printf("camera: failed to parse RTSPS camera URL for %s: %v", pdef.Name, err)
 				continue
 			}
 			streamKey := camera.RTSPStreamKey(parsedURL)
 			if _, err := s.rtspMgr.Start(context.Background(), streamKey, rtspsURL); err != nil {
-				log.Printf("camera: failed to pre-connect H2S camera %s via RTSPS: %v", pdef.Name, err)
+				log.Printf("camera: failed to pre-connect camera %s via RTSPS: %v", pdef.Name, err)
 			}
 		} else {
-			// P1S/A1/X1 series: use bambus:// binary protocol on port 6000
+			// P1S/A1 series: use bambus:// binary protocol on port 6000
 			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
 		}
 	}
