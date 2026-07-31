@@ -3,8 +3,8 @@ id: K-105
 # Filename pattern: {ID}-{slugified-title}.md
 title: X1 series (BL-P001) camera routed to port-6000 P1/A1 protocol instead of RTSPS on 322
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: pi                 # pet name of the agent session working this card, e.g. otter
+claimed_at: 2026-07-31T00:00Z   # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                 # set on a card that can't proceed until another card finishes
 related_cards: []
