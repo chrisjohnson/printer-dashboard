@@ -53,6 +53,39 @@ type PrinterStatus struct {
 	// e.g. Snapmaker has no homed-state query wiring today), true = homed,
 	// false = not homed.
 	Homed *bool `json:"homed,omitempty"`
+	// AMSUnits holds per-AMS-unit data for Bambu printers with AMS (Automatic
+	// Material System). Each unit contains up to 4 filament slots. Nil for
+	// printers without AMS or when no AMS data has been received.
+	AMSUnits []AMSUnit `json:"ams_units,omitempty"`
+	// ActiveTrayID is the globally-indexed active tray ID for Bambu printers
+	// with AMS. Encoded as (ams_id * 4) + tray_id. 254 = external spool,
+	// 255 = none. -1 when unknown or not applicable.
+	ActiveTrayID int `json:"active_tray_id"`
+}
+
+// AMSUnit represents one AMS (Automatic Material System) unit on a Bambu printer.
+// An AMS unit contains up to 4 filament trays/slots. P1S AMS 1 does not report
+// humidity or temperature; H2S AMS 2 Pro and X1 series do.
+type AMSUnit struct {
+	ID           int          `json:"id"`              // AMS unit index (0-3)
+	Humidity     string       `json:"humidity"`        // Humidity index 0-5 (lower=drier); empty if not supported
+	HumidityRaw  string       `json:"humidity_raw"`    // Raw humidity percentage; empty if not supported
+	Temp         string       `json:"temp"`            // AMS internal temperature °C; empty if not supported
+	Trays        []FilamentSlot `json:"trays"`         // Up to 4 filament slots
+}
+
+// FilamentSlot represents one tray/slot in an AMS unit.
+type FilamentSlot struct {
+	Index        int     `json:"index"`         // Tray slot index (0-3 within the AMS unit)
+	Type         string  `json:"type"`          // Filament material type (e.g., "PLA", "PETG")
+	Color        string  `json:"color"`         // RGBA hex color code (8 chars, e.g., "FF0000FF")
+	InfoIdx      string  `json:"info_idx"`      // Bambu filament profile ID (e.g., "GFA00")
+	NozzleTempMin int    `json:"nozzle_temp_min"` // Min nozzle temp °C
+	NozzleTempMax int    `json:"nozzle_temp_max"` // Max nozzle temp °C
+	RemainingMM  int     `json:"remain"`        // Remaining filament length mm; -1=unknown
+	Weight       string  `json:"weight"`        // Spool weight grams
+	TagUID       string  `json:"tag_uid"`       // RFID tag UID (zeros if no RFID)
+	Loaded       bool    `json:"loaded"`        // true if tray has filament (state 2=loaded, 3=ready, 11=loaded+data)
 }
 
 // HMSEntry is one decoded Bambu HMS (Health Management System) event.

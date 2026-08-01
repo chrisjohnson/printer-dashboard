@@ -24,11 +24,11 @@ protocol reference before starting.
      has been planned out, e.g. "Implementer: apply config change". -->
 
 ### Backend (Go)
-1. [ ] Add `AMSUnit` and `FilamentSlot` structs to `internal/printers/interface.go`
-2. [ ] Add `AmsData`, `AmsUnit`, `AmsTray` structs to `internal/printers/bambu/parser.go`
-3. [ ] Add `Ams` field to `printStatus` struct in parser.go
-4. [ ] Implement AMS parsing in `handleReport()` in `internal/printers/bambu/client.go`
-5. [ ] Populate `AMSUnits` and `ActiveTrayID` in `PrinterStatus`
+1. [x] Add `AMSUnit` and `FilamentSlot` structs to `internal/printers/interface.go`
+2. [x] Add `AmsData`, `AmsUnit`, `AmsTray` structs to `internal/printers/bambu/parser.go`
+3. [x] Add `Ams` field to `printStatus` struct in parser.go
+4. [x] Implement AMS parsing in `handleReport()` in `internal/printers/bambu/client.go`
+5. [x] Populate `AMSUnits` and `ActiveTrayID` in `PrinterStatus`
 
 ### Frontend (Dashboard)
 6. [ ] Add AMS section to printer card UI
@@ -45,6 +45,7 @@ protocol reference before starting.
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
+<!-- signal: pi 2026-07-31T00:00Z — backend complete: AMS data structures and parsing implemented -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
