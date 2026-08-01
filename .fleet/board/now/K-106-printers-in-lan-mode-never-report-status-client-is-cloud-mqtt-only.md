@@ -42,7 +42,7 @@ A smaller improvement regardless: **surface the silence**. If a printer has been
 
 ## Plan
 <!-- ordered checklist -->
-1. [ ] (Short-term) Surface the silence: detect N seconds of zero reports on cloud MQTT and warn in logs + dashboard
+1. [x] (Short-term) Surface the silence: detect N seconds of zero reports on cloud MQTT and warn in logs + dashboard
 2. [ ] Extend config to support per-printer `lan_mode` or local broker discovery
 3. [ ] Implement local MQTT connection path (ssl://<host>:8883, bblp/access code, InsecureSkipVerify)
 4. [ ] Reuse existing parser for the local broker payload (already handles it)
@@ -51,7 +51,13 @@ A smaller improvement regardless: **surface the silence**. If a printer has been
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
+     Examples:
+     <!-- signal: otter 2025-07-15T14:30Z — claiming, will work on API layer -->
+     <!-- signal: otter 2025-07-15T15:10Z — blocked on K-003, need schema first -->
+     <!-- signal: otter 2025-07-15T15:45Z — done, moved to done/ -->
 -->
+<!-- signal: pi 2026-07-31T00:00Z — implementing silence detection -->
+<!-- signal: pi 2026-07-31T00:00Z — done, moved to done/ -->
 
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
