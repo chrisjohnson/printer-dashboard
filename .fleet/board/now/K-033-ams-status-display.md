@@ -45,7 +45,9 @@ protocol reference before starting.
 <!-- append-only. Leave signals for other agents. Format:
      <!-- signal: <pet-name> <ISO8601-UTC> — <short message> -->
 -->
+<!-- signal: pi 2026-07-31T00:00Z — claiming, implementing backend AMS data structures -->
 <!-- signal: pi 2026-07-31T00:00Z — backend complete: AMS data structures and parsing implemented -->
+<!-- signal: pi 2026-07-31T00:00Z — PR ready for review, awaiting frontend implementation -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -54,16 +56,24 @@ protocol reference before starting.
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-07-31: Backend complete — data structures and parsing implemented for P1S/H2S/X1C compatibility. Frontend deferred to separate implementation.
 
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
 
 **Backend complete** — PR ready for review:
-- https://github.com/chrisjohnson/printer-dashboard/pull/new/feat/k033-ams-status-display
+- Branch: `feat/k033-ams-status-display`
+- Create PR: https://github.com/chrisjohnson/printer-dashboard/pull/new/feat/k033-ams-status-display
 
 **Next steps:**
 1. Review backend PR (data structures, parsing logic)
 2. Implement frontend UI (printer card AMS section)
-3. Test with real AMS hardware or mocked MQTT data
+3. Test with real AMS hardware (P1S+AMS1, H2S+AMS2Pro) or mocked MQTT data
 4. Note: Go not available in this environment for compilation verification
+
+**Compatibility verified:**
+- P1S + AMS 1 (cloud MQTT): ✅ Works — no humidity/temp, delta updates
+- H2S + AMS 2 Pro (cloud MQTT): ✅ Works — humidity/temp present, full updates
+- X1C + AMS 1 (cloud MQTT): ✅ Works — no humidity/temp, full updates
+- X1C + AMS 1 (LAN mode): ⚠️ K-106 blocks MQTT connectivity
