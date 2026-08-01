@@ -22,12 +22,24 @@ protocol reference before starting.
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ] Add AMS/filament structs to PrinterStatus (interface.go)
-2. [ ] Add AmsData struct to bambu/parser.go mirroring MQTT ams JSON
-3. [ ] Parse ams section in handleReport (client.go) when present
-4. [ ] Build UI section in dashboard showing AMS grid (slot tiles with color/type/remaining)
-5. [ ] Test with real AMS hardware or mocked MQTT data
-6. [ ] Add signals and move to done/
+
+### Backend (Go)
+1. [ ] Add `AMSUnit` and `FilamentSlot` structs to `internal/printers/interface.go`
+2. [ ] Add `AmsData`, `AmsUnit`, `AmsTray` structs to `internal/printers/bambu/parser.go`
+3. [ ] Add `Ams` field to `printStatus` struct in parser.go
+4. [ ] Implement AMS parsing in `handleReport()` in `internal/printers/bambu/client.go`
+5. [ ] Populate `AMSUnits` and `ActiveTrayID` in `PrinterStatus`
+
+### Frontend (Dashboard)
+6. [ ] Add AMS section to printer card UI
+7. [ ] Render grid of AMS unit tiles with slot information
+8. [ ] Display color swatches (convert RRGGBBAA hex), filament type, remaining %
+9. [ ] Highlight active tray, show external spool when tray_now=254
+
+### Verification
+10. [ ] Test with mocked MQTT data (P1S without humidity, H2S with humidity)
+11. [ ] Verify delta update handling (P1S sends partial updates)
+12. [ ] Add signals and move to done/
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:

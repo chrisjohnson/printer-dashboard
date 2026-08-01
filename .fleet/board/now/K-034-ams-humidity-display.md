@@ -14,15 +14,38 @@ related_cards: []
 
 ## Context
 
-AMS humidity display. Extends AMS status with humidity/temp sensors. H2S AMS 2 Pro only.
+AMS humidity display. Focuses specifically on visualizing the humidity and temperature
+sensors available on H2S AMS 2 Pro units.
 
-See `.fleet/research-notes.md`'s K-055 section for the full AMS/filament
-protocol reference before starting.
+**DEPENDENCY:** K-033 must be completed first - humidity is part of the AMS data structure
+that needs to be parsed and exposed before it can be displayed.
+
+**Hardware note:** P1S AMS 1 has NO humidity/temp sensors. Only H2S AMS 2 Pro (and X1/X1C
+with AMS) report these values. The `humidity` field is an index 0-5 (lower=drier), and
+`humidity_raw` is the percentage. `temp` is the AMS internal temperature in Celsius.
+
+See research:
+- `.fleet/research-notes.md` K-055 section
+- OpenBambuAPI MQTT docs: ams[].humidity, ams[].temp fields
 
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ]
+
+### Prerequisite
+1. [ ] K-033 (AMS status display) must be completed first
+
+### Frontend (Dashboard) - Humidity-specific UI
+2. [ ] Add humidity indicator to AMS unit tiles (after K-033 base is done)
+3. [ ] Convert humidity index (0-5) to visual indicator (e.g., color-coded: green=dry, red=wet)
+4. [ ] Show raw humidity % tooltip or secondary display
+5. [ ] Display AMS unit temperature if available
+6. [ ] Handle missing humidity data gracefully (P1S, older firmware)
+
+### Verification
+7. [ ] Test with H2S hardware or mocked data with humidity fields
+8. [ ] Verify P1S compatibility (no humidity crash)
+9. [ ] Add signals and move to done/
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
