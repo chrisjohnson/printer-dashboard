@@ -2984,6 +2984,75 @@ func TestIsH2S(t *testing.T) {
 	}
 }
 
+func TestClient_CameraStreams_X1Series(t *testing.T) {
+	// X1-series printers (BL-P001 = X1 Carbon, etc.) must route to RTSPS
+	// on port 322, NOT to the bambus:// protocol on port 6000 used by P1/A1.
+	// This is the fix for issue #21: X1 series cameras were incorrectly
+	// sent to port 6000, causing a tight reconnect loop.
+	cfg := config.PrinterDef{
+		ID:         "x1-carbon",
+		Name:       "X1 Carbon",
+		Type:       "bambu",
+		Serial:     "SERIAL-X1-1",
+		Host:       "10.0.0.77",
+		AccessCode: "x1ac",
+		Model:      "BL-P001",
+	}
+	c := New(cfg, nil)
+
+	streams := c.CameraStreams()
+	if len(streams) != 1 {
+		t.Fatalf("CameraStreams() returned %d streams; want 1", len(streams))
+	}
+	if streams[0].URL != "rtsps://bblp:x1ac@10.0.0.77:322/streaming/live/1" {
+		t.Errorf("streams[0].URL = %q; want RTSPS URL", streams[0].URL)
+	}
+	if streams[0].Type != "internal" {
+		t.Errorf("streams[0].Type = %q; want %q", streams[0].Type, "internal")
+	}
+	// X1 series does NOT get HasChamber — only H2 series does.
+	if c.Status().HasChamber {
+		t.Error("X1 series should NOT have HasChamber (that's H2-only)")
+	}
+}
+
+func TestIsX1Series(t *testing.T) {
+	tests := []struct {
+		model  string
+		wantX1 bool
+	}{
+		{"BL-P001", true},
+		{"p1s", false}, {"H2S", false}, {"", false},
+	}
+	for _, tt := range tests {
+		if got := IsX1Series(tt.model); got != tt.wantX1 {
+			t.Errorf("IsX1Series(%q) = %v; want %v", tt.model, got, tt.wantX1)
+		}
+	}
+}
+
+func TestUsesRTSPS(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		// H2 series → RTSPS
+		{"H2S", true}, {"H2D", true}, {"H2C", true}, {"H2D PRO", true},
+		{"P2S", true}, {"X2D", true}, {"O1S", true},
+		// X1 series → RTSPS
+		{"BL-P001", true},
+		// P1/A1 series → bambus:// (NOT RTSPS)
+		{"P1S", false}, {"A1", false}, {"A1 Mini", false},
+		// Unknown → bambus:// (default)
+		{"", false}, {"SomeUnknown", false},
+	}
+	for _, tt := range tests {
+		if got := UsesRTSPS(tt.model); got != tt.want {
+			t.Errorf("UsesRTSPS(%q) = %v; want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
 func TestNew_PrepopulatesModelFromConfig(t *testing.T) {
 	cfg := config.PrinterDef{
 		ID:     "model-pop",
