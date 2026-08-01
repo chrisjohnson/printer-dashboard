@@ -18,7 +18,8 @@ AMS humidity display. Focuses specifically on visualizing the humidity and tempe
 sensors available on H2S AMS 2 Pro units.
 
 **DEPENDENCY:** K-033 must be completed first - humidity is part of the AMS data structure
-that needs to be parsed and exposed before it can be displayed.
+that needs to be parsed and exposed before it can be displayed. K-033 backend is complete
+and awaiting review.
 
 **Hardware note:** P1S AMS 1 has NO humidity/temp sensors. Only H2S AMS 2 Pro (and X1/X1C
 with AMS) report these values. The `humidity` field is an index 0-5 (lower=drier), and
