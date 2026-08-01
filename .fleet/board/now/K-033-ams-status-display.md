@@ -58,3 +58,12 @@ protocol reference before starting.
 ## Handoff notes
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
+
+**Backend complete** — PR ready for review:
+- https://github.com/chrisjohnson/printer-dashboard/pull/new/feat/k033-ams-status-display
+
+**Next steps:**
+1. Review backend PR (data structures, parsing logic)
+2. Implement frontend UI (printer card AMS section)
+3. Test with real AMS hardware or mocked MQTT data
+4. Note: Go not available in this environment for compilation verification
