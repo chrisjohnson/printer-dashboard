@@ -3,8 +3,8 @@ id: K-033
 # Filename pattern: {ID}-{slugified-title}.md
 title: AMS status display
 initiative_id: null             # set to an initiatives/<id> slug if part of a cross-repo initiative
-claimed_by: null                 # pet name of the agent session working this card, e.g. otter
-claimed_at: null                 # ISO8601, paired with claimed_by
+claimed_by: pi                 # pet name of the agent session working this card, e.g. otter
+claimed_at: 2026-07-31T00:00Z                 # ISO8601, paired with claimed_by
 blocks: null                     # set on a child/sub-blocker card: the parent card id it blocks
 blocked_by: null                     # set on a card that can't proceed until another card finishes
 related_cards: []
@@ -22,7 +22,12 @@ protocol reference before starting.
 ## Plan
 <!-- ordered checklist. Prefix steps with the role expected to do them once a card
      has been planned out, e.g. "Implementer: apply config change". -->
-1. [ ]
+1. [ ] Add AMS/filament structs to PrinterStatus (interface.go)
+2. [ ] Add AmsData struct to bambu/parser.go mirroring MQTT ams JSON
+3. [ ] Parse ams section in handleReport (client.go) when present
+4. [ ] Build UI section in dashboard showing AMS grid (slot tiles with color/type/remaining)
+5. [ ] Test with real AMS hardware or mocked MQTT data
+6. [ ] Add signals and move to done/
 
 ## Signals
 <!-- append-only. Leave signals for other agents. Format:
