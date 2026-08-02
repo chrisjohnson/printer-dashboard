@@ -863,6 +863,38 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .btn-home-all:hover:not(:disabled) { background: #e9ebee; border-color: #d0d0d6; }
     .btn-home-all:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* AMS (Automatic Material System) section */
+    .ams-section { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+    .ams-section .ams-label {
+      font-size: 0.75rem; color: var(--text-subtle); font-weight: 600;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .ams-units { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ams-unit {
+      display: flex; flex-direction: column; gap: 4px;
+      background: #f5f5f7; border-radius: var(--radius-control);
+      padding: 6px 8px; flex: 1; min-width: 100px;
+    }
+    .ams-unit-id {
+      font-size: 0.6875rem; color: var(--text-muted); font-weight: 600;
+      text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .ams-unit-meta {
+      font-size: 0.625rem; color: var(--text-subtle); text-align: center; line-height: 1.2;
+    }
+    .ams-tray-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .ams-tray {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      background: var(--bg-card); border: 1px solid var(--border-subtle);
+      border-radius: 4px; padding: 4px 2px; min-height: 44px;
+    }
+    .ams-tray.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,.2); }
+    .ams-tray.external { border-style: dashed; }
+    .ams-color { width: 16px; height: 16px; border-radius: 3px; border: 1px solid rgba(0,0,0,.1); flex-shrink: 0; }
+    .ams-color.empty { background: repeating-conic-gradient(45deg, #ccc, #ccc 4px, #e5e5ea 4px, #e5e5ea 8px); }
+    .ams-tray-info { display: flex; flex-direction: column; align-items: center; width: 100%; overflow: hidden; }
+    .ams-tray-type { font-size: 0.5625rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; }
+    .ams-tray-remaining { font-size: 0.5625rem; color: var(--text-subtle); white-space: nowrap; }
     /* Z-axis jog confirmation modal — mirrors .skip-modal exactly (same
        fixed-overlay-plus-centered-card structure) since both are "confirm a
        physically consequential action" dialogs. Kept as a visually distinct
@@ -959,6 +991,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       </div>
       <div class="filename">&nbsp;</div>
       <div class="layer-info">&nbsp;</div>
+      <div class="ams-section" style="display:none;"></div>
       <div class="error-banner" style="display:none;"></div>
       <div class="controls">
         <button disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>Pause</button>
@@ -1172,7 +1205,23 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const hmsListEl = card.querySelector('.hms-list');
       if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []);
 
+      // 8c. AMS section — one shared amsHtml() helper builds the full
+      // markup (same precedent as hmsRowsHtml() above); replace
+      // innerHTML wholesale since the section is small and may change
+      // structure (active tray highlight, external spool, empty slots).
+      var amsEl = card.querySelector('.ams-section');
+      if (amsEl) {
+        var amsHtmlStr = amsHtml(p);
+        if (amsHtmlStr) {
+          amsEl.innerHTML = amsHtmlStr;
+        } else {
+          // No AMS data — hide the section
+          amsEl.style.display = 'none';
+        }
+      }
+
       // 9. Control buttons
+
       const pauseBtn = card.querySelector('button[onclick*="pause"]');
       const resumeBtn = card.querySelector('button[onclick*="resume"]');
       const cancelBtn = card.querySelector('button[onclick*="cancel"]');
@@ -1472,6 +1521,99 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .catch(function(e) { console.error('setTargetTemp network error:', e); });
     }
 
+
+    // AMS (Automatic Material System) section HTML — one shared helper used
+    // by both renderCard() and updateCard() so the two paths never drift
+    // (see K-053 for the documented history of exactly this class of drift).
+    // Returns an empty string when there are no AMS units.
+    function amsHtml(p) {
+      var units = p.ams_units || [];
+      if (units.length === 0) { return ''; }
+      var activeTrayID = p.active_tray_id;
+
+      var html = '<div class="ams-section" data-ams>' +
+        '<div class="ams-label">AMS</div>';
+
+      units.forEach(function(unit) {
+        html += '<div class="ams-unit">';
+        html += '<div class="ams-unit-id">Unit ' + unit.id + '</div>';
+
+        // Humidity/temp meta — only on H2S AMS 2 Pro (P1S AMS 1 sends empty strings)
+        if (unit.humidity !== '' || unit.temp !== '') {
+          var meta = '';
+          if (unit.humidity !== '') {
+            meta += 'Humidity: ';
+            if (unit.humidity_raw !== '') {
+              // H2S AMS 2 Pro / X1: full humidity % available
+              meta += unit.humidity + ' (' + unit.humidity_raw + '%)';
+            } else {
+              // P1S AMS 1: humidity index only (0–5 scale)
+              meta += unit.humidity + '/5';
+            }
+          }
+          if (unit.temp && unit.temp !== '' && parseFloat(unit.temp) !== 0) {
+            if (meta) meta += ' / ';
+            meta += unit.temp + '°C';
+          }
+          html += '<div class="ams-unit-meta">' + escapeHtml(meta) + '</div>';
+        }
+
+        html += '<div class="ams-tray-grid">';
+
+        var trays = unit.trays || [];
+        // Always render 4 slots (0–3). If the backend didn't send a slot,
+        // show an empty placeholder.
+        for (var i = 0; i < 4; i++) {
+          var tray = null;
+          for (var j = 0; j < trays.length; j++) { if (trays[j].index === i) { tray = trays[j]; break; } }
+
+          // Compute global tray ID: (unitID * 4) + slotIndex
+          var globalID = (unit.id * 4) + i;
+          var isActive = globalID === activeTrayID;
+          var cls = 'ams-tray';
+          if (isActive) cls += ' active';
+
+          if (!tray || !tray.loaded) {
+            // Empty slot
+            html += '<div class="' + cls + '">' +
+              '<div class="ams-color empty"></div>' +
+              '<div class="ams-tray-info"><div class="ams-tray-type">Empty</div></div>' +
+              '</div>';
+          } else {
+            // Loaded tray — color swatch from RRGGBBAA hex
+            var colorHex = '#' + tray.color.replace(/^#/, '');
+            var colorClass = 'ams-color';
+            html += '<div class="' + cls + '">' +
+              '<div class="' + colorClass + '" style="background-color:' + colorHex + ';"></div>' +
+              '<div class="ams-tray-info">' +
+              '<div class="ams-tray-type">' + escapeHtml(tray.type || 'Unknown') + '</div>' +
+              (tray.remain >= 0 ? '<div class="ams-tray-remaining">' + Math.round((tray.remain / 1000) * 100) + '%</div>' : '') +
+              '</div></div>';
+          }
+        }
+
+        html += '</div></div>'; // close ams-tray-grid, ams-unit
+      });
+
+      // External spool tile (tray_now=254)
+      if (activeTrayID === 254) {
+        html += '<div class="ams-unit">' +
+          '<div class="ams-unit-id">External</div>' +
+          '<div class="ams-tray-grid">' +
+          '<div class="ams-tray active external">' +
+          '<div class="ams-color empty"></div>' +
+          '<div class="ams-tray-info"><div class="ams-tray-type">External Spool</div></div>' +
+          '</div>' +
+          '<div class="ams-tray"><div class="ams-color empty"></div><div class="ams-tray-info"><div class="ams-tray-type">—</div></div></div>' +
+          '<div class="ams-tray"><div class="ams-color empty"></div><div class="ams-tray-info"><div class="ams-tray-type">—</div></div></div>' +
+          '<div class="ams-tray"><div class="ams-color empty"></div><div class="ams-tray-info"><div class="ams-tray-type">—</div></div></div>' +
+          '</div></div>';
+      }
+
+      html += '</div>'; // close ams-section
+      return html;
+    }
+
     function renderCard(p) {
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
@@ -1631,6 +1773,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         layerHtml +
         errorHtml +
         hmsHtml +
+        // AMS section — always in DOM (empty string when no AMS units) so
+        // renderCard()/updateCard() agree on shape. The data-ams marker
+        // lets updateCard() find/replace it directly.
+        amsHtml(p) +
         '<div class="controls">' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
