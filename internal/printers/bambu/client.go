@@ -600,16 +600,23 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// P1S AMS 1 does not report humidity/temp fields; H2S AMS 2 Pro and X1 series do.
 	// P1S sends delta updates (only changed fields); H2S sends full updates.
 	if p.Ams != nil {
-		s.AMSUnits = parseAMSData(p.Ams)
-		// Parse active tray ID: (ams_id * 4) + tray_id, 254=external, 255=none
+		// Merge new AMS data with cached units. P1S sends delta updates
+		// (only changed fields); the ams key may be present with an empty
+		// ams array (only tray_now changed) or with unit objects lacking
+		// the tray array — in those cases we must retain the previously-
+		// cached filament slot data, not wipe it. H2S sends full updates,
+		// so the merge is a no-op (new data replaces cache).
+		s.AMSUnits = mergeAMSData(parseAMSData(p.Ams), s.AMSUnits)
+		// Only update ActiveTrayID when tray_now is actually present in
+		// the report. P1S delta updates may omit tray_now (only reporting
+		// other AMS metadata) — resetting to -1 here would lose the
+		// active tray on every such delta.
 		if p.Ams.TrayNow != "" {
 			if trayNow, err := strconv.Atoi(p.Ams.TrayNow); err == nil {
 				s.ActiveTrayID = trayNow
 			} else {
 				s.ActiveTrayID = -1
 			}
-		} else {
-			s.ActiveTrayID = -1
 		}
 	}
 
@@ -820,8 +827,12 @@ func parseAMSData(ams *amsData) []printers.AMSUnit {
 			nozzleMin, _ := strconv.Atoi(t.NozzleTempMin)
 			nozzleMax, _ := strconv.Atoi(t.NozzleTempMax)
 
-			// Determine if loaded: state 2=loaded, 3=ready, 10=reading, 11=loaded+data
-			loaded := t.State == 2 || t.State == 3 || t.State == 10 || t.State == 11
+			// Determine if loaded: state 2=loaded, 3=ready, 10=reading, 11=loaded+data.
+			// P1S reports state 0 for all trays but still provides tray_type/color/remain
+			// data when filament is present; treat non-empty tray_type as loaded so P1S
+			// AMS slots render correctly. H2S/X1 empty trays always have tray_type=""
+			// so this does not change their behavior.
+			loaded := t.State == 2 || t.State == 3 || t.State == 10 || t.State == 11 || t.TrayType != ""
 
 			trays = append(trays, printers.FilamentSlot{
 				Index:        trayIdx,
@@ -846,6 +857,120 @@ func parseAMSData(ams *amsData) []printers.AMSUnit {
 		})
 	}
 	return units
+}
+
+// mergeAMSData merges newly-parsed AMS units with previously-cached units
+// to handle P1S delta updates. The P1S sends delta updates where only
+// changed fields are included — the "ams" key may be present with an
+// empty ams array (only tray_now changed) or with unit objects that lack
+// the "tray" array (only unit-level metadata like humidity changed). Without
+// merging, these partial updates would wipe the cached filament slot data
+// (type, color, remaining) that the frontend depends on.
+//
+// H2S sends full updates (complete ams + tray arrays every time), so the
+// merge here is effectively a no-op — each new unit fully replaces its
+// cached counterpart and all trays are present.
+//
+// Merge rules:
+//   - If newAMS is nil/empty (ams array absent in delta): return cached as-is.
+//   - For each unit in newAMS:
+//     - If a cached unit with the same ID exists:
+//       - Trays: new trays replace matching cached trays (by Index);
+//         cached trays not in new data are retained; new trays not in
+//         cache are added. If the new unit has NO trays (empty Tray
+//         array — delta omitted it), the cached unit's trays are kept
+//         entirely.
+//       - Humidity/HumidityRaw/Temp: use non-empty new value, else
+//         retain cached value (P1S omits these on delta updates).
+//     - If no cached unit matches: append the new unit as-is.
+//   - Cached units not present in newAMS are retained.
+func mergeAMSData(newAMS, cached []printers.AMSUnit) []printers.AMSUnit {
+	if len(newAMS) == 0 {
+		// Delta without AMS unit data — retain cached units entirely.
+		return cached
+	}
+
+	// Index cached units by ID for O(1) lookup.
+	cachedByID := make(map[int]printers.AMSUnit, len(cached))
+	for _, u := range cached {
+		cachedByID[u.ID] = u
+	}
+
+	seenIDs := make(map[int]bool, len(newAMS))
+	merged := make([]printers.AMSUnit, 0, len(newAMS)+len(cached))
+
+	for _, nu := range newAMS {
+		seenIDs[nu.ID] = true
+		if cu, ok := cachedByID[nu.ID]; ok {
+			// Cached unit exists — merge tray data and non-empty scalar fields.
+			merged = append(merged, printers.AMSUnit{
+				ID:          nu.ID,
+				Humidity:    firstNonEmpty(nu.Humidity, cu.Humidity),
+				HumidityRaw: firstNonEmpty(nu.HumidityRaw, cu.HumidityRaw),
+				Temp:        firstNonEmpty(nu.Temp, cu.Temp),
+				Trays:       mergeTrays(nu.Trays, cu.Trays),
+			})
+		} else {
+			// No cached unit — use new unit as-is.
+			merged = append(merged, nu)
+		}
+	}
+
+	// Retain cached units not present in this update.
+	for _, cu := range cached {
+		if !seenIDs[cu.ID] {
+			merged = append(merged, cu)
+		}
+	}
+
+	return merged
+}
+
+// mergeTrays merges newly-parsed filament slots with cached slots. New
+// slots (those in `new`) replace matching cached slots by Index; cached
+// slots not in `new` are retained; new slots not in cache are appended.
+// If `new` is empty (delta didn't include the tray array), cached trays
+// are returned as-is so the previously-cached slot data isn't wiped.
+func mergeTrays(new, cached []printers.FilamentSlot) []printers.FilamentSlot {
+	if len(new) == 0 {
+		// Delta didn't include tray data — retain cached trays.
+		return cached
+	}
+
+	newByIDx := make(map[int]printers.FilamentSlot, len(new))
+	for _, t := range new {
+		newByIDx[t.Index] = t
+	}
+
+	seen := make(map[int]bool, len(cached))
+	merged := make([]printers.FilamentSlot, 0, len(new)+len(cached))
+
+	// Start with cached trays, updating those that appear in new data.
+	for _, ct := range cached {
+		seen[ct.Index] = true
+		if nt, ok := newByIDx[ct.Index]; ok {
+			merged = append(merged, nt)
+		} else {
+			merged = append(merged, ct)
+		}
+	}
+
+	// Append new trays not in cache.
+	for _, nt := range new {
+		if !seen[nt.Index] {
+			merged = append(merged, nt)
+		}
+	}
+
+	return merged
+}
+
+// firstNonEmpty returns a if non-empty, otherwise b.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // Ensure Client satisfies the Printer interface.
