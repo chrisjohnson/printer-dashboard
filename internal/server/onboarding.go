@@ -1631,7 +1631,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           var cls = 'ams-tray';
           if (isActive) cls += ' active';
 
-          if (!tray || !tray.loaded) {
+          if (!tray || (!tray.loaded && !tray.type)) {
             // Empty slot
             html += '<div class="' + cls + '">' +
               '<div class="ams-color empty"></div>' +
@@ -1639,10 +1639,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
               '</div>';
           } else {
             // Loaded tray — color swatch from RRGGBBAA hex
-            var colorHex = '#' + tray.color.replace(/^#/, '');
-            var colorClass = 'ams-color';
+            var colorHex = tray.color ? '#' + tray.color.replace(/^#/, '') : '';
+            var colorClass = tray.color ? 'ams-color' : 'ams-color empty';
             html += '<div class="' + cls + '">' +
-              '<div class="' + colorClass + '" style="background-color:' + colorHex + ';"></div>' +
+              '<div class="' + colorClass + '"' + (colorHex ? ' style="background-color:' + colorHex + ';">' : '>') + '</div>' +
               '<div class="ams-tray-info">' +
               '<div class="ams-tray-type">' + escapeHtml(tray.type || 'Unknown') + '</div>' +
               (tray.remain >= 0 ? '<div class="ams-tray-remaining">' + Math.round((tray.remain / 1000) * 100) + '%</div>' : '') +

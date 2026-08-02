@@ -407,3 +407,39 @@ git push -u origin fix/p1s-ams-delta-merge
   `parseAMSData` itself is unchanged, preserving its existing behavior.
 - **Backward compatible**: The `PrinterStatus` JSON shape is unchanged
   (`ams_units`, `active_tray_id`). Only the values are more correct.
+
+## Additional fix: P1S state=0 and Loaded flag
+
+### Problem
+Even after the delta-merge fix, P1S AMS trays appeared empty in the
+frontend. Investigation revealed two issues:
+
+1. **Backend — `Loaded` flag**: `parseAMSData` sets `Loaded` based solely on
+tray `state` (2=loaded, 3=ready, 10=reading, 11=loaded+data). All P1S
+trays report `state: 0`, so `Loaded` was `false` for every tray.
+
+2. **Frontend — display condition**: The frontend's `amsHtml()` function
+only renders filament type/color/remaining when `tray.loaded` is `true`.
+With `Loaded: false` on all P1S trays, every slot showed "Empty".
+
+### Fix
+
+1. **Backend**: Updated the `loaded` expression in `parseAMSData` to also
+treat trays with a non-empty `tray_type` as loaded:
+   ```go
+   loaded := t.State == 2 || t.State == 3 || t.State == 10 || t.State == 11 || t.TrayType != ""
+   ```
+   This is safe because H2S/X1 *empty* trays always have `tray_type: ""` —
+   so their behavior is unchanged. P1S trays with filament have
+tray_type like "PLA" even at state 0.
+
+2. **Frontend**: Updated the display condition in `internal/server/onboarding.go`
+   `amsHtml()` from `!tray.loaded` to `(!tray.loaded && !tray.type)` so that
+trays with non-empty type are rendered with their filament info regardless
+   of the `loaded` flag. Also added a guard for empty `tray.color` to avoid
+   a broken color swatch.
+
+### Validation
+Confirmed with a live Docker run: P1S AMS data now shows correct
+filament types (PLA), colors, and remaining percentages. H2S AMS
+behavior is unchanged.

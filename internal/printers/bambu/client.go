@@ -827,8 +827,12 @@ func parseAMSData(ams *amsData) []printers.AMSUnit {
 			nozzleMin, _ := strconv.Atoi(t.NozzleTempMin)
 			nozzleMax, _ := strconv.Atoi(t.NozzleTempMax)
 
-			// Determine if loaded: state 2=loaded, 3=ready, 10=reading, 11=loaded+data
-			loaded := t.State == 2 || t.State == 3 || t.State == 10 || t.State == 11
+			// Determine if loaded: state 2=loaded, 3=ready, 10=reading, 11=loaded+data.
+			// P1S reports state 0 for all trays but still provides tray_type/color/remain
+			// data when filament is present; treat non-empty tray_type as loaded so P1S
+			// AMS slots render correctly. H2S/X1 empty trays always have tray_type=""
+			// so this does not change their behavior.
+			loaded := t.State == 2 || t.State == 3 || t.State == 10 || t.State == 11 || t.TrayType != ""
 
 			trays = append(trays, printers.FilamentSlot{
 				Index:        trayIdx,
