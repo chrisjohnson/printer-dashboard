@@ -1541,7 +1541,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         // Humidity/temp meta — only on H2S AMS 2 Pro (P1S AMS 1 sends empty strings)
         if (unit.humidity !== '' || unit.temp !== '') {
           var meta = '';
-          if (unit.humidity !== '') { meta += 'Humidity: ' + unit.humidity; if (unit.humidity_raw !== '') meta += ' (' + unit.humidity_raw + '%)'; }
+          if (unit.humidity !== '') {
+            meta += 'Humidity: ';
+            if (unit.humidity_raw !== '') {
+              // H2S AMS 2 Pro / X1: full humidity % available
+              meta += unit.humidity + ' (' + unit.humidity_raw + '%)';
+            } else {
+              // P1S AMS 1: humidity index only (0–5 scale)
+              meta += unit.humidity + '/5';
+            }
+          }
           if (unit.temp !== '') { if (meta) meta += ' / '; meta += unit.temp + '°C'; }
           html += '<div class="ams-unit-meta">' + escapeHtml(meta) + '</div>';
         }
