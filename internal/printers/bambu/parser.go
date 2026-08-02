@@ -42,6 +42,7 @@ type printStatus struct {
 	Lifecycle           *string            `json:"lifecycle,omitempty"`
 	HMS                 []hmsItem          `json:"hms,omitempty"`
 	LightsReport        []lightReportEntry `json:"lights_report,omitempty"`
+	Ams                 *amsData           `json:"ams,omitempty"` // AMS data (optional, only when AMS present)
 }
 
 // lightReportEntry is a single entry from the lights_report array in a
@@ -158,6 +159,37 @@ type systemStatus struct {
 type ledStatus struct {
 	Node string `json:"node"`
 	Mode string `json:"mode"`
+}
+
+// amsData captures the AMS (Automatic Material System) section of a Bambu report.
+type amsData struct {
+	AMS           []amsUnitData `json:"ams"`            // Array of AMS units (0-3)
+	TrayNow       string        `json:"tray_now"`       // Active tray: (ams_id*4)+tray_id, 254=external, 255=none
+	AmsExistBits  string        `json:"ams_exist_bits"` // Bitmask: which AMS units connected
+	TrayExistBits string        `json:"tray_exist_bits"` // Bitmask: which trays have filament
+}
+
+// amsUnitData captures one AMS unit's data from the MQTT report.
+type amsUnitData struct {
+	ID        string        `json:"id"`      // AMS unit index (0-3)
+	Humidity  string        `json:"humidity"` // Humidity index 0-5 (P1S AMS 1: absent)
+	HumidityRaw string      `json:"humidity_raw"` // Raw humidity % (P1S AMS 1: absent)
+	Temp      string        `json:"temp"`    // AMS internal temp °C (P1S AMS 1: absent)
+	Tray      []amsTrayData `json:"tray"`    // Up to 4 trays
+}
+
+// amsTrayData captures one tray/slot's data from the MQTT report.
+type amsTrayData struct {
+	ID           string `json:"id"`     // Tray slot index (0-3)
+	State        int    `json:"state"`  // 0=empty, 2=loaded, 3=ready, 10=reading, 11=loaded+data
+	TrayType     string `json:"tray_type"`  // Material type (PLA, PETG, etc.)
+	TrayColor    string `json:"tray_color"` // RRGGBBAA hex color
+	TrayInfoIdx  string `json:"tray_info_idx"` // Bambu filament profile ID
+	NozzleTempMin int   `json:"nozzle_temp_min"` // Min nozzle temp °C (string on wire, parsed to int)
+	NozzleTempMax int   `json:"nozzle_temp_max"` // Max nozzle temp °C
+	Remain       int    `json:"remain"` // Remaining length mm (-1=unknown)
+	TrayWeight   string `json:"tray_weight"` // Spool weight grams
+	TagUID       string `json:"tag_uid"` // RFID tag UID (zeros if no RFID)
 }
 
 // parseReport unmarshals a raw Bambu report JSON into the report struct.

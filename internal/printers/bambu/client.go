@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -595,6 +596,23 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		}
 	}
 
+	// AMS (Automatic Material System) data — parse when present in the report.
+	// P1S AMS 1 does not report humidity/temp fields; H2S AMS 2 Pro and X1 series do.
+	// P1S sends delta updates (only changed fields); H2S sends full updates.
+	if p.Ams != nil {
+		s.AMSUnits = parseAMSData(p.Ams)
+		// Parse active tray ID: (ams_id * 4) + tray_id, 254=external, 255=none
+		if p.Ams.TrayNow != "" {
+			if trayNow, err := strconv.Atoi(p.Ams.TrayNow); err == nil {
+				s.ActiveTrayID = trayNow
+			} else {
+				s.ActiveTrayID = -1
+			}
+		} else {
+			s.ActiveTrayID = -1
+		}
+	}
+
 	// HMS (Health Management System) codes — only update when the "hms" key
 	// is present in this report (p.HMS != nil covers both a populated array
 	// and an explicit empty array []); a heartbeat-style report that omits
@@ -771,6 +789,63 @@ func (c *Client) Jog(ctx context.Context, x, y, z float64, speedMMPerMin int) er
 // device report so we don't need to track homing state client-side.
 func (c *Client) SetHomed(homed *bool) {
 	// No-op: Bambu devices report homed_axes natively.
+}
+
+// parseAMSData converts the wire-format amsData struct into the public
+// printers.AMSUnit format. Handles P1S delta updates (missing fields) and
+// H2S full updates uniformly.
+func parseAMSData(ams *amsData) []printers.AMSUnit {
+	if ams == nil || len(ams.AMS) == 0 {
+		return nil
+	}
+
+	units := make([]printers.AMSUnit, 0, len(ams.AMS))
+	for _, au := range ams.AMS {
+		// Parse AMS unit ID
+		unitID, err := strconv.Atoi(au.ID)
+		if err != nil {
+			unitID = 0 // fallback
+		}
+
+		// Parse trays
+		trays := make([]printers.FilamentSlot, 0, len(au.Tray))
+		for _, t := range au.Tray {
+			// Parse tray index
+			trayIdx, err := strconv.Atoi(t.ID)
+			if err != nil {
+				trayIdx = 0
+			}
+
+			// Parse temperature bounds (wire sends as string)
+			nozzleMin, _ := strconv.Atoi(t.NozzleTempMin)
+			nozzleMax, _ := strconv.Atoi(t.NozzleTempMax)
+
+			// Determine if loaded: state 2=loaded, 3=ready, 10=reading, 11=loaded+data
+			loaded := t.State == 2 || t.State == 3 || t.State == 10 || t.State == 11
+
+			trays = append(trays, printers.FilamentSlot{
+				Index:        trayIdx,
+				Type:         t.TrayType,
+				Color:        t.TrayColor,
+				InfoIdx:      t.TrayInfoIdx,
+				NozzleTempMin: nozzleMin,
+				NozzleTempMax: nozzleMax,
+				RemainingMM:  t.Remain,
+				Weight:       t.TrayWeight,
+				TagUID:       t.TagUID,
+				Loaded:       loaded,
+			})
+		}
+
+		units = append(units, printers.AMSUnit{
+			ID:          unitID,
+			Humidity:    au.Humidity,    // empty on P1S AMS 1
+			HumidityRaw: au.HumidityRaw, // empty on P1S AMS 1
+			Temp:        au.Temp,        // empty on P1S AMS 1
+			Trays:       trays,
+		})
+	}
+	return units
 }
 
 // Ensure Client satisfies the Printer interface.
