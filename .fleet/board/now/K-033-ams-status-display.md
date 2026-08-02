@@ -47,7 +47,7 @@ protocol reference before starting.
 -->
 <!-- signal: pi 2026-07-31T00:00Z — claiming, implementing backend AMS data structures -->
 <!-- signal: pi 2026-07-31T00:00Z — backend complete: AMS data structures and parsing implemented -->
-<!-- signal: pi 2026-07-31T00:00Z — PR ready for review, awaiting frontend implementation -->
+<!-- signal: pi 2026-07-31T00:00Z — PR #25 created for review -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -62,9 +62,8 @@ protocol reference before starting.
 <!-- written by whichever role/session was last active on this card, before handing
      off or ending a session. What's half-done, what the next role should do first. -->
 
-**Backend complete** — PR ready for review:
-- Branch: `feat/k033-ams-status-display`
-- Create PR: https://github.com/chrisjohnson/printer-dashboard/pull/new/feat/k033-ams-status-display
+**Backend complete** — PR created for review:
+- PR #25: https://github.com/chrisjohnson/printer-dashboard/pull/25
 
 **Next steps:**
 1. Review backend PR (data structures, parsing logic)
