@@ -48,6 +48,7 @@ protocol reference before starting.
 <!-- signal: pi 2026-07-31T00:00Z — claiming, implementing backend AMS data structures -->
 <!-- signal: pi 2026-07-31T00:00Z — backend complete: AMS data structures and parsing implemented -->
 <!-- signal: pi 2026-07-31T00:00Z — PR ready for review, awaiting frontend implementation -->
+<!-- signal: 2026-08-02T00:00Z — frontend spec written: .fleet/board/now/K-033-ams-status-display-spec.md. Note: backend has compilation bug (amsTrayData.NozzleTempMin is int, but strconv.Atoi expects string — wire format sends strings). P1S delta update correctness also needs verification. -->
 
 ## Working context
 <!-- curated facts a teammate picking this up needs, ~15 lines max. Bigger context
@@ -56,6 +57,7 @@ protocol reference before starting.
 ## Decision log
 <!-- append-only, one line per entry, newest last. Never move this card to done/
      without a line here explaining why. -->
+- 2026-08-02: Frontend implementation spec written at K-033-ams-status-display-spec.md. Spec covers AMS section placement (after temps, before filename), shared amsHtml() helper pattern (matching hmsRowsHtml() precedent), color swatch rendering from RRGGBBAA, active tray highlighting, external spool (tray_now=254), P1S/H2S display differences, and delta update handling. Spec also identifies backend compilation bug: amsTrayData.NozzleTempMin/NozzleTempMax are int but wire format sends strings, and strconv.Atoi(t.NozzleTempMin) won't compile with int type.
 - 2026-07-31: Backend complete — data structures and parsing implemented for P1S/H2S/X1C compatibility. Frontend deferred to separate implementation.
 
 ## Handoff notes
