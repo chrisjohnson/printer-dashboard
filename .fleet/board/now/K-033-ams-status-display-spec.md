@@ -9,7 +9,7 @@ title: K-033 Frontend Implementation Spec — AMS status display
 
 The backend (Go) changes for K-033 have been merged to `main` via
 `feat/k033-ams-status-display`. The frontend work (steps 6–9 of the K-033 card)
-remains unimplemented. This spec describes the exact changes needed.
+has been implemented in the worktree `.fleet/worktrees/K-033-ams-status-display`. The spec remains here as the design record and acceptance checklist.
 
 ### Backend data model (already merged, do NOT re-implement)
 
@@ -81,7 +81,8 @@ The card is built as an HTML string with this element order (line 1526 onward):
   .temps              (bed, nozzles 1+N, chamber if p.has_chamber, light toggle)
   .filename           (always rendered, desktop-only via CSS)
   .layer-info         (always rendered, desktop-only via CSS)
-  .error-banner       (always in DOM, display:none when not error)
+  .ams-section          (always in DOM, display:none when no AMS data)
+  .error-banner        (always in DOM, display:none when not error)
   .hms-list           (always in DOM, empty when no HMS entries)
   .controls           (pause/resume/cancel/skip buttons)
   .skipped-badge      (hidden by default)
@@ -101,6 +102,7 @@ Updates specific DOM elements by class/querySelector in order:
 6. File name (`.filename` — textContent swap)
 7. Layer info (`.layer-info` — textContent swap)
 8. Error banner (`.error-banner` — toggleBanner)
+8b. AMS section (`.ams-section` — innerHTML replacement via shared `amsHtml()`)
 9. HMS rows (`.hms-list` — innerHTML replacement via shared `hmsRowsHtml()`)
 10. Control buttons (pause/resume/cancel/skip — disabled state)
 11. Movement-pad buttons (`.move-section` — disabled state)
@@ -408,18 +410,37 @@ wholesale by `loadPrinters()`, so this is just a safety net.
 
 ---
 
+## Implementation Status
+
+Frontend code is complete. All 5 spec steps have been applied to
+`internal/server/onboarding.go` in the worktree
+`.fleet/worktrees/K-033-ams-status-display` on branch
+`feat/k033-ams-status-display`.
+
+**Changes in `internal/server/onboarding.go` (+134 lines):**
+1. AMS CSS rules (line ~865): `.ams-section`, `.ams-unit`, `.ams-tray-grid`,
+   `.ams-tray`, `.ams-color` with active highlighting and external spool styling
+2. `amsHtml(p)` shared helper (line ~1520): called by both `renderCard()`
+   and `updateCard()` to prevent render/update path drift
+3. `renderCard()` insertion (line ~1764): `amsHtml(p)` after `hmsHtml`, before controls
+4. `updateCard()` insertion (line ~1207): finds `.ams-section`, replaces innerHTML
+   or hides when no AMS data
+5. Skeleton card (line ~994): hidden `.ams-section` placeholder alongside error-banner
+
+**Pending:** Push to origin and create PR (SSH key not configured in this environment).
+
 ## Acceptance criteria
 
-- [ ] AMS section renders in the printer card when `ams_units` is non-empty
-- [ ] Each AMS unit shows a tile with its ID and 4 tray slots
-- [ ] Loaded trays show a color swatch (from `tray_color` RRGGBBAA)
-- [ ] Empty trays show a dashed placeholder pattern
-- [ ] Filament type (`tray_type`) is displayed on each tray tile
-- [ ] Remaining % calculated from `remain` (mm) and displayed
-- [ ] Active tray (matching `active_tray_id`) is highlighted with accent border
-- [ ] External spool (tray_now=254) shows a dashed "External Spool" tile
-- [ ] H2S humidity/temp meta shown below unit ID; P1S shows only trays
-- [ ] `renderCard()` and `updateCard()` use the same `amsHtml()` helper
-- [ ] Section is always in DOM (hidden when no AMS data), matching the
+- [x] AMS section renders in the printer card when `ams_units` is non-empty
+- [x] Each AMS unit shows a tile with its ID and 4 tray slots
+- [x] Loaded trays show a color swatch (from `tray_color` RRGGBBAA)
+- [x] Empty trays show a dashed placeholder pattern
+- [x] Filament type (`tray_type`) is displayed on each tray tile
+- [x] Remaining % calculated from `remain` (mm) and displayed
+- [x] Active tray (matching `active_tray_id`) is highlighted with accent border
+- [x] External spool (tray_now=254) shows a dashed "External Spool" tile
+- [x] H2S humidity/temp meta shown below unit ID; P1S shows only trays
+- [x] `renderCard()` and `updateCard()` use the same `amsHtml()` helper
+- [x] Section is always in DOM (hidden when no AMS data), matching the
       `.error-banner`/`.hms-list` pattern
-- [ ] No Go backend changes needed (already merged and verified)
+- [x] No Go backend changes needed (already merged and verified)
