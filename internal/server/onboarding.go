@@ -1551,7 +1551,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
               meta += unit.humidity + '/5';
             }
           }
-          if (unit.temp !== '') { if (meta) meta += ' / '; meta += unit.temp + '°C'; }
+          if (unit.temp && unit.temp !== '' && unit.temp !== '0') {
+            if (meta) meta += ' / ';
+            meta += unit.temp + '°C';
+          }
           html += '<div class="ams-unit-meta">' + escapeHtml(meta) + '</div>';
         }
 

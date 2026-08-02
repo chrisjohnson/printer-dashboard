@@ -185,8 +185,8 @@ type amsTrayData struct {
 	TrayType     string `json:"tray_type"`  // Material type (PLA, PETG, etc.)
 	TrayColor    string `json:"tray_color"` // RRGGBBAA hex color
 	TrayInfoIdx  string `json:"tray_info_idx"` // Bambu filament profile ID
-	NozzleTempMin int   `json:"nozzle_temp_min"` // Min nozzle temp °C (string on wire, parsed to int)
-	NozzleTempMax int   `json:"nozzle_temp_max"` // Max nozzle temp °C
+	NozzleTempMin string   `json:"nozzle_temp_min"` // Min nozzle temp °C (string on wire)
+	NozzleTempMax string   `json:"nozzle_temp_max"` // Max nozzle temp °C
 	Remain       int    `json:"remain"` // Remaining length mm (-1=unknown)
 	TrayWeight   string `json:"tray_weight"` // Spool weight grams
 	TagUID       string `json:"tag_uid"` // RFID tag UID (zeros if no RFID)
