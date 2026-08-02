@@ -1551,7 +1551,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
               meta += unit.humidity + '/5';
             }
           }
-          if (unit.temp && unit.temp !== '' && unit.temp !== '0') {
+          if (unit.temp && unit.temp !== '' && parseFloat(unit.temp) !== 0) {
             if (meta) meta += ' / ';
             meta += unit.temp + '°C';
           }
