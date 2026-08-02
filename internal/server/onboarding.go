@@ -663,7 +663,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .filename { display: none; font-size: 0.75rem; color: var(--text-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     /* Controls — always visible but less buttons on mobile */
-    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
     .controls button {
       flex: 1; min-width: 0;
       background: var(--accent); color: #fff; border: 1px solid var(--accent);
@@ -825,7 +825,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        clearly as a grid than as six same-width buttons in a line. Buttons
        still reuse .controls button's color/sizing rules below so they match
        the rest of the card's button styling instead of inventing a new look. */
-     .move-section { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+     .move-section { display: flex; flex-direction: column; gap: 8px; }
     .move-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .move-header .label { font-size: 0.75rem; color: var(--text-subtle); font-weight: 600; }
     .step-select {
@@ -863,8 +863,40 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .btn-home-all:hover:not(:disabled) { background: #e9ebee; border-color: #d0d0d6; }
     .btn-home-all:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* Collapsible move section — <details> / <summary> styling */
+    .move-section-collapsible { }
+    .move-section-collapsible summary {
+      list-style: none;
+      cursor: pointer;
+      font-size: 0.75rem;
+      color: var(--text-subtle);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 0;
+      user-select: none;
+    }
+    .move-section-collapsible summary::-webkit-details-marker { display: none; }
+    .move-section-collapsible summary::before {
+      content: '';
+      display: inline-block;
+      width: 0;
+      height: 0;
+      border-left: 4px solid var(--text-subtle);
+      border-top: 3px solid transparent;
+      border-bottom: 3px solid transparent;
+      transition: transform 0.15s;
+    }
+    .move-section-collapsible[open] summary::before {
+      transform: rotate(90deg);
+    }
+    .move-section-collapsible > .move-section { display: flex; flex-direction: column; gap: 8px; }
+    /* Wrapper that pins AMS + collapsible move section to the bottom of the card */
+    .bottom-sections { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+
     /* AMS (Automatic Material System) section */
-    .ams-section { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+    .ams-section { display: flex; flex-direction: column; gap: 6px; margin: 0; }
     .ams-section .ams-label {
       font-size: 0.75rem; color: var(--text-subtle); font-weight: 600;
       display: flex; align-items: center; gap: 6px;
@@ -960,6 +992,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           </div>
         </div>
       </div>
+      <div class="controls">
+        <button disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>Pause</button>
+        <button class="btn-resume" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"/></svg>Resume</button>
+        <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
+        <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip Object</button>
+      </div>
       <div class="temps">
         <span class="temp-row">
           <span class="label"><span class="temp-icon bed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><path d="M8 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M12 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M16 13c-1 1-1 2 0 3s1 2 0 3"/></svg></span>Bed:</span>
@@ -991,13 +1029,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       </div>
       <div class="filename">&nbsp;</div>
       <div class="layer-info">&nbsp;</div>
-      <div class="ams-section" style="display:none;"></div>
       <div class="error-banner" style="display:none;"></div>
-      <div class="controls">
-        <button disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="5" x2="9" y2="19"/><line x1="15" y1="5" x2="15" y2="19"/></svg>Pause</button>
-        <button class="btn-resume" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5l11 7-11 7z"/></svg>Resume</button>
-        <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
-        <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip Object</button>
+      <div class="bottom-sections">
+        <div class="ams-section" style="display:none;"></div>
+        <details class="move-section-collapsible">
+          <summary class="move-section-summary">Move</summary>
+          <div class="move-section" id="move-section-skeleton">
+            <div class="move-header">
+              <span class="label">Move</span>
+              <select class="step-select">
+                <option value="0.1">0.1 mm</option>
+                <option value="1">1 mm</option>
+                <option value="10">10 mm</option>
+                <option value="100">100 mm</option>
+              </select>
+            </div>
+            <div class="jog-pad">
+              <button class="jog-x-minus" disabled>X ←</button>
+              <button class="jog-y-plus" disabled>Y ↑</button>
+              <button class="jog-y-minus" disabled>Y ↓</button>
+              <button class="jog-x-plus" disabled>X →</button>
+              <span class="jog-spacer"></span>
+              <button class="jog-z-minus" disabled>Z ↑</button>
+              <button class="jog-z-plus" disabled>Z ↓</button>
+            </div>
+            <button class="btn-home-all" disabled>Home All</button>
+          </div>
+        </details>
       </div>
     </div>
     {{end}}
@@ -1730,6 +1788,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           html += '</div></div>';
           return '<div class="camera-section" id="cam-section-' + p.id + '">' + html + '</div>';
         })() +
+        // Control buttons — moved below camera for better layout
+        '<div class="controls">' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
+          '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
+        '</div>' +
         '<div class="temps">' +
         // Bed row
           '<span class="temp-row">' +
@@ -1776,15 +1841,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         // AMS section — always in DOM (empty string when no AMS units) so
         // renderCard()/updateCard() agree on shape. The data-ams marker
         // lets updateCard() find/replace it directly.
+        '<div class="bottom-sections">' +
         amsHtml(p) +
-        '<div class="controls">' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
-          '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
-        '</div>' +
-        '<button class="skipped-badge" id="skipped-badge-' + p.id + '" onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" style="display:none;"></button>' +
+        '<details class="move-section-collapsible">' +
+        '<summary class="move-section-summary">Move</summary>' +
         moveSectionHtml(p) +
+      '</details>' +
+      '</div>' +
+        '<button class="skipped-badge" id="skipped-badge-' + p.id + '" onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" style="display:none;"></button>' +
         skipModalHtml(p.id) +
         zJogModalHtml(p.id) +
       '</div>';
