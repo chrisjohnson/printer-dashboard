@@ -1263,19 +1263,32 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const hmsListEl = card.querySelector('.hms-list');
       if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []);
 
-      // 8c. AMS section — one shared amsHtml() helper builds the full
-      // markup (same precedent as hmsRowsHtml() above); replace
-      // innerHTML wholesale since the section is small and may change
-      // structure (active tray highlight, external spool, empty slots).
+      // 8c. AMS section — one shared amsHtml() helper builds the inner
+      // markup (label + units + external spool). Since amsHtml() returns
+      // only the inner content (not the wrapping .ams-section div), we
+      // can safely set innerHTML without creating a nested .ams-section.
+      // If the section doesn't exist yet (printer started without AMS and
+      // data arrived via WS), create and insert it before the move section.
       var amsEl = card.querySelector('.ams-section');
-      if (amsEl) {
-        var amsHtmlStr = amsHtml(p);
-        if (amsHtmlStr) {
+      var amsHtmlStr = amsHtml(p);
+      if (amsHtmlStr) {
+        if (amsEl) {
           amsEl.innerHTML = amsHtmlStr;
+          amsEl.style.display = '';
         } else {
-          // No AMS data — hide the section
-          amsEl.style.display = 'none';
+          var bs = card.querySelector('.bottom-sections');
+          if (bs) {
+            var sec = document.createElement('div');
+            sec.className = 'ams-section';
+            sec.setAttribute('data-ams', '');
+            sec.innerHTML = amsHtmlStr;
+            var moveEl = bs.querySelector('.move-section-collapsible');
+            if (moveEl) { bs.insertBefore(sec, moveEl); } else { bs.appendChild(sec); }
+          }
         }
+      } else if (amsEl) {
+        // No AMS data — hide the section
+        amsEl.style.display = 'none';
       }
 
       // 9. Control buttons
@@ -1589,8 +1602,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (units.length === 0) { return ''; }
       var activeTrayID = p.active_tray_id;
 
-      var html = '<div class="ams-section" data-ams>' +
-        '<div class="ams-label">AMS</div>';
+      // Returns only the inner content (label + units + external spool) —
+      // callers (renderCard/updateCard) wrap this in the <div class="ams-section">
+      // element so the DOM shape is consistent between initial render and WS
+      // updates, and so updateCard can create the section on demand.
+      var html = '<div class="ams-label">AMS</div>';
 
       units.forEach(function(unit) {
         html += '<div class="ams-unit">';
@@ -1642,10 +1658,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             var colorHex = tray.color ? '#' + tray.color.replace(/^#/, '') : '';
             var colorClass = tray.color ? 'ams-color' : 'ams-color empty';
             html += '<div class="' + cls + '">' +
-              '<div class="' + colorClass + '"' + (colorHex ? ' style="background-color:' + colorHex + ';">' : '>') + '</div>' +
+              '<div class="' + colorClass + '"' + (colorHex ? ' style="background-color:' + colorHex + ';">' : '') + '</div>' +
               '<div class="ams-tray-info">' +
               '<div class="ams-tray-type">' + escapeHtml(tray.type || 'Unknown') + '</div>' +
-              (tray.remain >= 0 ? '<div class="ams-tray-remaining">' + Math.round((tray.remain / 1000) * 100) + '%</div>' : '') +
+              (tray.remain >= 0 ? '<div class="ams-tray-remaining">' + (tray.remain / 1000).toFixed(1) + 'm</div>' : '') +
               '</div></div>';
           }
         }
@@ -1668,13 +1684,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '</div></div>';
       }
 
-      html += '</div>'; // close ams-section
       return html;
     }
 
     function renderCard(p) {
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
+      const amsHtmlStr = amsHtml(p);
       const progress = (p.progress * 100).toFixed(1);
       const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
 
@@ -1838,11 +1854,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         layerHtml +
         errorHtml +
         hmsHtml +
-        // AMS section — always in DOM (empty string when no AMS units) so
-        // renderCard()/updateCard() agree on shape. The data-ams marker
-        // lets updateCard() find/replace it directly.
+        // AMS section — always in DOM (empty string when no AMS units)
+        // so renderCard()/updateCard() agree on shape. amsHtml() returns
+        // only the inner content; we wrap it in the .ams-section div here
+        // so the DOM structure matches what updateCard() creates.
         '<div class="bottom-sections">' +
-        amsHtml(p) +
+        (amsHtmlStr ? '<div class="ams-section" data-ams>' + amsHtmlStr + '</div>' : '') +
         '<details class="move-section-collapsible">' +
         '<summary class="move-section-summary">Move</summary>' +
         moveSectionHtml(p) +

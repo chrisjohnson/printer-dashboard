@@ -232,6 +232,13 @@ func TestMergeTrays_MatchingUpdated_NonMatchingRetained(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got len = %d; want 2 (1 updated + 1 retained)", len(got))
 	}
+	// Ordering: cached order preserved (0 then 1), updated value replaces in-place.
+	if got[0].Index != 0 {
+		t.Errorf("got[0].Index = %d; want 0 (cached order preserved)", got[0].Index)
+	}
+	if got[1].Index != 1 {
+		t.Errorf("got[1].Index = %d; want 1 (cached order preserved)", got[1].Index)
+	}
 	if got[0].Type != "TPU" {
 		t.Errorf("got[0].Type = %q; want %q (updated from new)", got[0].Type, "TPU")
 	}
@@ -258,17 +265,18 @@ func TestMergeTrays_NewNotInCached_Added(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got len = %d; want 2", len(got))
 	}
-	var foundNew bool
-	for _, tray := range got {
-		if tray.Index == 1 {
-			foundNew = true
-			if tray.Type != "PETG" {
-				t.Errorf("tray[1].Type = %q; want %q", tray.Type, "PETG")
-			}
-		}
+	// Ordering: cached tray (0) first, then appended new-only tray (1).
+	if got[0].Index != 0 {
+		t.Errorf("got[0].Index = %d; want 0 (cached first)", got[0].Index)
 	}
-	if !foundNew {
-		t.Error("tray index 1 not found in merged result")
+	if got[1].Index != 1 {
+		t.Errorf("got[1].Index = %d; want 1 (new-only appended after cached)", got[1].Index)
+	}
+	if got[0].Type != "PLA" {
+		t.Errorf("got[0].Type = %q; want %q (retained from cache)", got[0].Type, "PLA")
+	}
+	if got[1].Type != "PETG" {
+		t.Errorf("got[1].Type = %q; want %q (added from new)", got[1].Type, "PETG")
 	}
 }
 
