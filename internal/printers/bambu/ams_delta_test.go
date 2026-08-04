@@ -448,7 +448,8 @@ func TestHandleReport_AMS_SuccessiveDeltaStacking(t *testing.T) {
 	if unit.Trays[2].Color != "00FF00FF" {
 		t.Errorf("tray[2].Color = %q; want %q (retained from original full report)", unit.Trays[2].Color, "00FF00FF")
 	}
-	// Humidity: "3" -> (retained) -> (retained) -> "4" (no-tray-array delta)."3" -> (retained) -> (retained) -> "2" (no-tray-array delta).
+	// Unit 0 Humidity: "3" -> (retained) -> (retained) -> "4" (no-tray-array delta).
+	// Unit 1 Humidity: "3" -> (retained) -> (retained) -> "2" (no-tray-array delta).
 	if unit.Humidity != "4" {
 		t.Errorf("Humidity = %q; want %q (updated by no-tray-array delta)", unit.Humidity, "4")
 	}

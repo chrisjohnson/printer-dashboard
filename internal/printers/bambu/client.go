@@ -887,7 +887,11 @@ func parseAMSData(ams *amsData) []printers.AMSUnit {
 func mergeAMSData(newAMS, cached []printers.AMSUnit) []printers.AMSUnit {
 	if len(newAMS) == 0 {
 		// Delta without AMS unit data — retain cached units entirely.
-		return cached
+		// Return a defensive copy so the caller can't alias-mutate the cache.
+		if cached == nil {
+			return nil
+		}
+		return append([]printers.AMSUnit(nil), cached...)
 	}
 
 	// Index cached units by ID for O(1) lookup.
@@ -934,7 +938,11 @@ func mergeAMSData(newAMS, cached []printers.AMSUnit) []printers.AMSUnit {
 func mergeTrays(new, cached []printers.FilamentSlot) []printers.FilamentSlot {
 	if len(new) == 0 {
 		// Delta didn't include tray data — retain cached trays.
-		return cached
+		// Return a defensive copy so the caller can't alias-mutate the cache.
+		if cached == nil {
+			return nil
+		}
+		return append([]printers.FilamentSlot(nil), cached...)
 	}
 
 	newByIDx := make(map[int]printers.FilamentSlot, len(new))

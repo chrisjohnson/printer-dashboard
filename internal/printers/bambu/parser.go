@@ -223,11 +223,6 @@ func mapState(bambuState string) string {
 	}
 }
 
-// isErrorState returns true if the state indicates a problem.
-func isErrorState(bambuState string) bool {
-	return bambuState == "FAILED" || bambuState == "IDLE" // IDLE can be a state after a failure too
-}
-
 // isHealthyGcodeState reports whether a present gcode_state value maps to a
 // non-error, non-FAILED canonical state — i.e. the printer's own state
 // machine is reporting itself healthy this cycle. Used by handleReport's HMS

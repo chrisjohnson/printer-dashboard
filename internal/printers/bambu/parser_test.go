@@ -301,6 +301,203 @@ func TestParseReport(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// parseAMSData tests
+// ---------------------------------------------------------------------------
+
+func TestParseAMSData(t *testing.T) {
+	tests := []struct {
+		name string
+		ams  *amsData
+		want []printers.AMSUnit
+	}{
+		{
+			name: "nil amsData returns nil",
+			ams:  nil,
+			want: nil,
+		},
+		{
+			name: "empty ams array returns nil",
+			ams:  &amsData{}, // ams field is nil/empty
+			want: nil,
+		},
+		{
+			name: "single unit with four full trays",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{
+						ID: "0",
+						Humidity: "3",
+						HumidityRaw: "23",
+						Temp: "25.0",
+						Tray: []amsTrayData{
+							{ID: "0", State: 3, TrayType: "PLA", TrayColor: "FF0000FF",
+							 TrayInfoIdx: "GFA00", NozzleTempMin: "190", NozzleTempMax: "230",
+							 Remain: 50000, TrayWeight: "250", TagUID: "8A160AB5"},
+							{ID: "1", State: 0, TrayType: "", TrayColor: "000000FF",
+							 Remain: -1},
+							{ID: "2", State: 3, TrayType: "PLA", TrayColor: "00FF00FF", Remain: 75000},
+							{ID: "3", State: 3, TrayType: "PLA", TrayColor: "0000FFFF", Remain: 100000},
+						},
+					},
+				},
+				TrayNow: "0",
+			},
+			want: []printers.AMSUnit{
+				{
+					ID: 0, Humidity: "3", HumidityRaw: "23", Temp: "25.0",
+					Trays: []printers.FilamentSlot{
+						{Index: 0, Type: "PLA", Color: "FF0000FF", InfoIdx: "GFA00",
+						 NozzleTempMin: 190, NozzleTempMax: 230,
+						 RemainingMM: 50000, Weight: "250", TagUID: "8A160AB5", Loaded: true},
+						{Index: 1, Type: "", Color: "000000FF", RemainingMM: -1, Loaded: false},
+						{Index: 2, Type: "PLA", Color: "00FF00FF", RemainingMM: 75000, Loaded: true},
+						{Index: 3, Type: "PLA", Color: "0000FFFF", RemainingMM: 100000, Loaded: true},
+					},
+				},
+			},
+		},
+		{
+			name: "non-numeric unit ID falls back to 0",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{ID: "abc", Tray: []amsTrayData{{ID: "0", State: 3, TrayType: "PLA"}}},
+				},
+			},
+			want: []printers.AMSUnit{
+				{ID: 0, Trays: []printers.FilamentSlot{{Index: 0, Type: "PLA", Loaded: true}}},
+			},
+		},
+		{
+			name: "non-numeric tray ID falls back to 0",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{ID: "0", Tray: []amsTrayData{{ID: "xyz", State: 3, TrayType: "PETG"}}},
+				},
+			},
+			want: []printers.AMSUnit{
+				{ID: 0, Trays: []printers.FilamentSlot{{Index: 0, Type: "PETG", Loaded: true}}},
+			},
+		},
+		{
+			name: "missing tray array — unit returned with empty trays",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{ID: "0", Humidity: "2", Temp: "22.0", Tray: nil},
+				},
+			},
+			want: []printers.AMSUnit{
+				{ID: 0, Humidity: "2", Temp: "22.0", Trays: []printers.FilamentSlot{}},
+			},
+		},
+		{
+			name: "remain = -1 preserved for unknown remaining",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{ID: "0", Tray: []amsTrayData{{ID: "0", State: 3, TrayType: "PLA", Remain: -1}}},
+				},
+			},
+			want: []printers.AMSUnit{
+				{ID: 0, Trays: []printers.FilamentSlot{{Index: 0, Type: "PLA", Loaded: true, RemainingMM: -1}}},
+			},
+		},
+		{
+			name: "state 0 with empty tray_type — not loaded",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{ID: "0", Tray: []amsTrayData{{ID: "0", State: 0, TrayType: ""}}},
+				},
+			},
+			want: []printers.AMSUnit{
+				{ID: 0, Trays: []printers.FilamentSlot{{Index: 0, Type: "", Loaded: false}}},
+			},
+		},
+		{
+			name: "P1S style — state 0 with non-empty tray_type is loaded",
+			ams: &amsData{
+				AMS: []amsUnitData{
+					{ID: "1", Humidity: "", Temp: "", Tray: []amsTrayData{
+						{ID: "0", State: 0, TrayType: "PLA", TrayColor: "FF0000FF", Remain: 50000},
+					}},
+				},
+			},
+			want: []printers.AMSUnit{
+				{ID: 1, Humidity: "", Temp: "", Trays: []printers.FilamentSlot{
+					{Index: 0, Type: "PLA", Color: "FF0000FF", RemainingMM: 50000, Loaded: true},
+				}}},
+			},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseAMSData(tt.ams)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("got = %v; want nil", got)
+				}
+				return
+			}
+			if got == nil {
+					t.Fatalf("got nil; want %d units", len(tt.want))
+				}
+			if len(got) != len(tt.want) {
+					t.Fatalf("got %d units; want %d", len(got), len(tt.want))
+				}
+			for i := range tt.want {
+				if got[i].ID != tt.want[i].ID {
+					t.Errorf("unit[%d].ID = %d; want %d", i, got[i].ID, tt.want[i].ID)
+				}
+				if got[i].Humidity != tt.want[i].Humidity {
+					t.Errorf("unit[%d].Humidity = %q; want %q", i, got[i].Humidity, tt.want[i].Humidity)
+				}
+				if got[i].HumidityRaw != tt.want[i].HumidityRaw {
+					t.Errorf("unit[%d].HumidityRaw = %q; want %q", i, got[i].HumidityRaw, tt.want[i].HumidityRaw)
+				}
+				if got[i].Temp != tt.want[i].Temp {
+					t.Errorf("unit[%d].Temp = %q; want %q", i, got[i].Temp, tt.want[i].Temp)
+				}
+				if len(got[i].Trays) != len(tt.want[i].Trays) {
+					t.Fatalf("unit[%d].Trays len = %d; want %d", i, len(got[i].Trays), len(tt.want[i].Trays))
+				}
+				for j := range tt.want[i].Trays {
+					w := tt.want[i].Trays[j]
+					g := got[i].Trays[j]
+					if g.Index != w.Index {
+						t.Errorf("unit[%d].tray[%d].Index = %d; want %d", i, j, g.Index, w.Index)
+					}
+					if g.Type != w.Type {
+						t.Errorf("unit[%d].tray[%d].Type = %q; want %q", i, j, g.Type, w.Type)
+					}
+					if g.Color != w.Color {
+						t.Errorf("unit[%d].tray[%d].Color = %q; want %q", i, j, g.Color, w.Color)
+					}
+					if g.RemainingMM != w.RemainingMM {
+						t.Errorf("unit[%d].tray[%d].RemainingMM = %d; want %d", i, j, g.RemainingMM, w.RemainingMM)
+					}
+					if g.Loaded != w.Loaded {
+						t.Errorf("unit[%d].tray[%d].Loaded = %v; want %v", i, j, g.Loaded, w.Loaded)
+					}
+					if g.NozzleTempMin != w.NozzleTempMin {
+						t.Errorf("unit[%d].tray[%d].NozzleTempMin = %d; want %d", i, j, g.NozzleTempMin, w.NozzleTempMin)
+					}
+					if g.NozzleTempMax != w.NozzleTempMax {
+						t.Errorf("unit[%d].tray[%d].NozzleTempMax = %d; want %d", i, j, g.NozzleTempMax, w.NozzleTempMax)
+					}
+					if g.InfoIdx != w.InfoIdx {
+						t.Errorf("unit[%d].tray[%d].InfoIdx = %q; want %q", i, j, g.InfoIdx, w.InfoIdx)
+					}
+					if g.Weight != w.Weight {
+						t.Errorf("unit[%d].tray[%d].Weight = %q; want %q", i, j, g.Weight, w.Weight)
+					}
+					if g.TagUID != w.TagUID {
+						t.Errorf("unit[%d].tray[%d].TagUID = %q; want %q", i, j, g.TagUID, w.TagUID)
+					}
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // mapState tests
 // ---------------------------------------------------------------------------
 
@@ -326,31 +523,6 @@ func TestMapState(t *testing.T) {
 			got := mapState(tt.input)
 			if got != tt.want {
 				t.Errorf("mapState(%q) = %q; want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
-// ---------------------------------------------------------------------------
-// isErrorState tests
-// ---------------------------------------------------------------------------
-
-func TestIsErrorState(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{input: "FAILED", want: true},
-		{input: "IDLE", want: true},
-		{input: "RUNNING", want: false},
-		{input: "SOMETHING", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := isErrorState(tt.input)
-			if got != tt.want {
-				t.Errorf("isErrorState(%q) = %v; want %v", tt.input, got, tt.want)
 			}
 		})
 	}
