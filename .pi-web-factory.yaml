@@ -1,0 +1,11 @@
+# .pi-web-factory.yaml — this project's quality-gate commands for pi-web-factory
+# (jmfederico-pi-web/pi-web-factory/ in the local-ai-machine repo).
+# Read by config.ts's per-project lookup; used by gates.ts's testsPass gate.
+#
+# Mixed-language project: Go backend (go.mod, internal/, cmd/) + a Playwright/TS
+# e2e test harness (package.json, playwright.config.ts, tests/) — both halves run.
+
+test: go test ./... && npx playwright test
+typecheck: go vet ./... && npx tsc --noEmit
+# lint: intentionally omitted — no golangci-lint (or other Go linter) config
+# exists in this repo, and package.json has no lint script either.
