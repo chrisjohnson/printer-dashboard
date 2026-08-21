@@ -444,6 +444,21 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 			current.State = newState
 			p.completeIdleStreak = 0
 		}
+
+		// CurrentFile — clear when the raw per-report state settles to
+		// "idle" (the print has finished). Deliberately keyed off the raw
+		// `newState`, not the latched `current.State` (mirrors the Bambu
+		// client's K-007 approach in bambu/client.go handleReport): the
+		// filename clears on the first idle report, one report earlier
+		// than the "complete" State latch settles — by design, so the
+		// dashboard stops showing a finished print's filename while the
+		// COMPLETE badge is still up. Stock Klipper never clears
+		// print_stats.filename on job completion (it persists until the
+		// next print starts), so this client-side clear is the only thing
+		// that empties the field (K-091).
+		if newState == "idle" {
+			current.CurrentFile = ""
+		}
 	}
 
 	// Temperatures — dynamically handle any number of toolheads
@@ -483,7 +498,13 @@ func (p *Printer) handleQueryReport(q *moonrakerQueryResponse) {
 	current := p.Status()
 
 	if ps := q.Result.Status.PrintStats; ps != nil {
-		if ps.Filename != "" {
+		// Only populate CurrentFile from print_stats.filename while a
+		// print is active (printing or paused). Stock Klipper never
+		// clears print_stats.filename on job completion — it persists
+		// until the next print starts — so without this gate a query
+		// poll would resurrect the last-printed filename that
+		// handleStatusReport just cleared on the idle report (K-091).
+		if ps.Filename != "" && (current.State == "printing" || current.State == "paused") {
 			current.CurrentFile = ps.Filename
 		}
 		if ps.Info != nil {

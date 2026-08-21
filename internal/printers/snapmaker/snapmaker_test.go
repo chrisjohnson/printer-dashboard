@@ -1040,6 +1040,13 @@ func TestHandleStatusReport_CompleteThenPrinting_OverridesImmediately(t *testing
 func TestHandleQueryReport_FullUpdate(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 
+	// In production the status report (which carries State) always precedes
+	// the query report in the poll cycle; CurrentFile population is gated
+	// on the state being printing/paused (K-091), so set it up first.
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+
 	report := &moonrakerQueryResponse{}
 	report.Result.Status = &queryStatus{
 		PrintStats: &printStatsReport{
@@ -1121,6 +1128,186 @@ func TestHandleQueryReport_NilReport(t *testing.T) {
 	if s.State != "idle" {
 		t.Errorf("State = %q; want %q", s.State, "idle")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// CurrentFile clearing tests (K-091) — mirror the Bambu client's
+// TestHandleReport_IdleClearsCurrentFile / _NewPrintPopulatesCurrentFile /
+// _SuccessIdleIdleSequence_CurrentFileClearsBeforeState suite.
+// ---------------------------------------------------------------------------
+
+// TestHandleStatusReport_IdleClearsCurrentFile verifies that when the
+// printer transitions to an idle state, CurrentFile is cleared.
+func TestHandleStatusReport_IdleClearsCurrentFile(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	// First: printer is printing, query report populates the file.
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	p.handleQueryReport(queryReportWithFilename("model.gcode"))
+	s1 := p.Status()
+	if s1.CurrentFile != "model.gcode" {
+		t.Fatalf("After printing: CurrentFile = %q; want %q", s1.CurrentFile, "model.gcode")
+	}
+
+	// Second: printer goes idle (print completed) — "Operational" maps to
+	// idle. CurrentFile must clear.
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}})
+	s2 := p.Status()
+
+	if s2.State != "idle" {
+		t.Fatalf("After Operational: State = %q; want %q", s2.State, "idle")
+	}
+	if s2.CurrentFile != "" {
+		t.Errorf("After Operational: CurrentFile = %q; want empty (print finished)", s2.CurrentFile)
+	}
+}
+
+// TestHandleQueryReport_StaleFilenameNotResurrected is the key K-091
+// regression test: stock Klipper keeps print_stats.filename set after
+// completion, so a query poll arriving after the idle report must NOT
+// re-populate CurrentFile from the stale filename.
+func TestHandleQueryReport_StaleFilenameNotResurrected(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	p.handleQueryReport(queryReportWithFilename("model.gcode"))
+	if s := p.Status(); s.CurrentFile != "model.gcode" {
+		t.Fatalf("After printing: CurrentFile = %q; want %q", s.CurrentFile, "model.gcode")
+	}
+
+	// Print completes and settles to idle.
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Complete"}})
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}}) // clears file, State still latched to "complete"
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}}) // State settles to "idle"
+
+	// Query poll with the stale filename (as Klipper would return it).
+	p.handleQueryReport(queryReportWithFilename("model.gcode"))
+	s := p.Status()
+
+	if s.State != "idle" {
+		t.Fatalf("After settle: State = %q; want %q", s.State, "idle")
+	}
+	if s.CurrentFile != "" {
+		t.Errorf("After stale query poll: CurrentFile = %q; want empty (not resurrected)", s.CurrentFile)
+	}
+}
+
+// TestHandleStatusReport_CompleteThenOperationalSequence_CurrentFileClearsBeforeState
+// mirrors the Bambu client's _SuccessIdleIdleSequence_CurrentFileClearsBeforeState:
+// CurrentFile clears on the FIRST idle report, while State is still latched
+// to "complete" — one report earlier than the COMPLETE badge settles.
+func TestHandleStatusReport_CompleteThenOperationalSequence_CurrentFileClearsBeforeState(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	p.handleQueryReport(queryReportWithFilename("model.gcode"))
+
+	// Complete arrives: file still shown while the COMPLETE badge is up.
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Complete"}})
+	if s := p.Status(); s.State != "complete" {
+		t.Fatalf("After Complete: State = %q; want %q", s.State, "complete")
+	}
+	if s := p.Status(); s.CurrentFile != "model.gcode" {
+		t.Fatalf("After Complete: CurrentFile = %q; want %q (still shown during COMPLETE)", s.CurrentFile, "model.gcode")
+	}
+
+	// First Operational report: CurrentFile clears NOW, but State is still
+	// latched to "complete" (single idle report doesn't meet the
+	// completeIdleStreakThreshold).
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}})
+	s2 := p.Status()
+	if s2.State != "complete" {
+		t.Fatalf("After 1st Operational: State = %q; want %q (latched)", s2.State, "complete")
+	}
+	if s2.CurrentFile != "" {
+		t.Errorf("After 1st Operational: CurrentFile = %q; want empty (clears before State)", s2.CurrentFile)
+	}
+
+	// Second Operational report: State settles to "idle", file stays empty.
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}})
+	s3 := p.Status()
+	if s3.State != "idle" {
+		t.Fatalf("After 2nd Operational: State = %q; want %q", s3.State, "idle")
+	}
+	if s3.CurrentFile != "" {
+		t.Fatalf("After 2nd Operational: CurrentFile = %q; want empty", s3.CurrentFile)
+	}
+}
+
+// TestHandleStatusReport_NewPrintPopulatesCurrentFile verifies that after a
+// print completes and CurrentFile is cleared, a new print populates it
+// again (state back to "printing" re-enables the query gate).
+func TestHandleStatusReport_NewPrintPopulatesCurrentFile(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	// First print: running, then finished, then settled idle.
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	p.handleQueryReport(queryReportWithFilename("first.gcode"))
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Complete"}})
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}})
+	p.handleStatusReport(&apiPrinterResponse{State: &stateReport{Text: "Operational"}})
+	if s := p.Status(); s.CurrentFile != "" {
+		t.Fatalf("After first print settled: CurrentFile = %q; want empty", s.CurrentFile)
+	}
+
+	// New print starts (printing overrides the latch immediately) and the
+	// query poll carries the new filename.
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	p.handleQueryReport(queryReportWithFilename("second.gcode"))
+	s := p.Status()
+
+	if s.State != "printing" {
+		t.Fatalf("After new print: State = %q; want %q", s.State, "printing")
+	}
+	if s.CurrentFile != "second.gcode" {
+		t.Errorf("After new print: CurrentFile = %q; want %q", s.CurrentFile, "second.gcode")
+	}
+}
+
+// TestHandleQueryReport_PausedPreservesCurrentFile verifies that a paused
+// print still carries its filename: the query gate covers paused as well
+// as printing (pausing does not end the print).
+func TestHandleQueryReport_PausedPreservesCurrentFile(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	p.handleQueryReport(queryReportWithFilename("model.gcode"))
+
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Paused", Flags: &stateFlags{Paused: true}},
+	})
+	if s := p.Status(); s.State != "paused" {
+		t.Fatalf("After Paused: State = %q; want %q", s.State, "paused")
+	}
+
+	// Query poll while paused: filename must still populate.
+	p.handleQueryReport(queryReportWithFilename("model.gcode"))
+	s := p.Status()
+	if s.CurrentFile != "model.gcode" {
+		t.Errorf("While paused: CurrentFile = %q; want %q (preserved)", s.CurrentFile, "model.gcode")
+	}
+}
+
+// queryReportWithFilename builds a moonrakerQueryResponse carrying only a
+// print_stats filename, for the K-091 CurrentFile tests.
+func queryReportWithFilename(filename string) *moonrakerQueryResponse {
+	report := &moonrakerQueryResponse{}
+	report.Result.Status = &queryStatus{
+		PrintStats: &printStatsReport{Filename: filename},
+	}
+	return report
 }
 
 // ---------------------------------------------------------------------------
