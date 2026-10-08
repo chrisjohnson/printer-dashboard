@@ -1,6 +1,6 @@
 # Stage 1: Download Bambu network plugin (optional — if this stage fails,
 # the TUTK P2P camera feature will be unavailable but the app still works)
-FROM alpine:latest AS bambu-plugin
+FROM docker.io/library/alpine:latest AS bambu-plugin
 RUN apk add --no-cache curl unzip jq
 RUN mkdir -p /out && \
     RESP=$(curl -sf "https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.07.00.00" \
@@ -19,7 +19,7 @@ RUN mkdir -p /out && \
 
 # Stage 2: Download go2rtc pre-built binary for RTSPS camera streaming support
 # (independent of source/deps, so it stays cached across app rebuilds)
-FROM alpine:latest AS go2rtc
+FROM docker.io/library/alpine:latest AS go2rtc
 ARG TARGETARCH
 RUN apk add --no-cache curl jq
 RUN mkdir -p /out && \
@@ -30,7 +30,7 @@ RUN mkdir -p /out && \
     echo "go2rtc ${GO2RTC_VERSION} (${TARGETARCH}) downloaded successfully"
 
 # Stage 3: Build printer-dashboard
-FROM golang:1.26-bookworm AS builder
+FROM docker.io/library/golang:1.26-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
@@ -46,7 +46,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o /app/printer-dashboard .
 
 # Stage 4: Runtime
-FROM debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates tzdata \
