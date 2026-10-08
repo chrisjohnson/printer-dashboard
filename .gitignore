@@ -10,6 +10,9 @@ config.yaml
 config.local.yaml
 *.env
 
+# Token store (Bambu cloud JWT tokens)
+token-store/
+
 # IDE
 .idea/
 .vscode/
