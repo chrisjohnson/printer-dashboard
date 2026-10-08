@@ -1252,8 +1252,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const errorEl = card.querySelector('.error-banner');
       toggleBanner(errorEl, st === 'error' && !!p.error_msg, p.error_msg);
 
-      // 8b. HMS rows — one dismissible row per (already server-filtered)
-      // hms_errors/hms_warnings entry, independent of error state. Built via
+      // 8b. HMS rows — one row per (already server-filtered)
+      // hms_errors/hms_warnings entry (dismissible) plus one per advisory
+      // (not dismissible), independent of error state. Built via
       // the shared hmsRowsHtml() helper — same one renderCard() uses for its
       // initial markup — so the two paths can't drift (see K-053 for the
       // documented history of exactly this class of drift, and how
@@ -1261,7 +1262,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // plain error banner). The whole list is small, so on each update we
       // just replace its innerHTML wholesale rather than diffing rows.
       const hmsListEl = card.querySelector('.hms-list');
-      if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []);
+      if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []);
 
       // 8c. AMS section — one shared amsHtml() helper builds the full
       // markup (same precedent as hmsRowsHtml() above); replace
@@ -1709,8 +1710,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // without a full card rebuild.
       const errorHtml = bannerHtml('error-banner', st === 'error' && !!p.error_msg, p.error_msg);
 
-      // HMS rows — one dismissible row per (already server-filtered)
-      // hms_errors/hms_warnings entry, regardless of error state. The
+      // HMS rows — one row per (already server-filtered) hms_errors/
+      // hms_warnings entry (dismissible) plus one per advisory (not
+      // dismissible — the printer re-asserts it), regardless of error state.
+      // The
       // container is always rendered (empty when there are no entries) so
       // renderCard() and updateCard() agree on shape and a later WS update
       // can find and refresh it without a full card rebuild — same
@@ -1719,9 +1722,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // (see K-053 for the documented history of exactly this class of
       // drift, and bannerHtml()/toggleBanner() above for the existing
       // guard on the plain error banner). Errors continue to use
-      // error-banner/error_msg unchanged; this is a separate, non-blocking,
-      // per-entry-dismissible channel.
-      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>';
+      // error-banner/error_msg unchanged; this is a separate, non-blocking
+      // channel.
+      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []) + '</div>';
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1991,19 +1994,38 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       '</div>';
     }
 
+    // Builds one advisory row: same warning styling as an HMS warning (both
+    // are non-blocking) but deliberately WITHOUT a Dismiss button. An HMS
+    // warning can be acknowledged away; an advisory is a condition the
+    // printer re-asserts on every full status push until the underlying
+    // problem is actually fixed (a degraded SD card, say), so a Dismiss
+    // control would only promise something the server can't honour.
+    function advisoryRowHtml(entry) {
+      const text = entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+      return '<div class="hms-row hms-warning" data-advisory-source="' + escapeHtml(entry.source || '') + '">' +
+        '<span class="hms-text">' + escapeHtml(text) + '</span>' +
+      '</div>';
+    }
+
     // Builds the full per-entry HMS row list for one printer card: errors
     // first (severity fatal/serious, styled via .hms-error), then warnings
     // (everything else, styled via .hms-warning) — same bucketing the server
     // already applied via hms_errors/hms_warnings (see bambu/parser.go's
-    // splitHMS()). Single shared helper used by both renderCard() (initial
-    // markup, wrapped in the always-in-DOM .hms-list container) and
-    // updateCard() (innerHTML replacement of that same container) so the two
-    // rendering paths can't drift out of sync (see K-053 for the documented
-    // history of exactly this class of drift, and bannerHtml()/toggleBanner()
-    // above for the precedent this follows).
-    function hmsRowsHtml(printerId, errors, warnings) {
+    // splitHMS()). Advisories are appended last: they are the same
+    // non-blocking class as warnings but arrive outside the printer's health
+    // array (see printers.Advisory), so they render after the health events
+    // that more directly describe what the printer is doing right now.
+    //
+    // Single shared helper used by both renderCard() (initial markup, wrapped
+    // in the always-in-DOM .hms-list container) and updateCard() (innerHTML
+    // replacement of that same container) so the two rendering paths can't
+    // drift out of sync (see K-053 for the documented history of exactly this
+    // class of drift, and bannerHtml()/toggleBanner() above for the precedent
+    // this follows).
+    function hmsRowsHtml(printerId, errors, warnings, advisories) {
       return (errors || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-error'); }).join('') +
-        (warnings || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-warning'); }).join('');
+        (warnings || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-warning'); }).join('') +
+        (advisories || []).map(function(e) { return advisoryRowHtml(e); }).join('');
     }
 
     function cmd(id, action) {

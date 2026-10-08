@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"strings"
@@ -711,8 +712,11 @@ func TestHandleReport_FailedState(t *testing.T) {
 	if s.State != "error" {
 		t.Errorf("State = %q; want %q", s.State, "error")
 	}
-	if s.ErrorMsg != "print_error=503" {
-		t.Errorf("ErrorMsg = %q; want %q", s.ErrorMsg, "print_error=503")
+	// 503 isn't in the vendored device_error table, so the fallback text
+	// keeps the raw decimal (what the wire carries) and adds the dashed-hex
+	// form Bambu's own catalog and community references use.
+	if s.ErrorMsg != "print_error=503 (0000-01F7)" {
+		t.Errorf("ErrorMsg = %q; want %q", s.ErrorMsg, "print_error=503 (0000-01F7)")
 	}
 }
 
@@ -738,10 +742,66 @@ func TestHandleReport_FailedStateWithoutPrintError(t *testing.T) {
 	}
 }
 
-func TestHandleReport_PrintErrorOnly(t *testing.T) {
+// TestHandleReport_PrintErrorAdvisoryUnderHealthyGcodeState is the core
+// regression for the P1S "stuck on print_error=83935249" report. The payload
+// below is the printer's real full-status push, captured from a live P1S
+// sitting idle immediately after a job that completed successfully: it
+// asserts a fault (print_error) and its own health (gcode_state FINISH,
+// empty hms) in the same message. Bambu Handy shows nothing at all for it,
+// because the advisory rides the print_error channel rather than the hms
+// array. The dashboard must believe the state machine, not the latched
+// register, and surface the code as a non-blocking advisory.
+func TestHandleReport_PrintErrorAdvisoryUnderHealthyGcodeState(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	c.SetModel("C12") // the internal product code config.yaml uses for a P1S
+
+	payload := []byte(`{
+		"print": {
+			"gcode_state": "FINISH",
+			"mc_percent": 100,
+			"layer_num": 24,
+			"total_layer_num": 24,
+			"print_error": 83935249,
+			"hms": [],
+			"print_type": "idle",
+			"subtask_name": "Part Studio 1 - Part 2(3).stl"
+		}
+	}`)
+
+	c.handleReport(nil, newMockMessage(payload))
+	s := c.Status()
+
+	if s.State != "complete" {
+		t.Errorf("State = %q; want %q (a healthy gcode_state must outrank a latched print_error)", s.State, "complete")
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty — nothing is actually wrong", s.ErrorMsg)
+	}
+	if len(s.Advisories) != 1 {
+		t.Fatalf("Advisories = %+v; want exactly 1 entry", s.Advisories)
+	}
+	a := s.Advisories[0]
+	if a.Source != "print_error" {
+		t.Errorf("Advisories[0].Source = %q; want %q", a.Source, "print_error")
+	}
+	if a.Code != "0500-C011" {
+		t.Errorf("Advisories[0].Code = %q; want %q", a.Code, "0500-C011")
+	}
+	// The message comes from the vendored device_error table, resolved
+	// through the C12 -> P1S model alias. Without the alias this would be
+	// empty (the code has no model-independent text), which is the whole
+	// reason the dashboard used to show a bare unsearchable integer.
+	if !strings.Contains(a.Message, "SD card performance has degraded") {
+		t.Errorf("Advisories[0].Message = %q; want the P1S SD-card advisory text", a.Message)
+	}
+}
+
+// TestHandleReport_PrintErrorAdvisoryDoesNotOverrideRunningPrint is the
+// "showed this even while an active job was running" half of the same
+// report: a mid-print report must stay "printing".
+func TestHandleReport_PrintErrorAdvisoryDoesNotOverrideRunningPrint(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// Non-zero print_error with RUNNING state should also trigger error.
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
@@ -755,11 +815,108 @@ func TestHandleReport_PrintErrorOnly(t *testing.T) {
 	c.handleReport(nil, newMockMessage(payload))
 	s := c.Status()
 
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q", s.State, "printing")
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty", s.ErrorMsg)
+	}
+	if len(s.Advisories) != 1 || s.Advisories[0].Code != "0000-007B" {
+		t.Errorf("Advisories = %+v; want one 0000-007B advisory", s.Advisories)
+	}
+	if s.Progress != 0.5 {
+		t.Errorf("Progress = %v; want 0.5 (print progress must still be parsed)", s.Progress)
+	}
+}
+
+// TestHandleReport_PrintErrorAdvisorySurvivesDeltaReports locks in the
+// un-latching behaviour that was missing. After the full push above, a P1S
+// emits only wifi_signal/bed_temper deltas for long stretches — carrying
+// neither print_error nor gcode_state. Those must neither wipe the advisory
+// (it would flicker) nor re-trip the error state (that is what made the card
+// permanently stuck, since nothing in a delta could ever clear it).
+func TestHandleReport_PrintErrorAdvisorySurvivesDeltaReports(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	c.SetModel("C12")
+
+	c.handleReport(nil, newMockMessage([]byte(`{
+		"print": {"gcode_state": "FINISH", "print_error": 83935249, "hms": []}
+	}`)))
+	if s := c.Status(); s.State != "complete" || len(s.Advisories) != 1 {
+		t.Fatalf("After full report: State=%q Advisories=%+v; want complete/1", s.State, s.Advisories)
+	}
+
+	// A long run of the real P1S delta shape, captured from the same printer.
+	for i := 0; i < 20; i++ {
+		c.handleReport(nil, newMockMessage([]byte(fmt.Sprintf(`{
+			"print": {"wifi_signal": "-47dBm", "bed_temper": 23.1, "command": "push_status", "msg": 1, "sequence_id": "%d"}
+		}`, 700+i))))
+	}
+
+	s := c.Status()
+	if s.State != "complete" {
+		t.Errorf("After 20 deltas: State = %q; want %q (must not latch to error)", s.State, "complete")
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("After 20 deltas: ErrorMsg = %q; want empty", s.ErrorMsg)
+	}
+	if len(s.Advisories) != 1 {
+		t.Errorf("After 20 deltas: Advisories = %+v; want the advisory preserved, not flickered away", s.Advisories)
+	}
+}
+
+// TestHandleReport_PrintErrorAloneDoesNotTripError covers a print_error
+// delta arriving with no gcode_state at all. Tripping here would re-create
+// the stuck card: the reports that follow carry neither field, so there
+// would be nothing left to clear it. The advisory is still recorded.
+func TestHandleReport_PrintErrorAloneDoesNotTripError(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"print_error": 503, "wifi_signal": "-50dBm"}}`)))
+	s := c.Status()
+
+	if s.State == "error" {
+		t.Errorf("State = %q; want anything but error — the printer's state machine never said FAILED", s.State)
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty", s.ErrorMsg)
+	}
+	if len(s.Advisories) != 1 {
+		t.Errorf("Advisories = %+v; want 1 (still worth surfacing)", s.Advisories)
+	}
+}
+
+// TestHandleReport_PrintErrorClearedByExplicitZero covers the printer's own
+// clear signal: print_error present and zero means the condition is gone.
+func TestHandleReport_PrintErrorClearedByExplicitZero(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	c.SetModel("C12")
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING", "print_error": 83935249}}`)))
+	if s := c.Status(); len(s.Advisories) != 1 {
+		t.Fatalf("After advisory: Advisories = %+v; want 1", s.Advisories)
+	}
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING", "print_error": 0, "mc_percent": 12}}`)))
+	if s := c.Status(); len(s.Advisories) != 0 {
+		t.Errorf("After print_error=0: Advisories = %+v; want empty", s.Advisories)
+	}
+}
+
+// TestHandleReport_PrintErrorTripsErrorWhenGcodeStateUnhealthy keeps the
+// legitimate half of the old behaviour: when the printer's own state machine
+// is unhealthy, print_error is the fault and owns the error banner.
+func TestHandleReport_PrintErrorTripsErrorWhenGcodeStateUnhealthy(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "FAILED", "print_error": 503}}`)))
+	s := c.Status()
+
 	if s.State != "error" {
 		t.Errorf("State = %q; want %q", s.State, "error")
 	}
-	if s.ErrorMsg != "print_error=123" {
-		t.Errorf("ErrorMsg = %q; want %q", s.ErrorMsg, "print_error=123")
+	if !strings.Contains(s.ErrorMsg, "print_error=503") {
+		t.Errorf("ErrorMsg = %q; want it to name the print_error", s.ErrorMsg)
 	}
 }
 
@@ -938,14 +1095,16 @@ func TestHandleReport_ErrorPreservedOnSubsequentError(t *testing.T) {
 	}`)
 	c.handleReport(nil, newMockMessage(payload1))
 	s1 := c.Status()
-	if s1.ErrorMsg != "print_error=503" {
-		t.Fatalf("After first error: ErrorMsg = %q; want %q", s1.ErrorMsg, "print_error=503")
+	if s1.ErrorMsg != "print_error=503 (0000-01F7)" {
+		t.Fatalf("After first error: ErrorMsg = %q; want %q", s1.ErrorMsg, "print_error=503 (0000-01F7)")
 	}
 
-	// Second report: different error.
+	// Second report: a different error, still with the printer's own state
+	// machine agreeing. The banner must follow the newest code, not keep
+	// describing the first one.
 	payload2 := []byte(`{
 		"print": {
-			"gcode_state": "RUNNING",
+			"gcode_state": "FAILED",
 			"print_error": 999
 		}
 	}`)
@@ -955,8 +1114,34 @@ func TestHandleReport_ErrorPreservedOnSubsequentError(t *testing.T) {
 	if s2.State != "error" {
 		t.Errorf("After second error: State = %q; want %q", s2.State, "error")
 	}
-	if s2.ErrorMsg != "print_error=999" {
-		t.Errorf("After second error: ErrorMsg = %q; want %q", s2.ErrorMsg, "print_error=999")
+	if s2.ErrorMsg != "print_error=999 (0000-03E7)" {
+		t.Errorf("After second error: ErrorMsg = %q; want %q", s2.ErrorMsg, "print_error=999 (0000-03E7)")
+	}
+}
+
+// TestHandleReport_ErrorClearedWhenGcodeStateRecoversDespiteStalePrintError
+// is the un-latching counterpart to the test above: the printer recovers on
+// its own terms (gcode_state back to RUNNING) while still re-advertising the
+// old print_error. The error must clear and the stale code must demote to an
+// advisory rather than holding the card in "error".
+func TestHandleReport_ErrorClearedWhenGcodeStateRecoversDespiteStalePrintError(t *testing.T) {
+	c := newTestPrinterClient(nil)
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "FAILED", "print_error": 503}}`)))
+	if s := c.Status(); s.State != "error" {
+		t.Fatalf("After FAILED: State = %q; want error", s.State)
+	}
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING", "print_error": 503, "mc_percent": 5}}`)))
+	s := c.Status()
+	if s.State != "printing" {
+		t.Errorf("After recovery: State = %q; want %q", s.State, "printing")
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("After recovery: ErrorMsg = %q; want empty", s.ErrorMsg)
+	}
+	if len(s.Advisories) != 1 {
+		t.Errorf("After recovery: Advisories = %+v; want the still-asserted code kept as an advisory", s.Advisories)
 	}
 }
 
@@ -1102,12 +1287,16 @@ func TestHandleReport_HMS_CoverOffScenario(t *testing.T) {
 	}
 }
 
-func TestHandleReport_HMS_PrintErrorPrecedenceOverHMS(t *testing.T) {
+// TestHandleReport_HMS_HealthEventOwnsBannerOverAdvisoryPrintError replaces
+// the older "print_error always wins the banner" rule. That rule was wrong
+// here: with gcode_state RUNNING the print_error is a latched advisory, while
+// the HMS fatal entry is the live fault actually putting the printer into
+// "error" — so HMS owns the banner and print_error is reported alongside it
+// as an advisory. print_error still wins when it is itself the fault (see
+// TestHandleReport_FailedState).
+func TestHandleReport_HMS_HealthEventOwnsBannerOverAdvisoryPrintError(t *testing.T) {
 	c := newTestPrinterClient(nil)
 
-	// Both print_error (nonzero) and an HMS fatal entry present simultaneously
-	// — print_error's message must win (backward compat), HMS summary is
-	// only the fallback when print_error itself produced no message.
 	payload := []byte(`{
 		"print": {
 			"gcode_state": "RUNNING",
@@ -1122,11 +1311,14 @@ func TestHandleReport_HMS_PrintErrorPrecedenceOverHMS(t *testing.T) {
 	if s.State != "error" {
 		t.Errorf("State = %q; want %q", s.State, "error")
 	}
-	if s.ErrorMsg != "print_error=503" {
-		t.Errorf("ErrorMsg = %q; want %q (print_error takes precedence over HMS summary)", s.ErrorMsg, "print_error=503")
+	if s.ErrorMsg != "HMS_0500-0000-0001-0000" {
+		t.Errorf("ErrorMsg = %q; want %q (the HMS fault is what tripped error, so it owns the banner)", s.ErrorMsg, "HMS_0500-0000-0001-0000")
 	}
 	if len(s.HMSErrors) != 1 {
-		t.Errorf("HMSErrors len = %d; want 1 (still populated even though ErrorMsg came from print_error)", len(s.HMSErrors))
+		t.Errorf("HMSErrors len = %d; want 1", len(s.HMSErrors))
+	}
+	if len(s.Advisories) != 1 {
+		t.Errorf("Advisories = %+v; want 1 (the advisory is still worth surfacing alongside the error)", s.Advisories)
 	}
 }
 

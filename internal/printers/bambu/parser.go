@@ -120,6 +120,34 @@ func hmsEntrySummary(e printers.HMSEntry) string {
 	return e.Code
 }
 
+// printErrorCodeString renders a raw print_error integer the way Bambu's own
+// app and support pages render it: two dash-separated 16-bit halves, e.g.
+// 83935249 -> "0500-C011". Bambu documents and discusses these codes in that
+// form (and the bare decimal is essentially unsearchable), so the dashboard
+// shows the same thing a user would type into a support forum.
+func printErrorCodeString(code int) string {
+	u := uint32(code)
+	return fmt.Sprintf("%04X-%04X", u>>16, u&0xFFFF)
+}
+
+// describePrintError builds the human-readable text for a non-zero
+// print_error, resolving it through the vendored device_error table and
+// falling back to the raw value when the code isn't documented:
+//
+//	83935249, "C12" -> "SD card performance has degraded, … (0500-C011)"
+//	503,       "C12" -> "print_error=503 (0000-01F7)"
+//
+// The decimal is kept in the fallback because it is what the wire actually
+// carries and what appears in captured MQTT payloads, while the dashed hex
+// is what Bambu's own catalog and community references use — showing both
+// makes an undocumented code look up-able from the dashboard alone.
+func describePrintError(code int, model string) string {
+	if msg := lookupDeviceError(uint32(code), model); msg != "" {
+		return fmt.Sprintf("%s (%s)", msg, printErrorCodeString(code))
+	}
+	return fmt.Sprintf("print_error=%d (%s)", code, printErrorCodeString(code))
+}
+
 // splitHMS decodes each raw HMS wire entry and buckets it into errors
 // (severity fatal/serious) or warnings (everything else — common/info/
 // unknown). A nil or empty items slice yields nil/empty output slices, no

@@ -680,25 +680,78 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	homed := p.HomeFlag&0x1 != 0
 	s.Homed = &homed
 
+	// print_error is a latched register, not a live fault. Bambu firmware
+	// keeps re-advertising the last non-zero value in every full status push
+	// — long after the job that produced it, and while a new job prints
+	// normally. Confirmed against a live P1S sitting idle right after a
+	// successful print: "print_error":83935249 arrived alongside
+	// "gcode_state":"FINISH" and "hms":[], i.e. the printer asserting a
+	// fault and its own health at the same time.
+	//
+	// Treating the field as authoritative over gcode_state is what made the
+	// card un-stickable: it forced State="error" through a healthy RUNNING
+	// print, and because the P1S only sends wifi_signal/bed_temper deltas
+	// between full pushes, no subsequent report carried either print_error or
+	// gcode_state, so nothing below could ever release the latch — not even
+	// a restart, since the next pushall re-asserted the same stale value.
+	//
+	// So print_error outranks gcode_state only when gcode_state is present
+	// AND unhealthy. When the printer's own state machine says
+	// running/paused/finished/idle, that wins and print_error is surfaced as
+	// a non-blocking Advisory instead. Genuine failures still trip via
+	// gcode_state=FAILED, and health events still trip via HMS below.
+	//
+	// An absent gcode_state deliberately does NOT trip either: a print_error
+	// delta arriving on its own is exactly the shape that would re-latch the
+	// card with nothing left able to un-latch it, since the deltas that
+	// follow carry neither field.
+	printErrorActive := p.PrintError != nil && *p.PrintError != 0
+	printErrorIsFault := printErrorActive && p.GcodeState != "" && !isHealthyGcodeState(p.GcodeState)
+
+	// Advisory list — refreshed only when the report actually carries
+	// print_error. P1S deltas omit the key entirely, and rebuilding the list
+	// from scratch on those would make the row flicker on every heartbeat;
+	// an explicit print_error:0 IS present, and is the printer's own signal
+	// that the condition cleared.
+	if p.PrintError != nil {
+		if *p.PrintError != 0 {
+			s.Advisories = []printers.Advisory{{
+				Source:  "print_error",
+				Code:    printErrorCodeString(*p.PrintError),
+				Message: lookupDeviceError(uint32(*p.PrintError), c.model),
+			}}
+		} else {
+			s.Advisories = nil
+		}
+	}
+
 	// Check for error state. HMS errors (severity fatal/serious) trip this
 	// independently of print_error/gcode_state — this is the channel a
 	// cover-off event on a P1S (no door sensor) actually surfaces through,
 	// since print_error can stay 0 the whole time.
-	if p.GcodeState == "FAILED" || (p.PrintError != nil && *p.PrintError != 0) || len(s.HMSErrors) > 0 {
+	if p.GcodeState == "FAILED" || printErrorIsFault || len(s.HMSErrors) > 0 {
 		s.State = "error"
-		if p.PrintError != nil && *p.PrintError != 0 {
-			// print_error message takes precedence (backward compat).
-			s.ErrorMsg = fmt.Sprintf("print_error=%d", *p.PrintError)
-		} else if len(s.HMSErrors) > 0 {
-			// Fallback: only HMS tripped it — summarize the HMS entries,
-			// preferring each entry's human-readable message (falling back to
-			// the raw code when no message was found in the vendored table).
+		switch {
+		case printErrorIsFault:
+			// print_error is the reason the printer is in this state, so it
+			// owns the message.
+			s.ErrorMsg = describePrintError(*p.PrintError, c.model)
+		case len(s.HMSErrors) > 0:
+			// Only HMS tripped it — summarize the HMS entries, preferring
+			// each entry's human-readable message (falling back to the raw
+			// code when no message was found in the vendored table). A
+			// non-zero print_error alongside a healthy gcode_state is an
+			// advisory, not the fault, so it no longer gets to claim the
+			// banner away from the actual cause.
 			summaries := make([]string, len(s.HMSErrors))
 			for i, e := range s.HMSErrors {
 				summaries[i] = hmsEntrySummary(e)
 			}
 			s.ErrorMsg = strings.Join(summaries, "; ")
 		}
+		// FAILED with neither print_error nor HMS: ErrorMsg is left as-is
+		// rather than cleared, so a FAILED delta that omits the detail
+		// fields doesn't blank out the explanation an earlier report gave.
 	} else if s.State != "error" {
 		s.ErrorMsg = ""
 	} else if hadHMSErrors && p.GcodeState == "" {
