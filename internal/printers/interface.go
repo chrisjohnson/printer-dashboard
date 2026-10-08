@@ -30,17 +30,30 @@ type PrinterStatus struct {
 	// driver at construction (and, for Bambu, re-derived whenever the model
 	// becomes known/changes) and is NOT inferred from ChamberTemp — a nil
 	// ChamberTemp only means "not reported this cycle", not "no hardware".
-	HasChamber    bool              `json:"has_chamber"`
-	CurrentLayer  int               `json:"current_layer"`
-	TotalLayers   int               `json:"total_layers"`
-	ErrorMsg      string            `json:"error_msg,omitempty"`
+	HasChamber   bool `json:"has_chamber"`
+	CurrentLayer int  `json:"current_layer"`
+	TotalLayers  int  `json:"total_layers"`
+	// ErrorMsg describes why State is "error". It is only meaningful while
+	// State == "error" — a non-empty ErrorMsg alongside a healthy State means
+	// the driver failed to clear it, not that something is wrong.
+	ErrorMsg string `json:"error_msg,omitempty"`
+	// Advisories holds printer-reported faults that arrive on a channel
+	// outside the printer's own state machine, so they are deliberately NOT
+	// errors: the printer keeps printing (and finishes successfully) while
+	// asserting them. See bambu/client.go's handleReport for which Bambu
+	// fields land here and why they must not trip State="error".
+	//
+	// Vendor-neutral by design (see K-073): the shape carries no Bambu MQTT
+	// vocabulary, only a Source tag naming the driver-specific channel it
+	// came from.
+	Advisories    []Advisory        `json:"advisories,omitempty"`
 	PositionZ     float64           `json:"position_z,omitempty"`
 	NozzleTemps   []NozzleTempEntry `json:"nozzle_temps,omitempty"`
 	CameraStreams []CameraStream    `json:"camera_streams,omitempty"`
 	// HMSErrors holds decoded Bambu HMS (Health Management System) events of
 	// fatal/serious severity. These independently trip State="error" — see
 	// bambu/client.go's handleReport, which folds these into ErrorMsg when
-	// print_error itself is 0/nil.
+	// nothing else produced an error message.
 	HMSErrors []HMSEntry `json:"hms_errors,omitempty"`
 	// HMSWarnings holds decoded Bambu HMS events of common/info/unknown
 	// severity — non-blocking, surfaced in the UI but does not affect State.
@@ -97,6 +110,25 @@ type HMSEntry struct {
 	// from a vendored code-to-message table (see bambu/hms_messages.go).
 	// Empty if the code isn't found in the table — this is expected for
 	// unrecognized/new codes, not an error condition.
+	Message string `json:"message,omitempty"`
+}
+
+// Advisory is one non-blocking fault the printer is asserting about itself
+// rather than about the current job. Unlike HMSErrors it never trips
+// State="error"; unlike HMSWarnings it did not come from a health-check
+// array, so it has no severity and is not dismissible (the printer re-asserts
+// it on every full status push until the underlying condition is fixed).
+//
+// Code is the printer's own human-readable code form (e.g. "0500-C011"),
+// already normalized by the driver rather than a raw integer, so the UI can
+// render it without knowing any vendor's encoding. Message is empty when the
+// driver's catalog has no text for the code — expected for undocumented
+// codes, and rendered as the bare code.
+type Advisory struct {
+	// Source names the driver-specific channel the advisory came from, for
+	// debugging and for the UI to label the row (e.g. "print_error").
+	Source  string `json:"source"`
+	Code    string `json:"code"`
 	Message string `json:"message,omitempty"`
 }
 
