@@ -494,6 +494,19 @@ func (p *Printer) handleQueryReport(q *moonrakerQueryResponse) {
 	if vsd := q.Result.Status.VirtualSDCard; vsd != nil {
 		current.Progress = vsd.Progress
 	}
+	// ElapsedTime: Moonraker's print_duration is the current job's accumulated
+	// printing time with pauses excluded — exactly what the UI needs to derive
+	// a total print time, since Moonraker reports no total (and no remaining
+	// time) at all. Cleared when not printing/paused: Moonraker keeps
+	// reporting the finished job's duration after it ends, and a stale total
+	// on an idle printer would be misleading.
+	if current.State == "printing" || current.State == "paused" {
+		if ps := q.Result.Status.PrintStats; ps != nil {
+			current.ElapsedTime = int(ps.PrintDuration)
+		}
+	} else {
+		current.ElapsedTime = 0
+	}
 	if gm := q.Result.Status.GcodeMove; gm != nil {
 		// Paxx firmware doesn't expose homed_axes in gcode_move status.
 		// We track homing state via G28 commands sent from the frontend

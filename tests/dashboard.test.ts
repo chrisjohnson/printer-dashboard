@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 test.describe('Dashboard', () => {
   test('page title is Printer Dashboard', async ({ page }) => {
@@ -589,5 +589,122 @@ test.describe('Dashboard', () => {
     // synthetic card must now be the first card in the DOM.
     expect(orderAfter[0]).toBe('printer-zz-synthetic');
     expect(orderAfter).not.toEqual(orderBefore);
+  });
+
+  // The progress row shows the print time beside the percentage, as
+  // "remaining / total". No printer reports a total print time, so the
+  // frontend derives it: Bambu sends remaining_time plus an elapsed_time the
+  // server measures (total = the two summed), Snapmaker/Moonraker sends only
+  // elapsed_time alongside progress (total extrapolated from progress), and an
+  // elapsed_time of 0 means "unknown" — e.g. the dashboard restarted mid-print
+  // — and degrades to the bare remaining time rather than a bogus "1h 20m /
+  // 1h 20m". Cards are synthetic because the Bambu-backed test printers need
+  // real cloud auth to render at all (same pre-existing gap as the tests
+  // above).
+  test.describe('progress time summary', () => {
+    const syntheticPrinter = {
+      id: 'zz-time',
+      name: 'ZZ Time Printer',
+      state: 'printing',
+      online: true,
+      progress: 0,
+      remaining_time: 0,
+      elapsed_time: 0,
+      current_file: null,
+      current_layer: 0,
+      total_layers: 0,
+      bed_temp: 20,
+      bed_target_temp: null,
+      nozzle_temp: 20,
+      nozzle_target_temp: null,
+      chamber_temp: null,
+      chamber_target_temp: null,
+      hms_errors: [],
+      hms_warnings: [],
+    };
+
+    // Renders a synthetic card from `status` and returns the two halves of its
+    // progress row: the percentage and the time summary beside it.
+    const renderProgressRow = async (
+      page: Page,
+      status: Record<string, unknown>,
+    ): Promise<{ percent: string; time: string }> => {
+      await page.route('**/ws', (route) => route.abort());
+      await page.goto('/');
+      return page.evaluate((override) => {
+        const w = window as any;
+        const printer = { ...override };
+        w._printerCache['zz-time'] = printer;
+        document
+          .getElementById('printer-list')!
+          .insertAdjacentHTML('beforeend', w.renderCard(printer));
+        const spans = document.querySelectorAll(
+          '#printer-zz-time .progress-text span',
+        );
+        return {
+          percent: spans[0].textContent!.trim(),
+          time: spans[1].textContent!.trim(),
+        };
+      }, { ...syntheticPrinter, ...status });
+    };
+
+    test('shows remaining / total when the driver reports both', async ({
+      page,
+    }) => {
+      // 4800s remaining + 6480s elapsed = 11280s (3h 8m) total.
+      const { percent, time } = await renderProgressRow(page, {
+        progress: 0.45,
+        remaining_time: 4800,
+        elapsed_time: 6480,
+      });
+      expect(percent).toBe('45.0%');
+      expect(time).toBe('1h 20m / 3h 8m');
+    });
+
+    test('extrapolates remaining and total from progress when only elapsed is known', async ({
+      page,
+    }) => {
+      // Snapmaker path: 1h printed at 25% -> 4h total, 3h still to go.
+      const { time } = await renderProgressRow(page, {
+        progress: 0.25,
+        elapsed_time: 3600,
+      });
+      expect(time).toBe('3h 0m / 4h 0m');
+    });
+
+    test('falls back to the bare remaining time when elapsed is unknown', async ({
+      page,
+    }) => {
+      const { time } = await renderProgressRow(page, { remaining_time: 4800 });
+      expect(time).toBe('1h 20m');
+    });
+
+    test('shows no time at all when the printer is idle', async ({ page }) => {
+      const { time } = await renderProgressRow(page, { state: 'idle' });
+      expect(time).toBe('');
+    });
+
+    test('updateCard refreshes the summary on a live printer_update', async ({
+      page,
+    }) => {
+      await renderProgressRow(page, { state: 'idle' });
+
+      await page.evaluate(() => {
+        const w = window as any;
+        w.updateCard(
+          w.mergeWithCache({
+            id: 'zz-time',
+            state: 'printing',
+            progress: 0.62,
+            remaining_time: 4800,
+            elapsed_time: 6480,
+          }),
+        );
+      });
+
+      await expect(
+        page.locator('#printer-zz-time .progress-text span').nth(1),
+      ).toHaveText('1h 20m / 3h 8m');
+    });
   });
 });
