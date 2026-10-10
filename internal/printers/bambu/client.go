@@ -3,6 +3,7 @@ package bambu
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -141,6 +142,64 @@ type Client struct {
 	// reportSilenceWarned guards against logging the LAN Mode silence
 	// warning more than once per connection lifecycle.
 	reportSilenceWarned sync.Once
+
+	// ackWaiters holds one entry per in-flight command, keyed by
+	// "<namespace>:<firmware command>" (e.g. "print:gcode_line"), that
+	// publishCommand registers before publishing and handleReport delivers
+	// to when the firmware's reply arrives. A slice per key because two
+	// commands of the same kind can legitimately be in flight (rapid jog
+	// clicks). Guarded by ackMu.
+	ackMu      sync.Mutex
+	ackWaiters map[string][]chan commandACK
+
+	// lastStatusReport is when the last report carrying real print status
+	// (as opposed to a bare command ACK or an empty heartbeat) was parsed.
+	// Drives the staleness refresh in keepStatusFresh: some printers (the
+	// H2S reliably, over cloud MQTT) push status only on certain changes and
+	// otherwise go quiet for long stretches, leaving the dashboard showing a
+	// stale snapshot indefinitely. Guarded by mu.
+	lastStatusReport time.Time
+
+	// freshGen is bumped on every (re)connect so a previously started
+	// keepStatusFresh goroutine can tell it has been superseded and exit
+	// instead of leaking one goroutine per reconnect. Guarded by mu.
+	freshGen uint64
+
+	// ackTimeout bounds how long publishCommand waits for a firmware reply.
+	// Defaults to commandAckTimeout; a field rather than a bare constant so
+	// tests can keep the no-reply path fast without mutating package state.
+	ackTimeout time.Duration
+
+	// statusStaleTimeout / freshCheckEvery bound the staleness refresh in
+	// keepStatusFresh. Fields for the same reason as ackTimeout: so tests can
+	// exercise the refresh without waiting a real minute.
+	statusStaleTimeout time.Duration
+	freshCheckEvery    time.Duration
+}
+
+// commandACK is the firmware's reply to a command we published. Bambu echoes
+// the command back on the report topic with "result" set to success or failed
+// plus a "reason"; unlike Snapmaker's Moonraker there is no HTTP status to
+// check, so this is the only signal that a command actually took effect.
+type commandACK struct {
+	Command string
+	Result  string
+	Reason  string
+	ErrCode *int
+}
+
+// failed renders a human-readable error for a non-success ACK. The caller
+// wraps it with the usual "bambu <id>: " prefix so it reads like every other
+// error on this path.
+func (a commandACK) failed(cmdName string) error {
+	msg := strings.TrimSpace(a.Reason)
+	if msg == "" {
+		msg = a.Result
+	}
+	if a.ErrCode != nil && *a.ErrCode != 0 {
+		return fmt.Errorf("printer rejected %s: %s (err_code %d)", cmdName, msg, *a.ErrCode)
+	}
+	return fmt.Errorf("printer rejected %s: %s", cmdName, msg)
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -155,10 +214,13 @@ func New(cfg config.PrinterDef, cloud *BambuCloudClient) *Client {
 	}
 
 	return &Client{
-		cfg:    cfg,
-		cloud:  cloud,
-		status: status,
-		model:  cfg.Model, // pre-populate from config if available
+		cfg:                cfg,
+		cloud:              cloud,
+		status:             status,
+		model:              cfg.Model, // pre-populate from config if available
+		ackTimeout:         commandAckTimeout,
+		statusStaleTimeout: defaultStatusStaleTimeout,
+		freshCheckEvery:    defaultFreshCheckEvery,
 	}
 }
 
@@ -373,9 +435,13 @@ func (c *Client) onConnect(client mqtt.Client) {
 	log.Printf("bambu %s: cloud MQTT connected (or reconnected)", c.cfg.ID)
 
 	// Reset the first-report channel so the silence warning timer can
-	// monitor the next connection's report stream.
+	// monitor the next connection's report stream, and stamp a fresh
+	// status-freshness baseline for this connection generation.
 	c.mu.Lock()
 	c.firstReportCh = make(chan struct{})
+	c.lastStatusReport = time.Now()
+	c.freshGen++
+	freshGen := c.freshGen
 	c.mu.Unlock()
 
 	// Subscribe to the printer's report topic
@@ -398,6 +464,61 @@ func (c *Client) onConnect(client mqtt.Client) {
 	// without this warning, the dashboard shows the printer as
 	// permanently offline with no indication of why.
 	go c.silenceWarning(client)
+
+	// Keep the dashboard's view fresh even on printers that go quiet.
+	go c.keepStatusFresh(freshGen)
+}
+
+// statusStaleTimeout is how long the client may go without a report carrying
+// real status before it asks the printer for a full one. statusFreshCheckInterval
+// is how often that is re-evaluated.
+//
+// This exists because Bambu printers are not consistent about pushing status to
+// the cloud broker: a P1S pushes deltas on nearly every change, while an H2S was
+// observed pushing nothing at all between events — so its dashboard card kept
+// showing whatever snapshot arrived at connect time (a frozen "unhomed" flag and
+// a chamber light shown as on while the bulb was physically off, both of which
+// read to the user as "the buttons do nothing"). Requesting a pushall when the
+// stream has gone quiet bounds that staleness instead of inheriting it forever.
+//
+// The threshold is deliberately generous: OpenBambuAPI warns that pushall can
+// cause lag on the P1P's weak hardware at intervals under 5 minutes, and a
+// printer that is pushing normally never trips this timer at all.
+const (
+	defaultStatusStaleTimeout = 60 * time.Second
+	defaultFreshCheckEvery    = 10 * time.Second
+)
+
+// keepStatusFresh re-requests a full status push whenever the status stream has
+// gone quiet for statusStaleTimeout. It exits when a newer connection supersedes
+// it (freshGen no longer matches), so exactly one runs per live connection.
+func (c *Client) keepStatusFresh(gen uint64) {
+	ticker := time.NewTicker(c.freshCheckEvery)
+	defer ticker.Stop()
+	for range ticker.C {
+		c.mu.RLock()
+		superseded := c.freshGen != gen
+		quietFor := time.Since(c.lastStatusReport)
+		staleAfter := c.statusStaleTimeout
+		client := c.mqttClient
+		c.mu.RUnlock()
+
+		if superseded {
+			return
+		}
+		if quietFor < staleAfter || client == nil || !client.IsConnected() {
+			continue
+		}
+
+		// Re-baseline before sending so a printer that still doesn't answer
+		// gets one request per timeout window rather than one per tick.
+		c.mu.Lock()
+		c.lastStatusReport = time.Now()
+		c.mu.Unlock()
+
+		log.Printf("bambu %s: no status report for %v, requesting full push", c.cfg.ID, staleAfter)
+		c.requestPushAll(client)
+	}
 }
 
 // silenceWarning waits for the first report after connection. If none
@@ -479,14 +600,39 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		c.mu.Unlock()
 	}
 
-	// System reports can carry other fields (e.g. command ACKs) but light
-	// state is reported via print.lights_report, handled below.
+	// Command replies: hand the firmware's answer to any publishCommand
+	// waiting on it. This must happen before the r.Print == nil early return
+	// below, because system-namespace replies (e.g. ledctrl) carry no print
+	// section at all and would otherwise be dropped on the floor — which is
+	// exactly how a printer visibly rejecting a command ended up looking like
+	// a successful one to the UI.
+	if r.System.isCommandAck() {
+		c.deliverAck("system", r.System.Command, r.System.Result, r.System.Reason, r.System.ErrCode)
+	}
 
 	if r.Print == nil {
 		return // not a print status report
 	}
 
 	p := r.Print
+
+	// A print-namespace reply is an ACK, not telemetry: it echoes the command
+	// back with result/reason and carries none of the status fields. Returning
+	// here also stops its absent fields from being parsed as fresh values —
+	// notably home_flag, which would otherwise read 0 and falsely mark a homed
+	// printer as unhomed on every gcode_line reply.
+	if p.isCommandAck() {
+		c.deliverAck("print", p.Command, p.Result, p.Reason, p.ErrCode)
+		return
+	}
+
+	// Real status: record it for the staleness refresh in keepStatusFresh.
+	// Bare "{}" heartbeats never reach here (no print section), so they don't
+	// count as fresh status.
+	c.mu.Lock()
+	c.lastStatusReport = time.Now()
+	c.mu.Unlock()
+
 	s := c.Status()
 	s.Online = true
 	hadHMSErrors := len(s.HMSErrors) > 0
@@ -857,10 +1003,104 @@ func (c *Client) trackElapsed(newState string) time.Duration {
 
 // --- Commands ---
 
+// commandAckTimeout is how long publishCommand waits for the firmware's reply
+// on the report topic before giving up and treating the command as merely sent.
+// Observed round-trip on real P1S/H2S hardware is well under a second; 5s leaves
+// generous headroom for a congested cloud MQTT link without making the UI hang.
+const commandAckTimeout = 5 * time.Second
+
+// ackNamespaces are the report namespaces whose command replies are matched,
+// in priority order. Kept explicit (rather than "first key found") so an
+// unexpected top-level key can never be mistaken for a command namespace.
+var ackNamespaces = []string{"print", "system", "info", "camera", "pushing", "upgrade"}
+
+// ackKey derives the "<namespace>:<command>" correlation key for an outgoing
+// payload, e.g. `{"print":{"command":"gcode_line",...}}` -> "print:gcode_line".
+// Returns "" when no namespace matches, in which case publishCommand sends
+// without waiting for a reply (same as before ACK correlation existed).
+func ackKey(payload []byte) string {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &m); err != nil {
+		return ""
+	}
+	for _, ns := range ackNamespaces {
+		raw, ok := m[ns]
+		if !ok {
+			continue
+		}
+		var body struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil || body.Command == "" {
+			continue
+		}
+		return ns + ":" + body.Command
+	}
+	return ""
+}
+
+// registerAckWaiter subscribes ch to replies matching key. Callers must pair
+// this with unregisterAckWaiter (deferred) so a command that never gets a
+// reply can't leak a waiter.
+func (c *Client) registerAckWaiter(key string, ch chan commandACK) {
+	c.ackMu.Lock()
+	if c.ackWaiters == nil {
+		c.ackWaiters = make(map[string][]chan commandACK)
+	}
+	c.ackWaiters[key] = append(c.ackWaiters[key], ch)
+	c.ackMu.Unlock()
+}
+
+func (c *Client) unregisterAckWaiter(key string, ch chan commandACK) {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	waiters := c.ackWaiters[key]
+	for i, w := range waiters {
+		if w == ch {
+			c.ackWaiters[key] = append(waiters[:i], waiters[i+1:]...)
+			return
+		}
+	}
+}
+
+// deliverAck hands a firmware reply to any command waiting on the matching
+// key. Called from handleReport, which runs on the MQTT callback goroutine, so
+// it must never block: sends are non-blocking into buffered channels and any
+// waiter that isn't ready is simply left to time out.
+func (c *Client) deliverAck(ns, command, result, reason string, errCode *int) {
+	key := ns + ":" + command
+	c.ackMu.Lock()
+	waiters := c.ackWaiters[key]
+	if len(waiters) == 0 {
+		c.ackMu.Unlock()
+		return
+	}
+	c.ackWaiters[key] = nil
+	c.ackMu.Unlock()
+
+	ack := commandACK{Command: command, Result: result, Reason: reason, ErrCode: errCode}
+	for _, w := range waiters {
+		select {
+		case w <- ack:
+		default:
+		}
+	}
+}
+
 // publishCommand publishes a command JSON payload to the printer's request
-// topic. cmdName is a short, human-readable identifier for the command being
-// sent (e.g. "pause", "set_bed_temp") used only for audit logging — it must
-// never contain the payload or any secrets, just a name.
+// topic and waits for the firmware's reply. cmdName is a short, human-readable
+// identifier for the command being sent (e.g. "pause", "set_bed_temp") used
+// only for audit logging and error text — it must never contain the payload or
+// any secrets, just a name.
+//
+// Bambu has no HTTP status to check, so the only evidence that a command took
+// effect is the reply on the report topic. Publishing to MQTT is fire-and-forget
+// at QoS 0: a successful publish only proves the broker accepted the packet,
+// which is why a command the printer rejects used to look like a success to the
+// caller (and therefore to the UI). A reply with result != "success" is now
+// returned as an error. A missing reply is logged and treated as success, since
+// not every firmware/command combination replies and claiming failure would be
+// a false alarm.
 func (c *Client) publishCommand(ctx context.Context, cmdName string, payload []byte) error {
 	if c.mqttClient == nil || !c.mqttClient.IsConnected() {
 		return fmt.Errorf("bambu %s: not connected to cloud MQTT", c.cfg.ID)
@@ -868,12 +1108,43 @@ func (c *Client) publishCommand(ctx context.Context, cmdName string, payload []b
 
 	log.Printf("bambu %s: sending command %s", c.cfg.ID, cmdName)
 
+	key := ackKey(payload)
+	var ackCh chan commandACK
+	if key != "" {
+		ackCh = make(chan commandACK, 1)
+		c.registerAckWaiter(key, ackCh)
+		defer c.unregisterAckWaiter(key, ackCh)
+	}
+
 	topic := fmt.Sprintf("device/%s/request", c.cfg.Serial)
 	token := c.mqttClient.Publish(topic, 0, false, payload)
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("bambu %s: command publish timeout", c.cfg.ID)
 	}
-	return token.Error()
+	if err := token.Error(); err != nil {
+		return err
+	}
+
+	if ackCh == nil {
+		return nil
+	}
+	timeout := c.ackTimeout
+	if timeout <= 0 {
+		timeout = commandAckTimeout
+	}
+	select {
+	case ack := <-ackCh:
+		if !strings.EqualFold(ack.Result, "success") {
+			log.Printf("bambu %s: command %s rejected: %s", c.cfg.ID, cmdName, ack.Reason)
+			return fmt.Errorf("bambu %s: %w", c.cfg.ID, ack.failed(cmdName))
+		}
+		return nil
+	case <-time.After(timeout):
+		log.Printf("bambu %s: no firmware ack for %s within %v, assuming sent", c.cfg.ID, cmdName, timeout)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Pause pauses the current print job.
