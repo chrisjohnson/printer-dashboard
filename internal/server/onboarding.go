@@ -1291,13 +1291,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (skipBtn) skipBtn.disabled = st !== 'printing';
 
       // 9b. Movement-pad buttons (jog X/Y/Z + Home All) — enabled only when
-      // online and idle, same condition moveSectionHtml() used at initial
-      // render (see its comment: this is a UX mirror of the backend's real
-      // requireIdleAndOnline gate, not the safety-critical layer itself).
-      // Must stay in sync with renderCard()/moveSectionHtml() the same way
-      // pause/resume/cancel/skip already do above — this is exactly the
-      // "K-053-class" drift this file's comments warn about elsewhere.
-      const moveDisabled = !p.online || st !== 'idle';
+      // online and in a movement-safe state, same condition
+      // moveSectionHtml() used at initial render (see its comment: this is a
+      // UX mirror of the backend's real requireMovementSafe gate, not the
+      // safety-critical layer itself). Shares canMove() with
+      // renderCard()/moveSectionHtml() so the two cannot drift — this is
+      // exactly the "K-053-class" drift this file's comments warn about
+      // elsewhere.
+      const moveDisabled = !canMove(p);
       const moveSection = card.querySelector('.move-section');
       if (moveSection) {
         moveSection.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
@@ -1857,17 +1858,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       '</div>';
     }
 
+    // movementSafeStates mirrors the backend's movementSafeStates map in
+    // server.go: the printer states in which a jog or a homing sequence is
+    // physically safe. "complete" is included because a finished print has
+    // already parked the toolhead — it is physically the same situation as
+    // "idle" — and Bambu P1-series delta reports routinely omit gcode_state,
+    // which leaves State latched at "complete" for as long as the printer
+    // sits between prints. Keep the two lists in sync.
+    const MOVEMENT_SAFE_STATES = ['idle', 'complete'];
+
+    // canMove reports whether jog/Home All should be enabled for a printer.
+    // Single source of truth shared by moveSectionHtml() (initial render) and
+    // updateCard() (live updates) so the two can't drift.
+    function canMove(p) {
+      return !!p.online && MOVEMENT_SAFE_STATES.indexOf(p.state || 'unknown') !== -1;
+    }
+
     // Movement pad: step-size selector + X/Y/Z jog buttons + Home All.
-    // Buttons are enabled only when the printer is online and idle (moving
-    // the toolhead mid-print risks crashing it into the print) — mirrors the
-    // st !== 'printing' disabled-ternary convention already used for
-    // pause/resume/cancel/skip above, gated on moveDisabled here instead.
-    // This is a UX nicety only: the backend's requireIdleAndOnline is the
+    // Buttons are enabled only when the printer is online and in a
+    // movement-safe state (moving the toolhead mid-print risks crashing it
+    // into the print) — mirrors the st !== 'printing' disabled-ternary
+    // convention already used for pause/resume/cancel/skip above, gated on
+    // moveDisabled here instead.
+    // This is a UX nicety only: the backend's requireMovementSafe is the
     // real enforcement (see server.go), so the exact disabled condition here
     // doesn't need to be perfectly authoritative — just a reasonable mirror.
     function moveSectionHtml(p) {
-      const st = p.state || 'unknown';
-      const moveDisabled = !p.online || st !== 'idle';
+      const moveDisabled = !canMove(p);
       const dis = moveDisabled ? 'disabled' : '';
       const safeId = escapeJsString(p.id);
       return '<div class="move-section" id="move-section-' + p.id + '">' +
@@ -2067,7 +2084,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // safe/recovery action here, not the risky one (see jog()'s Z-axis
     // confirmation below). Mirrors cmd()'s fetch/error-handling shape; the
     // backend responds 409 if the printer isn't idle/online right now (see
-    // requireIdleAndOnline in server.go), which reads as a plain "Command
+    // requireMovementSafe in server.go), which reads as a plain "Command
     // failed: printer is not idle ..." alert here, same as any other
     // rejected command — the UI doesn't try to distinguish 409 from other
     // failures since the message text already explains it.
