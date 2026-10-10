@@ -102,6 +102,23 @@ type Client struct {
 	// finishes. See handleReport's State block for the full policy.
 	completeIdleStreak int
 
+	// Print-job elapsed tracking, used to fill PrinterStatus.ElapsedTime.
+	// Bambu's report carries mc_remaining_time but no total or elapsed time,
+	// so the dashboard has to measure elapsed itself in order to show a total
+	// print time (elapsed + remaining). printStart is when the current job
+	// was first observed actively printing (zero = no job being tracked);
+	// pausedAt is when the current pause began (zero = not paused); pausedFor
+	// accumulates finished pause intervals so wall-clock spent paused is not
+	// counted as printing. All three reset when a report leaves both the
+	// printing and paused states. Guarded by mu, same as status.
+	printStart time.Time
+	pausedAt   time.Time
+	pausedFor  time.Duration
+
+	// nowFn is the time source for elapsed tracking. Test-only seam so unit
+	// tests can advance a clock deterministically instead of sleeping.
+	nowFn func() time.Time
+
 	// brokerOverride, when non-empty, replaces the derived cloud MQTT broker
 	// address in Connect. Test-only seam so unit tests can point the client
 	// at a local TCP listener instead of Bambu's real cloud broker.
@@ -513,6 +530,16 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		}
 	}
 
+	// ElapsedTime: measured here rather than read off the wire — Bambu reports
+	// mc_remaining_time but neither a total nor an elapsed time, so the UI's
+	// "remaining / total" display has to derive the total from an elapsed
+	// time the dashboard keeps track of itself. Keyed off the raw per-report
+	// newState like CurrentFile above; an absent gcode_state (heartbeat
+	// report) leaves the clock untouched rather than resetting it.
+	if newState != "" {
+		s.ElapsedTime = int(c.trackElapsed(newState).Seconds())
+	}
+
 	// CurrentFile: set from gcode_file (preferred) or subtask_name (P1S
 	// fallback).  Clear when the printer is explicitly idle — the print has
 	// finished.  Only when gcode_state is explicitly provided to avoid
@@ -769,6 +796,63 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	}
 
 	c.setStatus(s)
+}
+
+// now returns the current time from the elapsed-tracking clock, defaulting to
+// the wall clock when no test seam has been installed.
+func (c *Client) now() time.Time {
+	if c.nowFn != nil {
+		return c.nowFn()
+	}
+	return time.Now()
+}
+
+// trackElapsed advances the print-job clock for a report whose mapped state is
+// newState (which must be non-empty — callers skip the call entirely for
+// heartbeat reports that omit gcode_state) and returns how long the job has
+// been actively printing so far, excluding time spent paused.
+//
+// The clock starts the first time a job is seen printing, freezes while the job
+// is paused, and resets entirely once the report leaves both printing and
+// paused, so a completed or failed job reports 0 elapsed rather than a stale
+// figure. Because the start time is only ever observed from a live report, a
+// dashboard that restarts mid-print has no start time and returns 0 until the
+// next job begins — callers treat 0 as "unknown", not "just started".
+func (c *Client) trackElapsed(newState string) time.Duration {
+	now := c.now()
+
+	switch newState {
+	case "printing":
+		if c.printStart.IsZero() {
+			c.printStart = now
+		}
+		// Resuming from a pause: bank the finished pause interval so it stops
+		// counting against printing time.
+		if !c.pausedAt.IsZero() {
+			c.pausedFor += now.Sub(c.pausedAt)
+			c.pausedAt = time.Time{}
+		}
+	case "paused":
+		// Only start a pause interval for a job already being tracked; a
+		// dashboard that joined mid-print while paused has no start time to
+		// measure from.
+		if !c.printStart.IsZero() && c.pausedAt.IsZero() {
+			c.pausedAt = now
+		}
+	default:
+		c.printStart = time.Time{}
+		c.pausedAt = time.Time{}
+		c.pausedFor = 0
+		return 0
+	}
+
+	if c.printStart.IsZero() {
+		return 0
+	}
+	if elapsed := now.Sub(c.printStart) - c.pausedFor; elapsed > 0 {
+		return elapsed
+	}
+	return 0
 }
 
 // --- Commands ---

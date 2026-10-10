@@ -631,7 +631,7 @@ func TestHandleListPrinters(t *testing.T) {
 		// Check required keys exist
 		requiredKeys := []string{
 			"id", "name", "type", "online", "state", "progress",
-			"remaining_time", "current_file", "bed_temp", "bed_target_temp",
+			"remaining_time", "elapsed_time", "current_file", "bed_temp", "bed_target_temp",
 			"nozzle_temp", "nozzle_target_temp", "chamber_temp", "chamber_target_temp",
 			"current_layer", "total_layers",
 		}

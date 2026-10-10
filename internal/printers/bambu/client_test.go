@@ -1575,6 +1575,131 @@ func TestHandleReport_ProgressRounding(t *testing.T) {
 	}
 }
 
+// fakeClock is a manually advanced time source installed via the nowFn seam, so
+// the elapsed-tracking tests below never have to sleep.
+type fakeClock struct{ t time.Time }
+
+func (f *fakeClock) now() time.Time          { return f.t }
+func (f *fakeClock) advance(d time.Duration) { f.t = f.t.Add(d) }
+
+func TestHandleReport_ElapsedTimeAccumulatesWhilePrinting(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	clock := &fakeClock{t: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}
+	c.nowFn = clock.now
+
+	c.handleReport(nil, newMockMessage([]byte(`{
+		"print": {"gcode_state": "RUNNING", "mc_percent": 1, "mc_remaining_time": 120}
+	}`)))
+	if got := c.Status().ElapsedTime; got != 0 {
+		t.Errorf("ElapsedTime at print start = %d; want 0", got)
+	}
+
+	clock.advance(45 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{
+		"print": {"gcode_state": "RUNNING", "mc_percent": 62, "mc_remaining_time": 28}
+	}`)))
+	if got := c.Status().ElapsedTime; got != 2700 {
+		t.Errorf("ElapsedTime after 45m of printing = %d; want 2700", got)
+	}
+}
+
+func TestHandleReport_ElapsedTimeExcludesPausedIntervals(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	clock := &fakeClock{t: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}
+	c.nowFn = clock.now
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	clock.advance(5 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "PAUSE"}}`)))
+
+	// Ten minutes of wall clock pass while paused — none of it may count as
+	// printing time, otherwise the derived total print time is inflated by
+	// however long the user happened to be away.
+	clock.advance(10 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 300 {
+		t.Errorf("ElapsedTime after resume = %d; want 300 (5m printed, 10m paused)", got)
+	}
+
+	clock.advance(7 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 720 {
+		t.Errorf("ElapsedTime 7m after resume = %d; want 720 (12m printed total)", got)
+	}
+}
+
+func TestHandleReport_ElapsedTimeResetsWhenPrintEnds(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	clock := &fakeClock{t: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}
+	c.nowFn = clock.now
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	clock.advance(30 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 1800 {
+		t.Fatalf("ElapsedTime before finishing = %d; want 1800", got)
+	}
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "SUCCESS", "mc_percent": 100}}`)))
+	if got := c.Status().ElapsedTime; got != 0 {
+		t.Errorf("ElapsedTime after SUCCESS = %d; want 0 (a finished job must not report a stale elapsed time)", got)
+	}
+}
+
+func TestHandleReport_ElapsedTimePreservedOnHeartbeatReport(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	clock := &fakeClock{t: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}
+	c.nowFn = clock.now
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	clock.advance(20 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 1200 {
+		t.Fatalf("ElapsedTime after 20m = %d; want 1200", got)
+	}
+
+	// A heartbeat-style report omits gcode_state entirely. Like State and
+	// CurrentFile, ElapsedTime must keep its last value rather than being
+	// reset — the clock is left running, so the next state-bearing report
+	// picks up the full elapsed time from the original start.
+	clock.advance(5 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"mc_percent": 40}}`)))
+	if got := c.Status().ElapsedTime; got != 1200 {
+		t.Errorf("ElapsedTime after a gcode_state-less report = %d; want 1200 (preserved, not reset)", got)
+	}
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 1500 {
+		t.Errorf("ElapsedTime on the next state-bearing report = %d; want 1500 (clock kept running through the heartbeat)", got)
+	}
+}
+
+func TestHandleReport_ElapsedTimeUnknownWhenDashboardJoinsMidPrint(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	clock := &fakeClock{t: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)}
+	c.nowFn = clock.now
+
+	// First report the dashboard ever sees is an already-running job that is
+	// paused: there is no observed start time to measure from, so elapsed must
+	// stay 0 ("unknown") rather than pretend the job just began.
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "PAUSE"}}`)))
+	if got := c.Status().ElapsedTime; got != 0 {
+		t.Errorf("ElapsedTime when first report is PAUSE = %d; want 0", got)
+	}
+
+	clock.advance(5 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 0 {
+		t.Errorf("ElapsedTime on first RUNNING report = %d; want 0 (clock starts here)", got)
+	}
+
+	clock.advance(3 * time.Minute)
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+	if got := c.Status().ElapsedTime; got != 180 {
+		t.Errorf("ElapsedTime 3m after first RUNNING report = %d; want 180", got)
+	}
+}
+
 func TestHandleReport_ParseError(t *testing.T) {
 	c := newTestPrinterClient(nil)
 

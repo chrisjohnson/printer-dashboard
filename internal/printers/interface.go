@@ -18,6 +18,15 @@ type PrinterStatus struct {
 	State             string   `json:"state"` // "idle", "printing", "paused", "error", "complete"
 	Progress          float64  `json:"progress"`
 	RemainingTime     int      `json:"remaining_time"` // seconds
+	// ElapsedTime is how long the current print job has been actively
+	// printing, in seconds, with paused time excluded. It exists so the UI can
+	// show a total print time: neither Bambu's LAN MQTT report nor Moonraker
+	// reports a job's total duration directly, so the dashboard derives it
+	// from elapsed time (see the frontend's timeSummary()). A driver sets it
+	// to 0 when there is no active print or the elapsed time is unknown —
+	// notably a Bambu dashboard restart mid-print, where the start time was
+	// never observed.
+	ElapsedTime int `json:"elapsed_time"`
 	CurrentFile       string   `json:"current_file"`
 	BedTemp           *float64 `json:"bed_temp"`
 	BedTargetTemp     *float64 `json:"bed_target_temp"`

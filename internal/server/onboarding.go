@@ -592,7 +592,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .progress-section { margin: 4px 0; }
     .progress-bar { background: var(--border-subtle); height: 6px; border-radius: var(--radius-pill); overflow: hidden; }
     .progress-bar .fill { background: var(--accent); height: 100%; border-radius: var(--radius-pill); }
-    .progress-text { font-size: 0.8125rem; color: var(--text-muted); display: flex; justify-content: space-between; margin-top: 4px; }
+    .progress-text { font-size: 0.8125rem; color: var(--text-muted); display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
 
     /* Temperature row — compact on mobile, expanded on desktop */
     .temps {
@@ -1148,7 +1148,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
       const progress = (p.progress * 100).toFixed(1);
-      const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
+      const timeStr = timeSummary(p);
 
       // 1. State tag
       const tag = card.querySelector('.tag');
@@ -1677,7 +1677,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
       const progress = (p.progress * 100).toFixed(1);
-      const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
+      const timeStr = timeSummary(p);
 
       // Temperatures — null-safe with '---' fallback
       const bed = p.bed_temp !== null ? p.bed_temp.toFixed(1) : '?';
@@ -1940,6 +1940,34 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
       return h + 'h ' + m + 'm';
+    }
+
+    // Build the time text shown beside the percentage, as "remaining / total".
+    //
+    // No printer reports a total print time, so it is derived from whatever the
+    // driver does report: Bambu sends remaining_time (mc_remaining_time) plus
+    // an elapsed_time the server measures itself, while Snapmaker/Moonraker
+    // sends only elapsed_time (print_duration) alongside progress. Hence:
+    //   remaining + elapsed  ->  total = remaining + elapsed
+    //   elapsed only         ->  total = elapsed / progress, remaining = total - elapsed
+    //   neither              ->  nothing to show
+    // An elapsed_time of 0 always means "unknown" (a driver that never saw the
+    // job start, e.g. right after a dashboard restart mid-print), never "just
+    // started" — so that case degrades to the bare remaining time instead of a
+    // meaningless "1h 20m / 1h 20m".
+    function timeSummary(p) {
+      const remaining = p.remaining_time > 0 ? p.remaining_time : 0;
+      const elapsed = p.elapsed_time > 0 ? p.elapsed_time : 0;
+      if (remaining > 0) {
+        return elapsed > 0
+          ? formatTime(remaining) + ' / ' + formatTime(remaining + elapsed)
+          : formatTime(remaining);
+      }
+      if (elapsed > 0 && p.progress > 0.02) {
+        const total = elapsed / p.progress;
+        return formatTime(total - elapsed) + ' / ' + formatTime(total);
+      }
+      return '';
     }
 
     function escapeHtml(s) {

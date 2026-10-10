@@ -1111,6 +1111,45 @@ func TestHandleQueryReport_PreservesExistingState(t *testing.T) {
 	}
 }
 
+func TestHandleQueryReport_ElapsedTimeFromPrintDuration(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true, State: "printing",
+	})
+
+	report := &moonrakerQueryResponse{}
+	report.Result.Status = &queryStatus{
+		PrintStats:    &printStatsReport{Filename: "model.gcode", PrintDuration: 3721.9, State: "printing"},
+		VirtualSDCard: &virtualSDCardReport{Progress: 0.5},
+	}
+
+	p.handleQueryReport(report)
+	if got := p.Status().ElapsedTime; got != 3721 {
+		t.Errorf("ElapsedTime = %d; want 3721 (Moonraker print_duration, truncated to whole seconds)", got)
+	}
+}
+
+func TestHandleQueryReport_ElapsedTimeClearedWhenNotPrinting(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true, State: "complete", ElapsedTime: 3721,
+	})
+
+	// Moonraker keeps reporting the finished job's print_duration after it
+	// ends; a stale elapsed would show a bogus total print time on an idle
+	// printer, so it must be cleared once the job is over.
+	report := &moonrakerQueryResponse{}
+	report.Result.Status = &queryStatus{
+		PrintStats:    &printStatsReport{Filename: "model.gcode", PrintDuration: 3721.9, State: "complete"},
+		VirtualSDCard: &virtualSDCardReport{Progress: 1.0},
+	}
+
+	p.handleQueryReport(report)
+	if got := p.Status().ElapsedTime; got != 0 {
+		t.Errorf("ElapsedTime while complete = %d; want 0", got)
+	}
+}
+
 func TestHandleQueryReport_NilReport(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 	p.setStatus(printers.PrinterStatus{ID: "test", Name: "Test", Online: true, State: "idle"})
