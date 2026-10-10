@@ -1,8 +1,12 @@
 # H2S "MQTT Command verification failed" — investigation snapshot
 
-Status: **root cause identified, not fixable in this app.** Written as a
-hand-off snapshot so a fresh session does not re-derive it. Every claim below
-was measured on the live fleet, not inferred.
+Status: **superseded — see `h2s-mqtt-signing-path.md`.** The diagnosis below
+(firmware cryptographically verifies `print` commands) is correct and was
+measured, but the conclusion that this needs Developer Mode is wrong: signed
+commands work without it. Kept for the measurement record and the refuted
+hypotheses, which still stand. Written as a hand-off snapshot so a fresh session
+does not re-derive it. Every claim below was measured on the live fleet, not
+inferred.
 
 Fleet at time of writing: P1S-001 `01P09C4B1600631` @ 192.168.1.15 (access code
 `64894711`), H2S-001 `0938AC580200372` @ 192.168.1.17 (access code `d5a78d50`),
