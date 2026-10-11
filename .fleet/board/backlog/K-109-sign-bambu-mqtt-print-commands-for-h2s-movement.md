@@ -23,35 +23,29 @@ signature, cert not in trust store"), so the mechanism is confirmed and
 
 ## Blocked on
 
-Waiting on the user to copy `slicer_cert.pem` / `slicer_key.pem` /
-`slicer_crl.pem` out of a machine that has run Bambu Studio (data dir is
-`~/.config/BambuStudio/`, `~/Library/Application Support/BambuStudio/`, or
-`%AppData%\BambuStudio\`). Until those land, nothing further can be verified.
+**No longer blocked.** A working recipe was verified on the live H2S on
+2026-10-10 and is recorded at the top of `.fleet/research-notes.md`
+("K-109 — WORKING RECIPE"). `G28` home-all returned `err_code:0`.
+
+The critical detail: **`payload_len` must be a JSON string, not a number.**
+Numeric gives `84033547`, which is indistinguishable from a certificate
+failure and cost hours.
+
+No slicer PEMs from Bambu Studio are needed, and no memory dump: the publicly
+extracted Bambu Connect cert/key pair works, installed into the printer's
+trust store via `app_cert_install` alongside a self-minted CRL.
 
 ## Work
 
-1. Config: a credentials directory holding `slicer_{cert,key,crl}.pem`.
-2. On printer connect, publish `security.app_cert_install` (fields
-   `command` / `sequence_id` / `app_cert` = 3 PEMs / `crl` = 1 CRL) and
-   confirm with `security.app_cert_list`. **The printer's trust store is in
-   RAM and a reboot clears it**, so this must be re-run per session and after
-   any printer restart.
-3. Try it over the **existing cloud connection first**. Bambu's cloud is a
-   plain forwarder (same topics, same JSON), so this may need no LAN support
-   at all. Fall back to LAN (`bblp` + access code, command topic
-   `device/{serial}/request`, plaintext) only if cloud fails.
-4. In `publishCommand`, when a cert is loaded, wrap `print`-namespace
-   payloads in the `header` envelope documented in K-108:
-   - sign the byte-exact `JSON.stringify` of `{<ns>:{...}, user_id:"<uid>"}`
-     — `user_id` is a top-level sibling and is covered by the signature
-   - `cert_id` = 32-hex cert fingerprint + issuer CN
-   - `payload_len` = UTF-8 byte length of the signed object
-   - `sequence_id` must be a **string >= 2000** (fixed floor; below that you
-     get `84033545` even with a trusted cert)
-5. Leave `system` and `pushing` unsigned — they are not verified.
-6. Surface the error family distinctly in the UI: `84033543` → "command not
-   signed", `84033545` → "printer does not trust our certificate (re-install
-   or refresh credentials)".
+1. Vendor the Bambu Connect cert + key (public since Jan 2025) and load them
+   from config rather than hardcoding.
+2. On printer connect, `app_cert_install` the leaf + a CRL with issuer CN
+   `GLOF3813734089.bambulab.com`; re-run after printer reboots (RAM-only).
+3. Sign `print`-namespace frames in `publishCommand` per the recipe, with
+   `payload_len` as a **string** and `sequence_id` a string >= 2000.
+4. Leave `system` and `pushing` unsigned.
+5. Map `84033543` → not signed, `84033545` → cert not installed,
+   `84033546` → malformed header, `84033547` → signature/`payload_len` wrong.
 
 ## Verification
 

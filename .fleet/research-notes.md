@@ -273,6 +273,53 @@ FilamentSlot { Index, Type, Color, Name, RemainingMM, RemainingG, MinTemp, MaxTe
 - Snapmaker U1 filament feed source: `filament_feed.py` in Snapmaker Klipper fork
 - Related backlog cards: K-032 (filament loaded), K-033 (AMS status), K-034 (AMS humidity), K-005 (P1S cloud MQTT field audit)
 
+## K-109 — WORKING RECIPE (verified on live H2S 2026-10-10)
+
+`print`-namespace commands now execute on the H2S with **no Developer Mode and
+no memory dump**. `G28` (home all) returned `result:"success", err_code:0`.
+
+The blocker was a single field: **`payload_len` must be a JSON string, not a
+number.** A numeric `payload_len` yields `84033547` and looks exactly like a
+certificate problem; a string one is accepted. Bambu stringifies these fields
+(`sequence_id` likewise).
+
+Full procedure, all steps measured:
+
+1. Take the publicly extracted Bambu Connect cert + key (the pair bundled in
+   `schwarztim/bambu-mcp`, `src/types.ts` `getAppCert()`). Serial
+   `ee3cac0712ceeacda8b7fbc42e74ba2c`, expired 2025-12-12 — **expiry is not
+   enforced by the printer**.
+2. Mint any CRL whose issuer CN is `GLOF3813734089.bambulab.com`. The printer
+   does **not** validate the CRL signature; it only requires the field to be
+   non-empty (empty gives `FAILURE / "crl value is null"`).
+3. Over LAN MQTT, publish
+   `{"security":{"sequence_id":"26821","command":"app_cert_install","app_cert":"<leaf PEM>","crl":"<CRL PEM>"}}`
+   → `SUCCESS`. Re-run after every printer reboot (RAM-only store).
+4. Sign and send:
+
+```js
+const payload = { print: { sequence_id: "5100", command: "gcode_line", param: "G28\n" },
+                  user_id: "1578637590" };
+const str = JSON.stringify(payload);
+crypto.sign("RSA-SHA256", Buffer.from(str), key).toString("base64");
+// publish { ...payload, header: { sign_ver:"v1.0", sign_alg:"RSA_SHA256",
+//   sign_string: sig, cert_id: "<serial-hex>CN=GLOF3813734089.bambulab.com",
+//   payload_len: String(Buffer.byteLength(str,"utf8")) } }   // <-- STRING
+```
+
+Confirmed accepted: `M105`, `G28`. Confirmed rejected before install: same
+frames → `84033545`.
+
+Notes:
+- Header position in the JSON does not matter (header-first also gave `547`
+  while the only difference in the passing case was the string `payload_len`).
+- Signing scope variants (user_id sibling / absent / inside `print`) all gave
+  `547` while `payload_len` was numeric, so scope was never the problem.
+- `home_flag` did not flip within 10 s of `G28` being accepted; H2S homing is
+  slower than that and the printer was in `state:"error"` from an earlier HMS.
+  Command **acceptance** is what was being proven.
+- Whether the cloud transport accepts these frames untested; LAN works.
+
 ## K-108 — Bambu MQTT command verification and the signing path (H2S movement)
 
 Measured on the live fleet 2026-10-10 against H2S-001 `0938AC580200372`
