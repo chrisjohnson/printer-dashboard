@@ -118,9 +118,15 @@ var testPrinterClientConfig = config.PrinterDef{
 
 // newTestPrinterClient creates a Client with a known config and optional MQTT mock.
 // Pass nil for mc when the mock is not needed.
+//
+// ackTimeout is shortened from the production default so tests that publish a
+// command without ever feeding a firmware reply (the majority of them) don't
+// each pay the real 5s wait. Tests that specifically exercise the ack path set
+// c.ackTimeout themselves.
 func newTestPrinterClient(mc mqtt.Client) *Client {
 	c := New(testPrinterClientConfig, nil)
 	c.mqttClient = mc
+	c.ackTimeout = 20 * time.Millisecond
 	return c
 }
 
