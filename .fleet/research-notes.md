@@ -373,6 +373,91 @@ Traps, each of which reproduces a "verify failed":
 | `84033545` | "need reset device pub key" — **valid signature, cert not in trust store**; also returned for a valid cert with `sequence_id < 2000` |
 | range | `84033543`–`84033548` all belong to this verification family |
 
+**The family is an ordered ladder, measured on the H2S 2026-10-10:**
+
+| stage | err | how reproduced |
+|---|---|---|
+| no signature | `…543` | plain unsigned `gcode_line` |
+| cert not in trust store | `…545` | signed with an uninstalled cert |
+| header field missing | `…546` | signed frame omitting `payload_len` |
+| signature/chain rejected | `…547` | signed with an **installed but unchained** cert |
+
+`…547` did **not** change across three payload shapes (user_id as sibling /
+absent / inside `print`), so it is not a byte-layout problem — see "own-CA
+test" below.
+
+### cert_id is the certificate SERIAL, not a hash
+
+`cert_id` = **lowercase hex of the X.509 serial number** + `"CN="` + issuer CN.
+Verified: a generated leaf with serial `62F773A6607F1D9B298D08E79F3FF8F6A21EB05C`
+appeared in `app_cert_list` as
+`62f773a6607f1d9b298d08e79f3ff8f6a21eb05cCN=GLOF3813734089.bambulab.com`.
+Bambu's own trusted IDs are 32 hex because their serials are 16 bytes; a
+20-byte random serial gives 40 hex. **All earlier MD5/SHA fingerprint theories
+are wrong** — do not compute hashes for this.
+
+### Own-CA test: install works, verify still fails (chain of trust is enforced)
+
+Generated a local CA (`CN=GLOF3813734089.bambulab.com`) + leaf
+(`CN=GLOF3813734089-0a1b2c3d0000`) + empty CRL with `cryptography`, then over
+LAN on the H2S:
+
+1. `security.app_cert_install` with `app_cert` = leaf+CA PEMs and `crl` = PEM →
+   **`SUCCESS`**. The install command itself needs **no signature**.
+2. `app_cert_list` then returned our cert alongside the two Bambu ones — so
+   install accepts arbitrary certs and does **not** chain-validate.
+3. Signing `print.gcode_line` with our key and the correct `cert_id` →
+   **`84033547`**, i.e. it got to signature/chain verification and failed.
+
+**Conclusion: the printer will not accept a self-signed leaf.** Install is
+permissive; verify requires the leaf to chain to Bambu's CA hierarchy
+(`leaf → GLOF3813734089.bambulab.com → application_root.bambulab.com → BBL CA`).
+So a usable signing key still has to be one of Bambu's real app certs — the
+own-key shortcut does not work.
+
+### Shipped Bambu Studio files are NOT the signing key
+
+From `BambuStudio.app/Contents/Resources/cert/` (macOS):
+
+- `printer.cer` — 5-PEM CA bundle: `BBL CA` (self-signed, to 2032-04),
+  `BBL CA2 RSA`, `BBL CA2 ECC` (self-signed, to 2050) plus CA2 issued by BBL CA.
+  This is the trust root hierarchy, public, no private key.
+- `slicer_base64.cer` — 2 PEMs: `CN=*.bambulab.com` issued by RapidSSL/DigiCert
+  (**expired 2022-07-13**) + `DigiCert Global Root CA`. This is the **cloud TLS
+  pin**, not the app cert.
+
+Neither matches the printer's trusted serials. No private key anywhere in
+`~/Library/Application Support/BambuStudio` either.
+
+### Static extraction from the plugin binary does not work
+
+Plugin fetched from the documented resource endpoint (no auth needed):
+
+```
+GET https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.06.00.00
+ -> software 02.08.02.61, plugin https://public-cdn.bblmw.com/upgrade/studio/plugins/02.06.00.76/f01688f29f/win_02.06.00.76.zip
+```
+
+The zip contains only 7 DLLs (`bambu_networking.dll` 23 MB, `BambuSource.dll`,
+live555, agora*). **No cert/key files.** And the binaries are string-obfuscated:
+`grep -a` finds zero hits for `mqtt`, `json`, `GLOF`, `iot-service`,
+`app_cert_install`, `aes256`, `cert_id` — even control strings barely appear
+(34% printable). So `client_auth_secret` cannot be grepped out of the shipped
+binary; the documented route is a **runtime memory dump**
+(`tools/extract_key_from_dump.py`, method in `research/10.07-bearssl-crypto-island.md`).
+
+### Remaining routes to a usable key (unchanged, both need more work)
+
+1. Runtime memory dump of a live Bambu Studio/plugin process → recover the
+   obfuscated 704-byte `SKEY` blob → decrypt with the custom-S-box AES-256-CTR
+   (fixed key `00..1f`, counter from 2). Decoder verified working locally:
+   `fetch_slicer_credentials.py --self-test` passes all 10 checks including a
+   known-answer test.
+2. `client_auth_secret` + `server_wrap_key` from that same dump, then the cloud
+   cert endpoint returns the current leaf + CRL + encrypted key.
+
+### Error codes
+
 ### Printer trust store
 
 - `security.app_cert_list` with
