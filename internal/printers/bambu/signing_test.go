@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,7 +18,7 @@ import (
 
 func testSigner(t *testing.T) *commandSigner {
 	t.Helper()
-	s, err := newCommandSigner("1578637590", "", "")
+	s, err := newCommandSigner("1578637590", t.TempDir())
 	if err != nil {
 		t.Fatalf("newCommandSigner: %v", err)
 	}
@@ -255,5 +257,86 @@ func TestRejectedCodeExtraction(t *testing.T) {
 	}
 	if got := rejectedCode(nil); got != 0 {
 		t.Errorf("rejectedCode(nil) = %d, want 0", got)
+	}
+}
+
+// The credentials are cached into the data directory (bind-mounted in
+// deployment) so an operator can inspect or replace them without rebuilding.
+func TestSignerSeedsCertFiles(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := newCommandSigner("1578637590", dir); err != nil {
+		t.Fatalf("newCommandSigner: %v", err)
+	}
+	for name, want := range map[string]string{
+		appCertFileName: embeddedAppCertPEM,
+		appKeyFileName:  embeddedAppKeyPEM,
+		appCRLFileName:  embeddedAppCRLPEM,
+	} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s not cached: %v", name, err)
+		}
+		if string(b) != want {
+			t.Errorf("%s content does not match the embedded copy", name)
+		}
+	}
+	// The private key lands here, so it must not be world-readable.
+	fi, err := os.Stat(filepath.Join(dir, appKeyFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm()&0o077 != 0 {
+		t.Errorf("%s mode = %v, want no group/other bits", appKeyFileName, fi.Mode().Perm())
+	}
+}
+
+// Whatever is on disk wins, which is what makes rotation possible without a
+// rebuild. Writing a non-key where the key belongs proves the file is read.
+func TestSignerPrefersDiskOverEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, appKeyFileName), []byte("not a key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newCommandSigner("1578637590", dir); err == nil {
+		t.Fatal("expected the on-disk (invalid) key to be used instead of the embedded one")
+	}
+}
+
+// A data directory that cannot be written must degrade to the embedded
+// credentials rather than disabling command signing.
+func TestSignerFallsBackWhenCacheUnwritable(t *testing.T) {
+	blocker := filepath.Join(t.TempDir(), "regular-file")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// MkdirAll through a regular file fails for any uid.
+	s, err := newCommandSigner("1578637590", filepath.Join(blocker, "sub"))
+	if err != nil {
+		t.Fatalf("unwritable cache dir must not be fatal, got: %v", err)
+	}
+	if s.certID == "" {
+		t.Error("signer did not fall back to the embedded credentials")
+	}
+	if !strings.Contains(s.cert, "BEGIN CERTIFICATE") {
+		t.Error("embedded cert not used in fallback")
+	}
+}
+
+// A second call must reuse the cached files rather than overwrite them.
+func TestSignerDoesNotOverwriteExistingCache(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := newCommandSigner("1578637590", dir); err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte("operator-supplied\n")
+	if err := os.WriteFile(filepath.Join(dir, appCRLFileName), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newCommandSigner("1578637590", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.crl != string(marker) {
+		t.Errorf("cached CRL was overwritten: %q", s.crl)
 	}
 }

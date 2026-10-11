@@ -1206,7 +1206,7 @@ func (c *Client) ensureSigner() *commandSigner {
 	if uid == "" {
 		return nil
 	}
-	s, err := newCommandSigner(uid, "", "")
+	s, err := newCommandSigner(uid, "")
 	if err != nil {
 		log.Printf("bambu %s: command signing unavailable: %v", c.cfg.ID, err)
 		return nil
@@ -1238,7 +1238,13 @@ func (c *Client) installAppCert(client mqtt.Client) {
 		log.Printf("bambu %s: app_cert_install publish failed: %v", c.cfg.ID, err)
 		return
 	}
-	log.Printf("bambu %s: installed app certificate for command signing (cert_id=%s)", c.cfg.ID, s.certID)
+	// Deliberately "sent", not "installed". The ack for app_cert_install lives
+	// in the `security` namespace, which is not in ackNamespaces and has no
+	// parser section, so nothing here can observe whether the printer accepted
+	// it. Confirmed on the live fleet: the H2S answers app_cert_list and shows
+	// the cert, the P1S does not answer that command at all. A printer that
+	// silently ignored the install would still reach this line.
+	log.Printf("bambu %s: sent app_cert_install for command signing (cert_id=%s)", c.cfg.ID, s.certID)
 }
 
 // publishRaw publishes an already-final payload and waits for the firmware ack.
