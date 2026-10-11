@@ -25,7 +25,9 @@ physical interaction with the printer.
 **Test:** read `dev_access_code` from the device list and use it as the password for a LAN MQTT
 connect and an RTSPS `DESCRIBE`. Success on both proves equivalence.
 
-### RTSPS `DESCRIBE` returns a redirect loop
+### RTSPS probing: the 301 and the 404 cannot both be observed
+
+Direct probing of an H2-class unit with liveview enabled showed every path redirected:
 
 Direct probing of an H2-class unit with the liveview toggle enabled showed:
 
@@ -40,21 +42,17 @@ Port 443 is closed, so the redirect target cannot be followed as written. A work
 reproduced by hand during these checks, even though the documented URL form works when used by an
 established RTSP client.
 
-**Why it matters:** anyone writing their own RTSP client will hit this and may conclude the camera is
-broken.
+Separately, `/streaming/live/2` is recorded as returning **404 against a live unit**. A server that
+answers every request with the same redirect makes a 404 unobservable, so at most one of these was
+obtained through the same code path. The likely reading is that the 404 came from a proper RTSP client
+and the 301 from a hand-rolled probe the server rejected before evaluating the path.
 
-**Test:** run `ffprobe -rtsp_transport tcp 'rtsps://bblp:<code>@<ip>:322/streaming/live/1'` and capture
-the request sequence a working client uses. Neither `ffmpeg` nor `ffprobe` was available in the
-environment where these notes were taken.
+Neither observation is currently reproducible here: no RTSP client is available in this environment, and
+the raw probe output was never recorded.
 
-### Does a second camera stream exist?
-
-Some code comments describe a toolhead camera at `/streaming/live/2`, while field reports say it
-returns 404. Both could not be reconciled by probing, because the server answers every `DESCRIBE` with
-the same `301` regardless of path, which gives no signal about path validity.
-
-**Test:** once an RTSP client that completes the handshake is available, request `/streaming/live/2`
-and record the status code.
+**Test:** capture the full exchange of a working RTSP client (`openssl s_client -connect <ip>:322`, or a
+packet capture), then re-probe `/streaming/live/2` through that same client. Neither `ffmpeg` nor
+`ffprobe` was available where these notes were taken.
 
 ### Does the H2 class report homing state through `home_flag` bit 0?
 
@@ -109,9 +107,12 @@ Only the command name and an approximate 65 °C ceiling are recorded. The payloa
 
 ### Port 6000 concurrent connection limit
 
-A limit is asserted in planning material but has never been measured.
+A limit was asserted in planning material and long treated as unverified. A live probe later observed
+the port refusing a second client while one was streaming, which is consistent with a limit of one.
+The exact limit is still unmeasured.
 
-**Test:** open N simultaneous TLS connections to port 6000 and find where it fails.
+**Test:** with no other client attached, open N simultaneous TLS connections to port 6000 and find where
+it fails.
 
 ### Local MQTT behavior with Developer Mode enabled
 
@@ -143,7 +144,8 @@ version string should not be quoted as the cutoff.
 
 ### What is the TLS listener on port 8883?
 
-Measured: the U1 accepts a TLS connection on port 8883 and terminates the handshake with
+Observed during a live probe (the probe output itself was not recorded as a repo artifact): the U1
+accepts a TLS connection on port 8883 and terminates the handshake with
 `TLSV13_ALERT_CERTIFICATE_REQUIRED`, meaning it demands a **client certificate**. It is not the
 Moonraker API, and no client certificate is known to be available for it.
 
@@ -184,9 +186,11 @@ object-query path can also return it has not been audited.
 These were measured on one network and one firmware configuration. They are recorded because they are
 useful, not because they are universal.
 
-- A P1-class unit with no local features enabled exposed **only port 8883**; its camera port was
-  closed. It has not been confirmed that enabling the liveview toggle opens the camera port on this
-  class, as opposed to only on H2-class machines.
+- A P1-class unit with no local features enabled was recorded as exposing **only port 8883**. Read this
+  record with care: an earlier transcription of the same observation carried the qualifier that port
+  6000 was *held by another client's camera connection* at the time, and that qualifier was lost when
+  the note was copied. So this is not a clean scan of an unoccupied port, and it tells us nothing about
+  whether the liveview toggle gates 6000 on this class.
 - On that same unit, local MQTT on 8883 answered every `CONNECT` with return code `2` (identifier
   rejected) regardless of client ID, username, or password — including with a correct access code. This
   is consistent with Developer Mode being off, but the specific rejection reason was not determined.

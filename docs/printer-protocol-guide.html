@@ -507,7 +507,7 @@ family an endpoint belongs to matters.</p>
 <div class="tw"><table>
 <tr><th>Method</th><th>Path</th><th>Family</th><th>Purpose</th></tr>
 <tr><td><code>GET</code></td><td><code>/api/printer</code></td><td>OctoPrint-style</td><td>temperatures + state</td></tr>
-<tr><td><code>POST</code></td><td><code>/api/print/{pause,resume,cancel}</code></td><td>OctoPrint-style</td><td>job control</td></tr>
+<tr><td><code>POST</code></td><td><code>/api/print/{pause,resume,cancel}</code></td><td><b>Paxx-specific shim</b></td><td>job control. Not stock Moonraker — OctoPrint's job API is <code>/api/job</code></td></tr>
 <tr><td><code>POST</code></td><td><code>/api/printer/command</code></td><td>OctoPrint-style</td><td>command passthrough</td></tr>
 <tr><td><code>GET</code></td><td><code>/printer/objects/query?print_stats&amp;virtual_sdcard&amp;gcode_move</code></td><td><b>Moonraker</b></td><td>file, layers, progress, position</td></tr>
 <tr><td><code>POST</code></td><td><code>/printer/gcode/script</code></td><td><b>Moonraker</b></td><td><code>{"script":"G28"}</code></td></tr>
@@ -583,9 +583,9 @@ No retries on failure.</p>
 else is tracked separately, with the experiment that would settle it.</p>
 <div class="note"><span class="t">See</span>
 <a href="printer-protocol-unverified.md"><code>printer-protocol-unverified.md</code></a> — including
-exactly what remains unknown about the single-session camera port, the fact that <b>Developer Mode itself
-has never been measured in the on state</b>, the RTSPS redirect behavior, and several signing details
-that rest on a single unattributed report.</div>
+exactly what remains unknown about the single-session camera port, the fact that <b>Developer Mode
+itself has never been measured in the on state</b>, the RTSPS redirect behavior that cannot be
+reproduced here, and the contested meaning of <code>err_code 84033544</code>.</div>
 <div class="bad"><span class="t">Treat "impossible" with suspicion</span>
 Several conclusions in this area were established confidently and later overturned — that acknowledgements
 were impossible on cloud MQTT, and that the signature-gate HMS had no app-side fix. Both were wrong. A
@@ -619,7 +619,7 @@ $$('#msel .selbtn').forEach(function(b){b.onclick=function(){
 function buildBytes(code){
   var g=$('#bytegrid'); if(!g) return; g.innerHTML='';
   var b=new Array(80).fill(0);
-  b[0]=0x40; b[4]=0x30;
+  b[0]=0x40; b[5]=0x30;
   'bblp'.split('').forEach(function(c,i){b[16+i]=c.charCodeAt(0)});
   for(var i=0;i<Math.min(code.length,32);i++) b[48+i]=code.charCodeAt(i);
   for(var i=0;i<80;i++){
@@ -648,12 +648,12 @@ function hms(){
   var mods={5:'mainboard',12:'xcam',7:'ams',8:'toolhead',3:'mc'};
   var sev={1:'fatal',2:'serious',3:'common',4:'info'};
   var hx=function(n){return ('000'+n.toString(16).toUpperCase()).slice(-4)};
-  var code='HMS_'+hx(a>>16)+'-'+hx(a&0xFFFF)+'-'+hx(c>>16)+'-'+hx(c&0xFFFF);
-  var mod=mods[(a>>>24)&0xFF]||'unknown', s=sev[c>>16]||'unknown';
+  var code='HMS_'+hx((a>>>16)&0xFFFF)+'-'+hx(a&0xFFFF)+'-'+hx((c>>>16)&0xFFFF)+'-'+hx(c&0xFFFF);
+  var mod=mods[(a>>>24)&0xFF]||'unknown', s=sev[(c>>>16)&0xFFFF]||'unknown';
   var trips=(s==='fatal'||s==='serious');
   $('#hmsOut').innerHTML='<span class="lb">human code</span>\n<span class="hi">'+code+'</span>\n\n'+
     '<span class="lb">module</span> '+((a>>>24)&0xFF)+' → '+mod+'\n'+
-    '<span class="lb">severity</span> '+(c>>16)+' → <span class="'+(trips?'er':'hi')+'">'+s+'</span>'+
+    '<span class="lb">severity</span> '+((c>>>16)&0xFFFF)+' → <span class="'+(trips?'er':'hi')+'">'+s+'</span>'+
     (trips?' → trips error state independently':'')+
     '\n\n<span class="lb">message-table key</span> '+
     (('0000'+((a>>16)&0xFFFF).toString(16)).slice(-4))+(('0000'+(a&0xFFFF).toString(16)).slice(-4))+
@@ -730,7 +730,7 @@ var SYMS=[
  ['bambu','AMS shows all trays empty although loaded',
   'Some units report state 0 for loaded trays. Derive loaded from state ∈ {2,3,10,11} OR a non-empty tray_type.','A, B, C'],
  ['snapmaker','Pause returns HTTP 200 but nothing happened',
-  'Moonraker can return 200 with an embedded {"error":…} body. Check the response body, not the status code.','U1'],
+  'Moonraker <b>can</b> return 200 with an embedded error body. Confirmed on the G-code path; the job-control paths are unaudited, so check every response body rather than the status code.','U1'],
  ['snapmaker','WebSocket connects but delivers nothing',
   'Moonraker requires a printer.objects.subscribe JSON-RPC handshake before it emits anything.','U1'],
  ['snapmaker','Progress, layers or Z stop updating',

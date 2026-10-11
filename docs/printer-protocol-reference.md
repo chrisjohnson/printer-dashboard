@@ -54,10 +54,11 @@ before debugging anything else.
 > cloud detaches, local broker opens — as the reliable part and the exact menu wording as
 > firmware-specific.
 
-> **Measured confirmation of the difference.** On a fleet configured for Path A/B, the local MQTT port
-> is *open* on both printers but refuses third-party clients, while the camera port is open only on the
-> unit with liveview enabled. An open port is not evidence that Developer Mode is on; authentication
-> behavior is.
+> **An open port is not evidence that local mode is on.** On a fleet configured for Path A/B the local
+> MQTT port is open on every unit but refuses third-party clients; authentication behavior, not port
+> reachability, is the signal. Note that camera-port differences across a mixed fleet may track
+> **model class** rather than the liveview toggle, and the two cannot be separated from a fleet that
+> differs in both respects.
 
 ### 1.2 Firmware date determines command signing (independent of path)
 
@@ -98,9 +99,14 @@ third-party clients are accepted — authentication behavior is the real signal.
 **Port 6000 is single-session, so a scan cannot tell you whether it is available.** The camera service
 accepts at most one client. While a session is live, additional connection attempts are **silently
 dropped — no SYN-ACK and no RST** — which scanners and `connect()` probes report as "closed",
-indistinguishable from a disabled listener. Measured on a P1-class unit with all LAN toggles off: an
+indistinguishable from a disabled listener. Observed on a P1-class unit with all LAN toggles off: an
 established session streaming ~58 KB/s (~1 FPS) while fresh SYNs to 6000 timed out, while 80/322/3000
-returned RST and 8883 completed. An **idle** Bambu camera port does answer SYNs.
+returned RST and 8883 completed. An idle H2-class camera port was seen answering SYNs in the same
+sitting, but **no scan of an unoccupied P1-class port 6000 has ever been recorded**, so the state of
+that port when nothing is connected remains unestablished.
+
+This is a live-probe observation rather than a recorded artifact; the side-asks file lists what it does
+and does not establish.
 
 Therefore "6000 is closed" is **not** evidence the camera is unavailable, and "6000 is open" is not
 evidence it is free. Confirm by completing the TLS handshake, sending the auth packet and reading a
@@ -187,7 +193,7 @@ accept signed commands. See [§5.3](#53-the-printer-trust-store).
 |---|---|
 | Transport | MQTT over TLS, port 8883 |
 | TLS verification | frequently disabled in clients, on the grounds that the cloud certificate is not reliably present in minimal trust stores. This is a widely repeated rationale rather than a measured requirement. |
-| Protocol level | MQTT 3.1.1. MQTT 5 is refused. |
+| Protocol level | MQTT 3.1.1. MQTT 5 was observed refused (return code 1) on one model; do not assume this holds fleet-wide. |
 | Client ID | any unique string; a new one per process start |
 | Clean session | `true` — no retained state across restarts |
 | Keepalive | 30 s |
@@ -358,7 +364,7 @@ forever. Decay such state after a small number of consecutive healthy reports th
 | `layer_num` / `total_layer_num` | int | |
 | `home_flag` | int | bitmask; bit 0 = axes homed |
 | `print_error` | int | see §4.5 |
-| `hms` | array | absent ≠ empty — see §7 |
+| `hms` | array | absent ≠ empty — see §6 |
 | `lights_report` | array | `{node:"chamber_light",mode:"on"}` — the live light state |
 | `ams` | object | see §8 |
 | `camera.ipcam_url` | string | if present it should be preferred over any constructed camera URL. Whether real firmware populates it is unconfirmed. |
@@ -427,8 +433,9 @@ unsigned command is rejected with `err_code 84033543`.
 | Predates the gate | accepts unsigned |
 | After the gate | requires a signed envelope |
 
-`system` and `pushing` are never verified. Developer Mode does not remove the requirement; it only
-makes the envelope optional.
+`system` and `pushing` are never verified. Developer Mode does not remove the requirement in practice:
+the envelope is *reported* to become optional in that mode, but this has never been confirmed here, and
+signed commands work in every mode. Sign unconditionally.
 
 ### 5.2 The envelope
 
@@ -587,10 +594,16 @@ rtsps://bblp:<access_code>@<printer_ip>:322/streaming/live/1
 - The stream is H.264 over TLS, which browsers cannot display directly. Transcoding to MJPEG or HLS
   is required for a web UI.
 - The certificate is self-signed; verification must be disabled.
-- A second toolhead camera path (`/streaming/live/2`) has been reported as absent on real hardware.
-  Verify with an RTSP client before assuming any stream beyond `/live/1` exists.
+- A second toolhead camera path (`/streaming/live/2`) returns 404 on real hardware, confirmed against a
+  live unit rather than merely reported. Assume only `/live/1` exists and verify anything else with an
+  RTSP client.
 
-### 7.2 `bambus://` binary protocol on port 6000 — P1/A1-class
+### 7.2 `bambus://` binary protocol on port 6000
+
+Selected by model class. It is the protocol used for P1-class machines; the A1 class is **inferred** from
+the client's default branch rather than observed on hardware. Note that the cipher constraint below is
+documented in client code against **H2/O1-class** units on this same port, so 6000 is not exclusive to
+P1-class.
 
 Not HTTP. A raw TLS socket with custom binary framing, yielding roughly one frame per second.
 
@@ -713,7 +726,7 @@ the socket handshake is the first thing to fail.
 | Method | Path | Family | Purpose |
 |---|---|---|---|
 | `GET` | `/api/printer` | OctoPrint-style | temperatures + state (primary telemetry) |
-| `POST` | `/api/print/{pause,resume,cancel}` | OctoPrint-style | job control |
+| `POST` | `/api/print/{pause,resume,cancel}` | **Paxx-specific shim** | job control. Not stock Moonraker; OctoPrint's job API is `/api/job` |
 | `POST` | `/api/printer/command` | OctoPrint-style | command passthrough |
 | `GET` | `/printer/objects/query?print_stats&virtual_sdcard&gcode_move` | **Moonraker** | file, layers, progress, position |
 | `POST` | `/printer/gcode/script` | **Moonraker** | `{"script":"G28"}` — all motion control |
@@ -806,15 +819,18 @@ Remaining filament length and weight are not reported.
 | Command signing | not required | **required for `print`** | n/a |
 | Job pause / resume / stop | yes | yes, signed | yes |
 | Skip object | `project_file` param | signed | not supported |
-| Bed / nozzle target | yes | signed | yes |
+| Bed / nozzle target | yes | signed | not implemented in the driver; raw G-code only |
 | Chamber target | only on heated-chamber models | signed, same restriction | no chamber heater |
-| Chamber light | yes (`system`, unverified) | yes, unsigned | yes, but state unreadable |
+| Chamber light | yes (`system`) | yes, unsigned | yes, but state unreadable |
 | Jog / home | yes | signed | yes, long timeout |
-| Homing state | `home_flag` bit 0 | `home_flag` bit 0 | inferred only |
+| Homing state | `home_flag` bit 0 | `home_flag` bit 0; not observed to flip on H2-class after `G28` | inferred only |
 | Independent error channel | HMS | HMS | Moonraker error state |
-| Camera | `bambus://` :6000 | RTSPS :322 | MJPEG :80 |
-| Camera needs LAN enabled | yes | yes | no |
-| Cloud control | yes (unless Developer Mode) | yes (unless Developer Mode) | no cloud |
+| Cloud control | yes (unless local mode is enabled) | yes (unless local mode is enabled) | no cloud |
+
+**Camera protocol is not a row in this table.** It is chosen by **model class**, entirely independently of
+the signing gate — see §11. Treating "post-gate firmware" as implying RTSPS is a known, already-fixed
+misclassification. Whether the liveview toggle gates port 6000 at all is unconfirmed; it has been observed
+working with the toggle off on P1-class.
 
 ---
 
@@ -825,11 +841,19 @@ behavior such as camera protocol selection.
 
 | Product code | Product | Camera protocol | Chamber heater |
 |---|---|---|---|
+| `C11` | P1P | `bambus://` :6000 | no |
 | `C12` | P1S | `bambus://` :6000 | no |
-| `P1P` | P1P | `bambus://` :6000 | no |
+| `C13` | X1E | RTSPS :322 | yes |
 | `BL-P001` | X1 Carbon | RTSPS :322 | no |
+| `N1S` | A1 | `bambus://` :6000 (inferred) | no |
+| `N1A` | A1 mini | `bambus://` :6000 (inferred) | no |
 | `O1S` | H2S | RTSPS :322 | yes |
-| `H2S`, `H2D`, `H2C`, `H2D PRO`, `P2S`, `X2D` | H2 / X2 class | RTSPS :322 | yes |
+| `H3A` | H2D | RTSPS :322 | yes |
+| `H3C` | H2C | RTSPS :322 | yes |
+| `P2S`, `X2D` | P2S / X2D | RTSPS :322 | yes |
+
+The final group is a **code artifact**, not a product family: the client lumps these together for chamber
+and camera selection, which is why they share a row.
 
 Keep camera-routing decisions separate from feature decisions: a model can need RTSPS without
 inheriting other semantics such as a chamber heater.
