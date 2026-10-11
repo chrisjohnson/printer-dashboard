@@ -272,3 +272,179 @@ FilamentSlot { Index, Type, Color, Name, RemainingMM, RemainingG, MinTemp, MaxTe
 - Bambuddy (AMS-HT addressing): https://github.com/maziggy/bambuddy/issues/364
 - Snapmaker U1 filament feed source: `filament_feed.py` in Snapmaker Klipper fork
 - Related backlog cards: K-032 (filament loaded), K-033 (AMS status), K-034 (AMS humidity), K-005 (P1S cloud MQTT field audit)
+
+## K-108 — Bambu MQTT command verification and signing
+
+Implemented in K-109 (`internal/printers/bambu/signing.go`). Measured on the
+live fleet against H2S-001 `0938AC580200372` (fw `ver=20008`) and P1S-001
+`01P09C4B1600631`, cloud account `u_1578637590`.
+
+Bambu firmware released after roughly January 2025 cryptographically verifies
+every MQTT command in the `print` namespace. Unsigned frames are rejected with
+`err_code 84033543` (`mqtt message verify failed`). The check is satisfied by a
+`header` envelope carrying an RSA-SHA256 signature over the exact JSON bytes of
+the payload, made with a certificate the printer has been told to trust.
+
+Developer Mode is not part of this. It only makes the `header` envelope
+optional.
+
+### Which printers are affected
+
+| printer | `print` namespace | why |
+|---|---|---|
+| P1S-001 | accepts unsigned | firmware predates the verification gate |
+| H2S-001 | rejects unsigned, both transports | verification active |
+
+The P1S will start rejecting unsigned frames after a firmware update.
+
+### Measured behaviour
+
+Identical whether the session terminates on the printer or on Bambu's cloud
+broker — the cloud is a forwarder, not a different command language.
+
+| namespace | cloud | LAN (`bblp` + access code) |
+|---|---|---|
+| `pushing.pushall` | success, full report | accepted |
+| `system.ledctrl` | success, light physically toggles | success, light physically toggles |
+| `print.gcode_line` | unsigned → `84033543`; signed → `success` | same |
+| security `app_cert_install` / `app_cert_list` | success | success |
+| status reports | sparse; P1 deltas omit `gcode_state` | plaintext JSON, ~1/sec |
+
+Signed frames and `app_cert_install` both work over the existing cloud
+connection, so no LAN transport is required for command signing.
+
+### Signing format
+
+```jsonc
+// 1. payload; user_id is a top-level sibling, not inside the section
+{ "print": { "sequence_id": "5000", "command": "gcode_line", "param": "G28\n" },
+  "user_id": "1578637590" }
+
+// 2. sign the byte-exact JSON of that object; no canonicalisation
+sign_string = base64( RSA-SHA256( privateKey, payload ) )
+
+// 3. append the header
+{ ...payload, "header": {
+    "sign_ver": "v1.0", "sign_alg": "RSA_SHA256",
+    "sign_string": "<base64>",
+    "cert_id": "<hex serial>CN=<issuer CN>",
+    "payload_len": "<utf8 byte length as a STRING>" } }
+```
+
+Requirements, each of which produces a generic "verify failed" if violated:
+
+- **`payload_len` must be a JSON string.** A number yields `84033547`, which is
+  indistinguishable from a certificate problem. This is the easiest detail to
+  get wrong.
+- **`cert_id` is the lowercase hex X.509 serial number** followed by `CN=` and
+  the issuer common name. It is not a hash of the certificate. Bambu's own
+  trusted IDs are 32 hex because their serials are 16 bytes; a 20-byte serial
+  yields 40 hex.
+- **`sequence_id` must be a string >= 2000** on signed frames. Below that the
+  printer answers `84033545` even with a trusted cert. It is a fixed floor, not
+  a high-water mark. Studio uses a 20000–29999 window.
+- The signature covers the whole envelope minus `header`, including the trailing
+  `user_id` sibling, and the printer re-checks the byte-exact wire bytes. Build
+  the signed bytes and publish them unmodified rather than re-marshalling.
+- `system` and `pushing` are not verified and stay unsigned.
+
+### Error codes
+
+Ordered verification ladder; each stage is distinguishable from the next.
+
+| err_code | meaning |
+|---|---|
+| `84033543` | no signature present |
+| `84033544` | contested: file-verify stage (bad `md5`, plaintext `url`, `ftp:///`) **or** `sequence_id` reuse across restarts |
+| `84033545` | "need reset device pub key" — signature valid, `cert_id` not in the trust store; also returned for a trusted cert with `sequence_id < 2000` |
+| `84033546` | required header field missing or malformed (e.g. no `payload_len`) |
+| `84033547` | signature rejected — wrong key, wrong signed bytes, or numeric `payload_len` |
+| range | `84033543`–`84033548` are all this verification family |
+
+### Printer trust store
+
+- `security.app_cert_install` installs a certificate: fields `command`,
+  `sequence_id`, `app_cert` (PEM), `crl` (PEM). The command itself is not
+  verified, which is what makes bootstrapping possible. It returns `SUCCESS` and
+  the cert then appears in `app_cert_list`.
+- `crl` must be non-empty — an empty one answers
+  `FAILURE / "crl value is null"` — but **its signature is not validated**, so a
+  self-minted CRL with issuer CN `GLOF3813734089.bambulab.com` is accepted.
+- Install **adds**, it does not replace. No command removes a single cert.
+- **The store lives in printer RAM and a reboot clears it.** Re-install on every
+  connect. Right after a reboot `app_cert_list` answers
+  `reason: "device-endreaddevcertfailed"`.
+- `security.app_cert_list` requires `"type":"app"` and a **string**
+  `sequence_id`. On the H2S it lists Bambu's shared app certs, e.g.
+  `9bed8c27b4bf69582d58f11abaaad99fCN=GLOF3813734089.bambulab.com`. The same ID
+  appears on different printers, confirming these are shared app certs rather
+  than per-device ones.
+- A certificate only needs to be installed; the printer does not require it to
+  have been provisioned through Bambu's cloud.
+
+### Credentials
+
+The shared Bambu app certificate and private key have been public since January
+2025, when they were extracted from Bambu Connect and shipped embedded in every
+copy of it. They are not secret and not user-specific. The pair in use has serial
+`ee3cac0712ceeacda8b7fbc42e74ba2c`; **its 2025-12-12 expiry is not enforced by
+the printer.**
+
+Bambu Studio's shipped files are not signing material:
+`BambuStudio.app/Contents/Resources/cert/printer.cer` is the BBL CA bundle
+(`BBL CA`, `BBL CA2 RSA`, `BBL CA2 ECC`) and `slicer_base64.cer` is a
+`*.bambulab.com` DigiCert TLS pin that expired in 2022. Neither contains a
+private key.
+
+### LAN protocol facts (relevant to K-106)
+
+- Broker `mqtts://<ip>:8883`, self-signed TLS.
+- Auth username `bblp`, password = access code. **Enforced** — a wrong password
+  gives `Connection refused: Not authorized`.
+- Command topic is **`device/{serial}/request`**. `device/{serial}/mqtt` is
+  silently ignored on this firmware.
+- Payloads are plaintext JSON in both directions on this firmware; no AES
+  `bblp=` envelope is involved. Ciphertext to `request` is silently dropped;
+  plaintext with a wrong shape gets `result:"failed", reason:"json wrong
+  format"`.
+- Command acks arrive on `device/{serial}/report`, which streams ~1 report/sec —
+  substantially better than the cloud path.
+- P1S LAN: 8883 accepts a connection but publishes no reports (LAN mode off), so
+  LAN is not usable for the P1S today.
+- Open ports — H2S: 3000 (FTP), 6000 (camera), 8883 (MQTT). P1S: 8883 only.
+  Neither printer exposes an HTTP control API.
+
+### Other verified facts
+
+- Command payload shape does not influence the verification outcome: eleven
+  `gcode_line` variants (absent / string / numeric `sequence_id`, `id`,
+  `mc_action`, `account`, `version`, missing trailing newline, alternate G-code)
+  all produce the same rejection when unsigned.
+- H2S `home_flag = 0xc0675590`, bit 0 clear, reads as unhomed. After an accepted
+  `G28` the flag did not flip within 60 s, so H2S homing state may not be
+  reported through bit 0 the way the P1S reports it. Unresolved.
+- P1S firmware version is not readable: `ver` never appears in its cloud reports
+  and its LAN broker streams nothing. Any statement about P1S firmware age is
+  inference.
+- Rejected `print` commands raise HMS `0500-0500-0001-0007`, putting the printer
+  in `state:"error"`, which then blocks the app's movement gate. The dismiss
+  endpoint only suppresses notifications; a printer restart clears the state.
+- The downloadable network plugin (`GET
+  https://api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.06.00.00`
+  → `public-cdn.bblmw.com/.../win_02.06.00.76.zip`) ships seven DLLs with no
+  certificate or key files, and its strings are obfuscated — `client_auth_secret`
+  is not recoverable by static search, only from a running process. Not needed
+  for command signing.
+
+### References
+
+- open-bamboo-networking (`research/10.02-secrets.md`, `10.04-mqtt-signing.md`,
+  `06.02-mqtt.md`): https://github.com/ClusterM/open-bamboo-networking
+- bambu-mcp (signing implementation, bundled app cert/key):
+  https://github.com/schwarztim/bambu-mcp
+- Bambu third-party integration:
+  https://wiki.bambulab.com/en/software/third-party-integration
+- Hackaday on the extracted Bambu Connect certificate and key (Jan 2025):
+  https://hackaday.com/2025-01-19/bambu-connects-authentication-x-509-certificate-and-private-key-extracted/
+- OpenBambuAPI: https://github.com/Doridian/OpenBambuAPI
+- Related cards: K-109 (implemented), K-106 (LAN MQTT), K-092, K-095

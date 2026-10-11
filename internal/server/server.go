@@ -922,7 +922,7 @@ func (s *Server) handleSetLight(w http.ResponseWriter, r *http.Request) {
 // These are the first command handlers in this app with real backend-side
 // safety gating (rejecting the request outright when the printer isn't
 // idle/online), rather than relying solely on the frontend disabling the
-// button — see requireIdleAndOnline's doc comment. This matters here because,
+// button — see requireMovementSafe's doc comment. This matters here because,
 // unlike pause/resume/temp/light, jog/home move real hardware and a stray
 // request while a print is running risks crashing the toolhead into the
 // print. K-092 (backlog) tracks retrofitting the same gating onto the
@@ -944,30 +944,47 @@ const (
 	jogMaxSpeedMMPerMin = 6000
 )
 
-// requireIdleAndOnline returns an error if the printer is not in a safe
-// state to accept a physical movement/homing command: it must be online and
-// its State must be exactly "idle". Every other known state (printing,
-// paused, error, complete, or anything unrecognized) is rejected — this
-// errs on the side of the strictest interpretation given the physical risk
-// of an unexpected toolhead move, rather than trying to enumerate every
-// state that's "probably fine". Callers should respond with HTTP 409
-// Conflict when this returns non-nil.
+// movementSafeStates is the set of printer states in which a toolhead move or
+// a homing sequence is physically safe to run. See requireMovementSafe.
+var movementSafeStates = map[string]bool{
+	// Nothing running, printer parked at origin.
+	"idle": true,
+	// A print has finished: the toolhead has already parked and nothing is
+	// running, so this is physically the same situation as "idle" — the
+	// only difference is that the firmware hasn't reported a plain IDLE
+	// yet. Bambu's P1-series delta reports routinely omit gcode_state
+	// entirely, which leaves State latched at "complete" for as long as
+	// the printer sits between prints (see the complete->idle latch in
+	// internal/printers/bambu/client.go). Treating "complete" as unsafe
+	// therefore locked the jog pad and Home All out indefinitely on any
+	// P1S that had printed at least once.
+	"complete": true,
+}
+
+// requireMovementSafe returns an error if the printer is not in a safe state
+// to accept a physical movement/homing command: it must be online and its
+// State must be one of movementSafeStates. Every other known state (printing,
+// paused, error, or anything unrecognized) is rejected — this errs on the
+// side of the strictest interpretation given the physical risk of an
+// unexpected toolhead move, rather than trying to enumerate every state
+// that's "probably fine". Callers should respond with HTTP 409 Conflict when
+// this returns non-nil.
 //
 // This is the first real backend-side state gate in this app (see the
 // "Movement / Homing Handlers" section comment above) — intended as the
 // precedent K-092 will extend to other command handlers.
-func requireIdleAndOnline(status printers.PrinterStatus) error {
+func requireMovementSafe(status printers.PrinterStatus) error {
 	if !status.Online {
 		return fmt.Errorf("printer is offline")
 	}
-	if status.State != "idle" {
+	if !movementSafeStates[status.State] {
 		return fmt.Errorf("printer is not idle (state: %q)", status.State)
 	}
 	return nil
 }
 
 // handleHomeAll homes all axes (G28). Rejects with 409 if the printer isn't
-// idle and online (see requireIdleAndOnline). On success, marks the printer
+// idle and online (see requireMovementSafe). On success, marks the printer
 // as homed — Paxx firmware doesn't expose homed_axes, so we track this
 // via the G28 command itself.
 func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
@@ -977,7 +994,7 @@ func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
 		return
 	}
-	if err := requireIdleAndOnline(p.Status()); err != nil {
+	if err := requireMovementSafe(p.Status()); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
@@ -1009,7 +1026,7 @@ func (s *Server) handleHomeAll(w http.ResponseWriter, r *http.Request) {
 // ("speed" is optional; defaults to jogDefaultSpeedMMPerMin).
 //
 // Rejects with 409 if the printer isn't idle and online (see
-// requireIdleAndOnline). Rejects with 400 for a malformed body, non-finite
+// requireMovementSafe). Rejects with 400 for a malformed body, non-finite
 // (NaN/Inf) axis values, any axis delta whose magnitude exceeds
 // jogMaxDeltaMM, or a speed outside (0, jogMaxSpeedMMPerMin] — clamping is
 // deliberately NOT applied silently for out-of-range values: a rejected
@@ -1037,7 +1054,7 @@ func (s *Server) handleJog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, fmt.Sprintf("printer %q not found", id))
 		return
 	}
-	if err := requireIdleAndOnline(p.Status()); err != nil {
+	if err := requireMovementSafe(p.Status()); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}

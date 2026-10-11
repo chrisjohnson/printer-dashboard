@@ -20,6 +20,15 @@ type infoData struct {
 }
 
 type printStatus struct {
+	// Command/Result/Reason/ErrCode carry the firmware's reply to a command
+	// we sent (e.g. {"print":{"command":"gcode_line","result":"failed",
+	// "reason":"mqtt message verify failed"}}). A plain status push also sets
+	// Command ("push_status") but never Result, so Result != "" is what
+	// distinguishes an ACK from a status report. See isCommandAck.
+	Command             string             `json:"command"`
+	Result              string             `json:"result"`
+	Reason              string             `json:"reason"`
+	ErrCode             *int               `json:"err_code"`
 	GcodeState          string             `json:"gcode_state"`
 	GcodeFile           *string            `json:"gcode_file"`
 	SubtaskName         *string            `json:"subtask_name"`
@@ -180,7 +189,27 @@ type cameraStatus struct {
 // systemStatus captures the "system" section of a Bambu report, which carries
 // LED state and other system-level info.
 type systemStatus struct {
+	// See printStatus.Command/Result: a non-empty Result marks this as the
+	// firmware's reply to a command we sent rather than a status report.
+	Command string     `json:"command"`
+	Result  string     `json:"result"`
+	Reason  string     `json:"reason"`
+	ErrCode *int       `json:"err_code"`
 	LEDCtrl *ledStatus `json:"ledctrl,omitempty"`
+}
+
+// isCommandAck reports whether this print section is the firmware's reply to a
+// command rather than a status push. Bambu always sets "result" on a reply
+// (success or failure) and never on a status push, so Result is the discriminator
+// — Command alone is not, since status pushes carry command:"push_status".
+func (p *printStatus) isCommandAck() bool {
+	return p != nil && p.Result != ""
+}
+
+// isCommandAck reports whether this system section is the firmware's reply to a
+// command. See printStatus.isCommandAck for the same rule.
+func (s *systemStatus) isCommandAck() bool {
+	return s != nil && s.Result != ""
 }
 
 // ledStatus captures the state of an LED node (e.g. chamber_light).

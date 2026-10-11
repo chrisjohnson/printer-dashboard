@@ -62,6 +62,18 @@ above standing note on file — treat this as "generally authorized, but
 expect to reconfirm sensitive actions (pushes, sandbox bypasses)
 explicitly each time a classifier flags one," not a blanket override.
 
+Added (2026-10-10):
+3. The `:8080` container is the agent's **development** instance; the
+   user's production copy runs on a separate machine. Build, deploy,
+   redeploy and test there freely — do not ask, and do not treat it as
+   production. Ship work as a PR for the user to merge and deploy.
+4. For Bambu command-signing work (see K-108): the user has authorized
+   obtaining and using Bambu's shared app certificate/credentials for
+   **personal use on their own printers**, on right-to-repair grounds.
+   Do not re-raise the licensing question as a blocker. The user has
+   also stated they will **not** enable Developer Mode, so "just enable
+   Developer Mode" is not an acceptable answer for the H2S.
+
 ## Testing philosophy (PLAN.md)
 TDD, table-driven tests, coverage targets 100% pure logic / ≥85% new
 packages / ≥70% existing; run via `go test ./... -race -count=1`.
