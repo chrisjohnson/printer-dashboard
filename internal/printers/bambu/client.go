@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
@@ -81,6 +83,17 @@ type Client struct {
 	mqttClient  mqtt.Client
 	camIPCamURL string
 	model       string // printer model (e.g., "H2S", "P1S", "X1C") from config or cloud API
+
+	// signer produces the RSA-SHA256 "header" envelope that post-2024 Bambu
+	// firmware requires on print-namespace commands. Nil when no signing
+	// credentials could be loaded.
+	signer *commandSigner
+
+	// signRequired is set the first time the printer rejects an unsigned print
+	// command with err_code 84033543. Older firmware (the P1S) accepts
+	// unsigned commands, so signing is opt-in per printer rather than assumed,
+	// and the flag avoids paying a rejected command on every call.
+	signRequired atomic.Bool
 
 	// StatusCh is an optional channel that receives the full printer status
 	// after each report parse. If nil, no status updates are emitted.
@@ -188,6 +201,22 @@ type commandACK struct {
 	ErrCode *int
 }
 
+// commandRejectedError is a firmware rejection of a command we published. The
+// numeric code is carried so callers can branch on the command-verification
+// family (84033543..84033548) instead of matching on human-readable text.
+type commandRejectedError struct {
+	Cmd    string
+	Reason string
+	Code   int
+}
+
+func (e *commandRejectedError) Error() string {
+	if e.Code != 0 {
+		return fmt.Sprintf("printer rejected %s: %s (err_code %d)", e.Cmd, e.Reason, e.Code)
+	}
+	return fmt.Sprintf("printer rejected %s: %s", e.Cmd, e.Reason)
+}
+
 // failed renders a human-readable error for a non-success ACK. The caller
 // wraps it with the usual "bambu <id>: " prefix so it reads like every other
 // error on this path.
@@ -196,10 +225,11 @@ func (a commandACK) failed(cmdName string) error {
 	if msg == "" {
 		msg = a.Result
 	}
-	if a.ErrCode != nil && *a.ErrCode != 0 {
-		return fmt.Errorf("printer rejected %s: %s (err_code %d)", cmdName, msg, *a.ErrCode)
+	code := 0
+	if a.ErrCode != nil {
+		code = *a.ErrCode
 	}
-	return fmt.Errorf("printer rejected %s: %s", cmdName, msg)
+	return &commandRejectedError{Cmd: cmdName, Reason: msg, Code: code}
 }
 
 // New creates a new Bambu printer client for cloud MQTT connectivity.
@@ -454,6 +484,11 @@ func (c *Client) onConnect(client mqtt.Client) {
 		}
 	}
 	log.Printf("bambu %s: subscribed to %s", c.cfg.ID, topic)
+
+	// Post-2024 firmware rejects signed-only print commands unless it has been
+	// told to trust our certificate. The trust store is RAM-only, so this has
+	// to happen on every connect, not just the first one.
+	c.installAppCert(client)
 
 	// Request a full status push to get current state
 	c.requestPushAll(client)
@@ -1102,6 +1137,112 @@ func (c *Client) deliverAck(ns, command, result, reason string, errCode *int) {
 // not every firmware/command combination replies and claiming failure would be
 // a false alarm.
 func (c *Client) publishCommand(ctx context.Context, cmdName string, payload []byte) error {
+	wire := payload
+
+	// Post-2024 firmware verifies print-namespace commands cryptographically.
+	// Once a printer has told us it wants signed frames we sign up front;
+	// otherwise we send unsigned and let the rejection teach us, so printers
+	// with older firmware are unaffected.
+	s := c.ensureSigner()
+	if s != nil && c.signRequired.Load() && isPrintPayload(payload) {
+		signed, err := s.sign(payload)
+		if err != nil {
+			log.Printf("bambu %s: signing %s failed, sending unsigned: %v", c.cfg.ID, cmdName, err)
+		} else {
+			wire = signed
+		}
+	}
+
+	err := c.publishRaw(ctx, cmdName, wire)
+
+	if err != nil && s != nil && !c.signRequired.Load() && isPrintPayload(payload) &&
+		rejectedCode(err) == errCodeUnsigned {
+		log.Printf("bambu %s: printer requires signed commands; retrying %s signed", c.cfg.ID, cmdName)
+		c.signRequired.Store(true)
+		signed, serr := s.sign(payload)
+		if serr != nil {
+			log.Printf("bambu %s: signing %s failed: %v", c.cfg.ID, cmdName, serr)
+			return err
+		}
+		return c.publishRaw(ctx, cmdName, signed)
+	}
+
+	return err
+}
+
+// isPrintPayload reports whether a command payload uses the "print" namespace,
+// the only namespace the firmware verifies. "system" and "pushing" commands are
+// sent unsigned.
+func isPrintPayload(payload []byte) bool {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &top); err != nil {
+		return false
+	}
+	_, ok := top["print"]
+	return ok
+}
+
+// rejectedCode extracts the firmware err_code from a rejection error, or 0.
+func rejectedCode(err error) int {
+	var re *commandRejectedError
+	if errors.As(err, &re) {
+		return re.Code
+	}
+	return 0
+}
+
+// ensureSigner lazily builds the command signer. Deferred rather than done in
+// New because the cloud client may not have resolved its user id until after
+// login completes. Returns nil if signing is not available.
+func (c *Client) ensureSigner() *commandSigner {
+	if c.signer != nil {
+		return c.signer
+	}
+	// Tests and some construction paths have no cloud client at all.
+	if c.cloud == nil {
+		return nil
+	}
+	uid := c.cloud.UserID()
+	if uid == "" {
+		return nil
+	}
+	s, err := newCommandSigner(uid, "", "")
+	if err != nil {
+		log.Printf("bambu %s: command signing unavailable: %v", c.cfg.ID, err)
+		return nil
+	}
+	c.signer = s
+	return s
+}
+
+// installAppCert puts our signing certificate into the printer's trust store.
+// The store lives in printer RAM and a reboot clears it, so this runs on every
+// connect rather than once at setup. Failures are logged and not fatal:
+// printers whose firmware predates the verification gate never need it.
+func (c *Client) installAppCert(client mqtt.Client) {
+	s := c.ensureSigner()
+	if s == nil {
+		return
+	}
+	payload := s.certInstallPayload()
+	if payload == nil {
+		return
+	}
+	topic := fmt.Sprintf("device/%s/request", c.cfg.Serial)
+	token := client.Publish(topic, 0, false, payload)
+	if !token.WaitTimeout(10 * time.Second) {
+		log.Printf("bambu %s: app_cert_install publish timed out", c.cfg.ID)
+		return
+	}
+	if err := token.Error(); err != nil {
+		log.Printf("bambu %s: app_cert_install publish failed: %v", c.cfg.ID, err)
+		return
+	}
+	log.Printf("bambu %s: installed app certificate for command signing (cert_id=%s)", c.cfg.ID, s.certID)
+}
+
+// publishRaw publishes an already-final payload and waits for the firmware ack.
+func (c *Client) publishRaw(ctx context.Context, cmdName string, payload []byte) error {
 	if c.mqttClient == nil || !c.mqttClient.IsConnected() {
 		return fmt.Errorf("bambu %s: not connected to cloud MQTT", c.cfg.ID)
 	}
