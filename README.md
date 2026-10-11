@@ -151,18 +151,17 @@ go tool cover -html=coverage.out
 
 ## Protocol reference
 
-Reverse-engineered behavior of the Bambu and Snapmaker transports — endpoints, exact command payloads,
-per-mode quirks, and every hard-won gotcha — lives in:
+Two documents describe printer behavior independent of this application:
 
-- [`docs/PRINTER-PROTOCOL-MATRIX.md`](docs/PRINTER-PROTOCOL-MATRIX.md) — the authoritative spec sheet
-  (confidence-marked, `file:line` cited). **Read this before touching a driver.**
-- [`docs/printer-protocol-guide.html`](docs/printer-protocol-guide.html) — interactive guide with a
-  mode explorer and live decoders for HMS codes, packed `info.temp`, and AMS `tray_now`.
-
-Note: this file's "Supported Printers" section says Bambu printers use "LAN MQTT". That is
-**outdated** — this deployment is cloud-MQTT-only. See the matrix, section 3.4.
-
-See [`PLAN.md`](PLAN.md) for the full architecture plan and testing standards.
+- **`docs/printer-protocol-reference.md`** — the spec sheet. Access paths, authentication flows, MQTT
+  transport, command payloads, telemetry semantics, command signing, HMS codes, camera protocols, and
+  AMS/filament behavior for Bambu Lab and Snapmaker U1 machines.
+- **`docs/printer-protocol-unverified.md`** — claims that are plausible but not established, each with
+  the experiment that would settle it. Check here before treating a gap in the reference as permission to
+  assume.
+- **`docs/printer-protocol-guide.html`** — an interactive version of the same material. Open it directly
+  in a browser; it has a printer selector at the top, live decoders for HMS codes, packed temperatures,
+  AMS tray ids and home flags, and a symptom finder.
 
 ## License
 
