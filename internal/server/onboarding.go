@@ -592,7 +592,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .progress-section { margin: 4px 0; }
     .progress-bar { background: var(--border-subtle); height: 6px; border-radius: var(--radius-pill); overflow: hidden; }
     .progress-bar .fill { background: var(--accent); height: 100%; border-radius: var(--radius-pill); }
-    .progress-text { font-size: 0.8125rem; color: var(--text-muted); display: flex; justify-content: space-between; margin-top: 4px; }
+    .progress-text { font-size: 0.8125rem; color: var(--text-muted); display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; }
 
     /* Temperature row — compact on mobile, expanded on desktop */
     .temps {
@@ -1148,7 +1148,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
       const progress = (p.progress * 100).toFixed(1);
-      const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
+      const timeStr = timeSummary(p);
 
       // 1. State tag
       const tag = card.querySelector('.tag');
@@ -1252,8 +1252,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const errorEl = card.querySelector('.error-banner');
       toggleBanner(errorEl, st === 'error' && !!p.error_msg, p.error_msg);
 
-      // 8b. HMS rows — one dismissible row per (already server-filtered)
-      // hms_errors/hms_warnings entry, independent of error state. Built via
+      // 8b. HMS rows — one row per (already server-filtered)
+      // hms_errors/hms_warnings entry (dismissible) plus one per advisory
+      // (not dismissible), independent of error state. Built via
       // the shared hmsRowsHtml() helper — same one renderCard() uses for its
       // initial markup — so the two paths can't drift (see K-053 for the
       // documented history of exactly this class of drift, and how
@@ -1261,7 +1262,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // plain error banner). The whole list is small, so on each update we
       // just replace its innerHTML wholesale rather than diffing rows.
       const hmsListEl = card.querySelector('.hms-list');
-      if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []);
+      if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []);
 
       // 8c. AMS section — one shared amsHtml() helper builds the full
       // markup (same precedent as hmsRowsHtml() above); replace
@@ -1290,13 +1291,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (skipBtn) skipBtn.disabled = st !== 'printing';
 
       // 9b. Movement-pad buttons (jog X/Y/Z + Home All) — enabled only when
-      // online and idle, same condition moveSectionHtml() used at initial
-      // render (see its comment: this is a UX mirror of the backend's real
-      // requireIdleAndOnline gate, not the safety-critical layer itself).
-      // Must stay in sync with renderCard()/moveSectionHtml() the same way
-      // pause/resume/cancel/skip already do above — this is exactly the
-      // "K-053-class" drift this file's comments warn about elsewhere.
-      const moveDisabled = !p.online || st !== 'idle';
+      // online and in a movement-safe state, same condition
+      // moveSectionHtml() used at initial render (see its comment: this is a
+      // UX mirror of the backend's real requireMovementSafe gate, not the
+      // safety-critical layer itself). Shares canMove() with
+      // renderCard()/moveSectionHtml() so the two cannot drift — this is
+      // exactly the "K-053-class" drift this file's comments warn about
+      // elsewhere.
+      const moveDisabled = !canMove(p);
       const moveSection = card.querySelector('.move-section');
       if (moveSection) {
         moveSection.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
@@ -1676,7 +1678,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const st = p.state || 'unknown';
       const stCls = p.online ? st : 'offline';
       const progress = (p.progress * 100).toFixed(1);
-      const timeStr = p.remaining_time > 0 ? formatTime(p.remaining_time) : '';
+      const timeStr = timeSummary(p);
 
       // Temperatures — null-safe with '---' fallback
       const bed = p.bed_temp !== null ? p.bed_temp.toFixed(1) : '?';
@@ -1709,8 +1711,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // without a full card rebuild.
       const errorHtml = bannerHtml('error-banner', st === 'error' && !!p.error_msg, p.error_msg);
 
-      // HMS rows — one dismissible row per (already server-filtered)
-      // hms_errors/hms_warnings entry, regardless of error state. The
+      // HMS rows — one row per (already server-filtered) hms_errors/
+      // hms_warnings entry (dismissible) plus one per advisory (not
+      // dismissible — the printer re-asserts it), regardless of error state.
+      // The
       // container is always rendered (empty when there are no entries) so
       // renderCard() and updateCard() agree on shape and a later WS update
       // can find and refresh it without a full card rebuild — same
@@ -1719,9 +1723,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // (see K-053 for the documented history of exactly this class of
       // drift, and bannerHtml()/toggleBanner() above for the existing
       // guard on the plain error banner). Errors continue to use
-      // error-banner/error_msg unchanged; this is a separate, non-blocking,
-      // per-entry-dismissible channel.
-      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>';
+      // error-banner/error_msg unchanged; this is a separate, non-blocking
+      // channel.
+      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []) + '</div>';
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1854,17 +1858,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       '</div>';
     }
 
+    // movementSafeStates mirrors the backend's movementSafeStates map in
+    // server.go: the printer states in which a jog or a homing sequence is
+    // physically safe. "complete" is included because a finished print has
+    // already parked the toolhead — it is physically the same situation as
+    // "idle" — and Bambu P1-series delta reports routinely omit gcode_state,
+    // which leaves State latched at "complete" for as long as the printer
+    // sits between prints. Keep the two lists in sync.
+    const MOVEMENT_SAFE_STATES = ['idle', 'complete'];
+
+    // canMove reports whether jog/Home All should be enabled for a printer.
+    // Single source of truth shared by moveSectionHtml() (initial render) and
+    // updateCard() (live updates) so the two can't drift.
+    function canMove(p) {
+      return !!p.online && MOVEMENT_SAFE_STATES.indexOf(p.state || 'unknown') !== -1;
+    }
+
     // Movement pad: step-size selector + X/Y/Z jog buttons + Home All.
-    // Buttons are enabled only when the printer is online and idle (moving
-    // the toolhead mid-print risks crashing it into the print) — mirrors the
-    // st !== 'printing' disabled-ternary convention already used for
-    // pause/resume/cancel/skip above, gated on moveDisabled here instead.
-    // This is a UX nicety only: the backend's requireIdleAndOnline is the
+    // Buttons are enabled only when the printer is online and in a
+    // movement-safe state (moving the toolhead mid-print risks crashing it
+    // into the print) — mirrors the st !== 'printing' disabled-ternary
+    // convention already used for pause/resume/cancel/skip above, gated on
+    // moveDisabled here instead.
+    // This is a UX nicety only: the backend's requireMovementSafe is the
     // real enforcement (see server.go), so the exact disabled condition here
     // doesn't need to be perfectly authoritative — just a reasonable mirror.
     function moveSectionHtml(p) {
-      const st = p.state || 'unknown';
-      const moveDisabled = !p.online || st !== 'idle';
+      const moveDisabled = !canMove(p);
       const dis = moveDisabled ? 'disabled' : '';
       const safeId = escapeJsString(p.id);
       return '<div class="move-section" id="move-section-' + p.id + '">' +
@@ -1939,6 +1959,34 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return h + 'h ' + m + 'm';
     }
 
+    // Build the time text shown beside the percentage, as "remaining / total".
+    //
+    // No printer reports a total print time, so it is derived from whatever the
+    // driver does report: Bambu sends remaining_time (mc_remaining_time) plus
+    // an elapsed_time the server measures itself, while Snapmaker/Moonraker
+    // sends only elapsed_time (print_duration) alongside progress. Hence:
+    //   remaining + elapsed  ->  total = remaining + elapsed
+    //   elapsed only         ->  total = elapsed / progress, remaining = total - elapsed
+    //   neither              ->  nothing to show
+    // An elapsed_time of 0 always means "unknown" (a driver that never saw the
+    // job start, e.g. right after a dashboard restart mid-print), never "just
+    // started" — so that case degrades to the bare remaining time instead of a
+    // meaningless "1h 20m / 1h 20m".
+    function timeSummary(p) {
+      const remaining = p.remaining_time > 0 ? p.remaining_time : 0;
+      const elapsed = p.elapsed_time > 0 ? p.elapsed_time : 0;
+      if (remaining > 0) {
+        return elapsed > 0
+          ? formatTime(remaining) + ' / ' + formatTime(remaining + elapsed)
+          : formatTime(remaining);
+      }
+      if (elapsed > 0 && p.progress > 0.02) {
+        const total = elapsed / p.progress;
+        return formatTime(total - elapsed) + ' / ' + formatTime(total);
+      }
+      return '';
+    }
+
     function escapeHtml(s) {
       if (!s) return '';
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1991,19 +2039,38 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       '</div>';
     }
 
+    // Builds one advisory row: same warning styling as an HMS warning (both
+    // are non-blocking) but deliberately WITHOUT a Dismiss button. An HMS
+    // warning can be acknowledged away; an advisory is a condition the
+    // printer re-asserts on every full status push until the underlying
+    // problem is actually fixed (a degraded SD card, say), so a Dismiss
+    // control would only promise something the server can't honour.
+    function advisoryRowHtml(entry) {
+      const text = entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+      return '<div class="hms-row hms-warning" data-advisory-source="' + escapeHtml(entry.source || '') + '">' +
+        '<span class="hms-text">' + escapeHtml(text) + '</span>' +
+      '</div>';
+    }
+
     // Builds the full per-entry HMS row list for one printer card: errors
     // first (severity fatal/serious, styled via .hms-error), then warnings
     // (everything else, styled via .hms-warning) — same bucketing the server
     // already applied via hms_errors/hms_warnings (see bambu/parser.go's
-    // splitHMS()). Single shared helper used by both renderCard() (initial
-    // markup, wrapped in the always-in-DOM .hms-list container) and
-    // updateCard() (innerHTML replacement of that same container) so the two
-    // rendering paths can't drift out of sync (see K-053 for the documented
-    // history of exactly this class of drift, and bannerHtml()/toggleBanner()
-    // above for the precedent this follows).
-    function hmsRowsHtml(printerId, errors, warnings) {
+    // splitHMS()). Advisories are appended last: they are the same
+    // non-blocking class as warnings but arrive outside the printer's health
+    // array (see printers.Advisory), so they render after the health events
+    // that more directly describe what the printer is doing right now.
+    //
+    // Single shared helper used by both renderCard() (initial markup, wrapped
+    // in the always-in-DOM .hms-list container) and updateCard() (innerHTML
+    // replacement of that same container) so the two rendering paths can't
+    // drift out of sync (see K-053 for the documented history of exactly this
+    // class of drift, and bannerHtml()/toggleBanner() above for the precedent
+    // this follows).
+    function hmsRowsHtml(printerId, errors, warnings, advisories) {
       return (errors || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-error'); }).join('') +
-        (warnings || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-warning'); }).join('');
+        (warnings || []).map(function(e) { return hmsRowHtml(printerId, e, 'hms-warning'); }).join('') +
+        (advisories || []).map(function(e) { return advisoryRowHtml(e); }).join('');
     }
 
     function cmd(id, action) {
@@ -2017,7 +2084,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // safe/recovery action here, not the risky one (see jog()'s Z-axis
     // confirmation below). Mirrors cmd()'s fetch/error-handling shape; the
     // backend responds 409 if the printer isn't idle/online right now (see
-    // requireIdleAndOnline in server.go), which reads as a plain "Command
+    // requireMovementSafe in server.go), which reads as a plain "Command
     // failed: printer is not idle ..." alert here, same as any other
     // rejected command — the UI doesn't try to distinguish 409 from other
     // failures since the message text already explains it.

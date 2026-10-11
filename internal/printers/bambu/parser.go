@@ -20,6 +20,15 @@ type infoData struct {
 }
 
 type printStatus struct {
+	// Command/Result/Reason/ErrCode carry the firmware's reply to a command
+	// we sent (e.g. {"print":{"command":"gcode_line","result":"failed",
+	// "reason":"mqtt message verify failed"}}). A plain status push also sets
+	// Command ("push_status") but never Result, so Result != "" is what
+	// distinguishes an ACK from a status report. See isCommandAck.
+	Command             string             `json:"command"`
+	Result              string             `json:"result"`
+	Reason              string             `json:"reason"`
+	ErrCode             *int               `json:"err_code"`
 	GcodeState          string             `json:"gcode_state"`
 	GcodeFile           *string            `json:"gcode_file"`
 	SubtaskName         *string            `json:"subtask_name"`
@@ -120,6 +129,34 @@ func hmsEntrySummary(e printers.HMSEntry) string {
 	return e.Code
 }
 
+// printErrorCodeString renders a raw print_error integer the way Bambu's own
+// app and support pages render it: two dash-separated 16-bit halves, e.g.
+// 83935249 -> "0500-C011". Bambu documents and discusses these codes in that
+// form (and the bare decimal is essentially unsearchable), so the dashboard
+// shows the same thing a user would type into a support forum.
+func printErrorCodeString(code int) string {
+	u := uint32(code)
+	return fmt.Sprintf("%04X-%04X", u>>16, u&0xFFFF)
+}
+
+// describePrintError builds the human-readable text for a non-zero
+// print_error, resolving it through the vendored device_error table and
+// falling back to the raw value when the code isn't documented:
+//
+//	83935249, "C12" -> "SD card performance has degraded, … (0500-C011)"
+//	503,       "C12" -> "print_error=503 (0000-01F7)"
+//
+// The decimal is kept in the fallback because it is what the wire actually
+// carries and what appears in captured MQTT payloads, while the dashed hex
+// is what Bambu's own catalog and community references use — showing both
+// makes an undocumented code look up-able from the dashboard alone.
+func describePrintError(code int, model string) string {
+	if msg := lookupDeviceError(uint32(code), model); msg != "" {
+		return fmt.Sprintf("%s (%s)", msg, printErrorCodeString(code))
+	}
+	return fmt.Sprintf("print_error=%d (%s)", code, printErrorCodeString(code))
+}
+
 // splitHMS decodes each raw HMS wire entry and buckets it into errors
 // (severity fatal/serious) or warnings (everything else — common/info/
 // unknown). A nil or empty items slice yields nil/empty output slices, no
@@ -152,7 +189,27 @@ type cameraStatus struct {
 // systemStatus captures the "system" section of a Bambu report, which carries
 // LED state and other system-level info.
 type systemStatus struct {
+	// See printStatus.Command/Result: a non-empty Result marks this as the
+	// firmware's reply to a command we sent rather than a status report.
+	Command string     `json:"command"`
+	Result  string     `json:"result"`
+	Reason  string     `json:"reason"`
+	ErrCode *int       `json:"err_code"`
 	LEDCtrl *ledStatus `json:"ledctrl,omitempty"`
+}
+
+// isCommandAck reports whether this print section is the firmware's reply to a
+// command rather than a status push. Bambu always sets "result" on a reply
+// (success or failure) and never on a status push, so Result is the discriminator
+// — Command alone is not, since status pushes carry command:"push_status".
+func (p *printStatus) isCommandAck() bool {
+	return p != nil && p.Result != ""
+}
+
+// isCommandAck reports whether this system section is the firmware's reply to a
+// command. See printStatus.isCommandAck for the same rule.
+func (s *systemStatus) isCommandAck() bool {
+	return s != nil && s.Result != ""
 }
 
 // ledStatus captures the state of an LED node (e.g. chamber_light).
