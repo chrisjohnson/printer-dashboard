@@ -403,7 +403,7 @@ they do, camera onboarding automates completely.</div>
 <!-- ============ 5 ============ -->
 <section id="mqtt">
 <h2><span class="num">5</span>MQTT transport</h2>
-<p class="lead">Encrypted, cloud-routed, and fire-and-forget.</p>
+<p class="lead">Encrypted, cloud-routed — and <b>not</b> fire-and-forget: the firmware answers.</p>
 
 <div class="tbl-wrap"><table>
 <tr><th>Parameter</th><th>Value</th><th>Note</th></tr>
@@ -436,9 +436,10 @@ green. The suite proves our <em>parsing</em> is stable, not that the wire format
 <h3>Forcing a full snapshot: <code>pushall</code></h3>
 <pre><span class="c">// publish → device/{serial}/request</span>
 {<span class="s">"pushing"</span>:{<span class="s">"command"</span>:<span class="s">"pushall"</span>,<span class="s">"version"</span>:<span class="n">1</span>,<span class="s">"push_target"</span>:<span class="n">1</span>}}</pre>
-<p>Sent once immediately after subscribe to get current state. <b>Research says a delta-only printer
-like the P1S needs this periodically — no code anywhere does that.</b> A field missed at startup can
-stay wrong until reconnect.</p>
+<p>Sent immediately after subscribe to get current state. <b>A periodic re-push now exists</b> — status
+can go stale forever after connect, notably on the H2S, which pushes almost nothing to the cloud
+unprompted. But it fires <b>only after a genuinely quiet window</b>, because an indiscriminate
+<code>pushall</code> can <b>stall P1P-class hardware</b>. Do not add a naive timer.</p>
 </section>
 
 <!-- ============ 6 ============ -->
@@ -458,11 +459,12 @@ Bambu firmware <b>silently ignores</b> a light command that is missing <code>seq
 cost a full debugging session. <b>Assume "missing field ⇒ silent ignore" is a general Bambu pattern</b>,
 not a light-specific quirk.</div>
 
-<div class="warn"><span class="t"><code>sequence_id</code> asymmetry is deliberate — don't "fix" it</span>
-<code>print</code>-namespace commands never set it; the <code>system</code> light command always sets
-<code>"0"</code>. Tests assert the absence as intended. Investigation concluded it's inconsequential
-but could <b>not</b> prove it either way. Adding unverified fields to a working command path without
-firmware ground truth is the riskier choice.</div>
+<div class="warn"><span class="t"><code>sequence_id</code> — the old "probably inconsequential" note is superseded</span>
+<code>print</code>-namespace commands historically omitted it and the <code>system</code> light command
+sets <code>"0"</code>. That is still fine for <b>unsigned</b> frames. But on <b>signed</b> frames a
+<code>sequence_id</code> <b>string &ge; 2000 is mandatory</b> — below the floor the printer returns
+<code>84033545</code> even with a trusted certificate. <code>sign()</code> injects one when the command
+builder omitted it. See <a href="#signing">&sect;8b</a>.</div>
 
 <div class="note"><span class="t">Jog convention worth copying verbatim</span>
 Switch to relative (<code>G91</code>) → emit <b>one</b> <code>G1</code> containing only axes with
@@ -478,8 +480,9 @@ non-zero deltas (omit the axis term rather than emitting <code>Z0</code>) → re
 {<span class="s">"print"</span>:{<span class="s">"command"</span>:<span class="s">"ams_filament_setting"</span>,<span class="s">"ams_id"</span>:<span class="n">0</span>,<span class="s">"tray_id"</span>:<span class="n">0</span>,
           <span class="s">"tray_type"</span>:<span class="s">"PLA"</span>,<span class="s">"tray_color"</span>:<span class="s">"FF0000FF"</span>,
           <span class="s">"nozzle_temp_min"</span>:<span class="n">190</span>,<span class="s">"nozzle_temp_max"</span>:<span class="n">230</span>}}</pre>
-<p style="font-size:13px;color:var(--dim)">Live risk: sending newer AMS commands to stock P1S firmware
-may trip the client-version-gate HMS described in §8.</p>
+<p style="font-size:13px;color:var(--dim)">Live risk: these are <code>print</code>-namespace commands,
+so on post-Jan-2025 firmware they <b>require signing</b> (§8b) and were never verified against a real
+AMS. Treat them as untested.</p>
 </section>
 
 <!-- ============ 7 ============ -->
@@ -501,7 +504,7 @@ with no <code>print</code> key is legal — ignore it for status.</p>
 <tr><td><code>info.temp</code></td><td>number</td><td><b>packed 32-bit</b> — see decoder</td></tr>
 <tr><td><code>layer_num</code> / <code>total_layer_num</code></td><td>int</td><td></td></tr>
 <tr><td><code>home_flag</code></td><td>int</td><td><b>bitmask</b>; bit 0 = axes homed</td></tr>
-<tr><td><code>print_error</code></td><td>int</td><td>0 = none — <b>often stays 0 during real failures</b></td></tr>
+<tr><td><code>print_error</code></td><td>int</td><td>0 = none; <b>stays 0 during some real failures</b> and is non-zero for some <b>non</b>-faults — see below</td></tr>
 <tr><td><code>hms</code></td><td>array</td><td>absent ≠ empty — see §8</td></tr>
 <tr><td><code>lights_report</code></td><td>array</td><td><code>{node:"chamber_light",mode:"on"}</code> — the <b>live</b> state</td></tr>
 <tr><td><code>ams</code></td><td>object</td><td>see §12</td></tr>
