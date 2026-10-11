@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 )
@@ -129,25 +130,39 @@ type commandSigner struct {
 	seq    atomic.Int64
 }
 
-// newCommandSigner loads the signing credentials. Empty certPath/keyPath fall
-// back to the embedded (public) Bambu Connect pair.
-func newCommandSigner(userID, certPath, keyPath string) (*commandSigner, error) {
+// AppCertDir is where the signing credentials are cached so an operator can
+// inspect or replace them without rebuilding the image. It defaults to the same
+// directory as the token store, which deployments bind-mount to host storage.
+var AppCertDir = DefaultTokenDir
+
+const (
+	appCertFileName = "bambu_app_cert.pem"
+	appKeyFileName  = "bambu_app_key.pem"
+	appCRLFileName  = "bambu_app_crl.pem"
+)
+
+// newCommandSigner loads the signing credentials from dir, seeding it with the
+// embedded copies on first use. An empty dir means AppCertDir. Anything already
+// on disk takes precedence, so replacing the files and restarting is enough to
+// rotate credentials. If the directory cannot be written — read-only mount,
+// wrong ownership — the embedded credentials are used instead and signing still
+// works; a cache failure is never allowed to disable command signing.
+func newCommandSigner(userID, dir string) (*commandSigner, error) {
 	certPEM := []byte(embeddedAppCertPEM)
 	keyPEM := []byte(embeddedAppKeyPEM)
+	crlPEM := []byte(embeddedAppCRLPEM)
 
-	if certPath != "" {
-		b, err := os.ReadFile(certPath)
-		if err != nil {
-			return nil, fmt.Errorf("read app cert: %w", err)
-		}
-		certPEM = b
+	if dir == "" {
+		dir = AppCertDir
 	}
-	if keyPath != "" {
-		b, err := os.ReadFile(keyPath)
-		if err != nil {
-			return nil, fmt.Errorf("read app key: %w", err)
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			log.Printf("bambu: cannot create cert dir %s, using embedded credentials: %v", dir, err)
+		} else {
+			certPEM = loadOrSeed(filepath.Join(dir, appCertFileName), certPEM)
+			keyPEM = loadOrSeed(filepath.Join(dir, appKeyFileName), keyPEM)
+			crlPEM = loadOrSeed(filepath.Join(dir, appCRLFileName), crlPEM)
 		}
-		keyPEM = b
 	}
 
 	block, _ := pem.Decode(keyPEM)
@@ -177,8 +192,25 @@ func newCommandSigner(userID, certPath, keyPath string) (*commandSigner, error) 
 		certID: certIDFor(cert),
 		userID: userID,
 		cert:   string(certPEM),
-		crl:    embeddedAppCRLPEM,
+		crl:    string(crlPEM),
 	}, nil
+}
+
+// loadOrSeed returns the contents of path, writing def to it first when it is
+// missing or empty. A write failure is logged and def is returned so a read-only
+// or mis-owned data directory degrades to the embedded credentials.
+func loadOrSeed(path string, def []byte) []byte {
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		return b
+	}
+	// 0600: the private key lands here. The cert and CRL are public but share
+	// the mode rather than carrying three separate policies.
+	if err := os.WriteFile(path, def, 0o600); err != nil {
+		log.Printf("bambu: could not cache %s, using embedded copy: %v", filepath.Base(path), err)
+		return def
+	}
+	log.Printf("bambu: cached %s", filepath.Base(path))
+	return def
 }
 
 // certIDFor builds the identifier the printer matches a signature against:

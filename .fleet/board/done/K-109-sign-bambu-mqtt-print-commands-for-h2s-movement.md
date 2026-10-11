@@ -35,8 +35,9 @@ so the P1S is behaviourally unchanged. `system` and `pushing` are not verified
 and stay unsigned.
 
 The certificate and key are Bambu's own shared app credentials, public since
-January 2025. They are embedded with a config-path override. See K-108 for the
-protocol record.
+January 2025. They are embedded in the binary and cached to the data directory
+on first use so they can be inspected or replaced without a rebuild. See K-108
+for the protocol record.
 
 ## Implementation notes
 

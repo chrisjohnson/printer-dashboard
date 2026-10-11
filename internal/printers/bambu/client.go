@@ -1206,7 +1206,7 @@ func (c *Client) ensureSigner() *commandSigner {
 	if uid == "" {
 		return nil
 	}
-	s, err := newCommandSigner(uid, "", "")
+	s, err := newCommandSigner(uid, "")
 	if err != nil {
 		log.Printf("bambu %s: command signing unavailable: %v", c.cfg.ID, err)
 		return nil
