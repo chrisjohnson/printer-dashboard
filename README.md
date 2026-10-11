@@ -149,6 +149,19 @@ go test ./coverprofile=coverage.out
 go tool cover -html=coverage.out
 ```
 
+## Protocol reference
+
+Reverse-engineered behavior of the Bambu and Snapmaker transports — endpoints, exact command payloads,
+per-mode quirks, and every hard-won gotcha — lives in:
+
+- [`docs/PRINTER-PROTOCOL-MATRIX.md`](docs/PRINTER-PROTOCOL-MATRIX.md) — the authoritative spec sheet
+  (confidence-marked, `file:line` cited). **Read this before touching a driver.**
+- [`docs/printer-protocol-guide.html`](docs/printer-protocol-guide.html) — interactive guide with a
+  mode explorer and live decoders for HMS codes, packed `info.temp`, and AMS `tray_now`.
+
+Note: this file's "Supported Printers" section says Bambu printers use "LAN MQTT". That is
+**outdated** — this deployment is cloud-MQTT-only. See the matrix, section 3.4.
+
 See [`PLAN.md`](PLAN.md) for the full architecture plan and testing standards.
 
 ## License

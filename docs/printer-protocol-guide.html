@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Printer Protocol Field Guide — Bambu P1S / H2S / X1 · Snapmaker U1 (Paxx)</title>
+<style>
+:root{
+  --bg:#0a0e14; --bg2:#0f151e; --panel:#131b26; --panel2:#18222f;
+  --line:#22303f; --line2:#2e4055;
+  --txt:#dfe8f1; --dim:#8fa3b8; --dimmer:#5f7488;
+  --bambu:#4cc2ff; --snap:#ffb454; --x1:#c792ea; --lan:#f07178; --ok:#7fd962; --warn:#ffd156;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Monaco,"Cascadia Mono","Courier New",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);line-height:1.6;font-size:15px}
+a{color:var(--bambu);text-decoration:none} a:hover{text-decoration:underline}
+code,kbd,pre{font-family:var(--mono)}
+code{background:#1c2733;padding:.1em .38em;border-radius:4px;font-size:.86em;color:#bfe3ff;border:1px solid #24313f}
+pre{background:#0b1017;border:1px solid var(--line);border-left:3px solid var(--bambu);border-radius:8px;
+     padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.55;color:#cfe6f7;margin:14px 0}
+pre .c{color:#5f7488} pre .k{color:#c792ea} pre .s{color:#7fd962} pre .n{color:#ffd156} pre .f{color:#ff9d76}
+
+/* layout */
+#wrap{display:grid;grid-template-columns:262px 1fr;min-height:100vh}
+nav{position:sticky;top:0;height:100vh;overflow-y:auto;background:var(--bg2);border-right:1px solid var(--line);padding:20px 14px 40px}
+nav h1{font-size:15px;margin:0 0 4px;letter-spacing:.3px}
+nav .sub{font-size:11px;color:var(--dimmer);margin-bottom:16px;line-height:1.4}
+nav .grp{font-size:10px;text-transform:uppercase;letter-spacing:.13em;color:var(--dimmer);margin:18px 0 6px;padding-left:8px}
+nav a{display:block;color:var(--dim);font-size:13px;padding:5px 9px;border-radius:6px;border-left:2px solid transparent}
+nav a:hover{background:#16202c;color:var(--txt);text-decoration:none}
+nav a.act{background:#16202c;color:var(--txt);border-left-color:var(--bambu)}
+main{padding:34px 44px 120px;max-width:1080px;min-width:0}
+section{scroll-margin-top:16px;margin-bottom:64px}
+h2{font-size:26px;margin:0 0 6px;letter-spacing:-.4px;border-bottom:1px solid var(--line);padding-bottom:10px}
+h2 .num{color:var(--dimmer);font-weight:400;margin-right:10px;font-size:20px}
+h3{font-size:18px;margin:34px 0 10px;color:#eaf3fb}
+h4{font-size:14.5px;margin:22px 0 8px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+p{margin:10px 0} ul,ol{margin:10px 0;padding-left:22px} li{margin:5px 0}
+.lead{font-size:16.5px;color:var(--dim);margin-bottom:22px}
+
+/* badges */
+.b{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 7px;border-radius:20px;
+   border:1px solid;vertical-align:middle;text-transform:uppercase;font-family:var(--mono)}
+.b.conf{color:var(--ok);border-color:#2f6b28;background:#132a12}
+.b.code{color:var(--bambu);border-color:#1f5c7d;background:#0e2531}
+.b.doc{color:var(--snap);border-color:#7a5620;background:#2a1f0d}
+.b.unk{color:var(--lan);border-color:#7d2f34;background:#2a1113}
+body[data-f="conf"] .b.code,body[data-f="conf"] .b.doc,body[data-f="conf"] .b.unk{opacity:.22}
+body[data-f="code"] .b.conf,body[data-f="code"] .b.doc,body[data-f="code"] .b.unk{opacity:.22}
+
+/* callouts */
+.note,.warn,.trap{border-radius:9px;padding:13px 16px;margin:16px 0;border:1px solid;font-size:14px}
+.note{background:#0d1b26;border-color:#1f4257}
+.warn{background:#1d1a0d;border-color:#5c4a15}
+.trap{background:#1e1114;border-color:#6b2b30}
+.trap .t,.warn .t,.note .t{display:block;font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:5px}
+.trap .t{color:var(--lan)} .warn .t{color:var(--warn)} .note .t{color:var(--bambu)}
+
+/* tables */
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+th{background:#16202c;text-align:left;padding:9px 11px;font-size:11px;text-transform:uppercase;
+   letter-spacing:.07em;color:var(--dim);border-bottom:2px solid var(--line2);position:sticky;top:0}
+td{padding:8px 11px;border-bottom:1px solid #1a2532;vertical-align:top}
+tr:hover td{background:#131c26}
+td code{white-space:nowrap}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:9px}
+.tbl-wrap table{margin:0}
+
+/* cards & grids */
+.grid{display:grid;gap:14px;margin:18px 0}
+.g2{grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px 17px}
+.card h4{margin:0 0 8px;color:var(--txt);text-transform:none;letter-spacing:0;font-size:15px}
+.card .big{font-family:var(--mono);font-size:22px;font-weight:700;color:var(--bambu);display:block;margin-bottom:4px}
+.card p{font-size:13px;color:var(--dim);margin:4px 0 0}
+
+/* tabs */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:18px 0 0}
+.tab{background:var(--panel);border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;
+     padding:9px 16px;font-size:13.5px;cursor:pointer;color:var(--dim);font-family:var(--sans);transition:.15s}
+.tab:hover{color:var(--txt);background:var(--panel2)}
+.tab.on{background:var(--panel2);color:var(--txt);border-color:var(--line2);box-shadow:inset 0 2px 0 var(--bambu)}
+.tabpane{display:none;background:var(--panel2);border:1px solid var(--line2);border-radius:0 10px 10px 10px;padding:20px 22px}
+.tabpane.on{display:block}
+
+/* explorer */
+.explorer{background:linear-gradient(160deg,#101a26,#0c141d);border:1px solid var(--line2);border-radius:12px;padding:22px;margin:18px 0}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.chip{padding:8px 15px;border-radius:22px;border:1px solid var(--line2);background:#0e1620;cursor:pointer;
+      font-size:13px;color:var(--dim);transition:.18s;font-family:var(--sans)}
+.chip:hover{color:var(--txt);border-color:#3d566f}
+.chip.on{background:#173042;border-color:var(--bambu);color:#dff2ff;box-shadow:0 0 0 3px #17304266}
+.kv{display:grid;grid-template-columns:170px 1fr;gap:7px 16px;font-size:13.5px}
+.kv dt{color:var(--dimmer);font-size:12px;text-transform:uppercase;letter-spacing:.05em;padding-top:2px}
+.kv dd{margin:0;font-family:var(--mono);font-size:12.5px;color:#cfe6f7;word-break:break-word}
+.pipe{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:16px 0 4px;font-size:12px;font-family:var(--mono)}
+.node{padding:8px 12px;border-radius:8px;border:1px solid var(--line2);background:#0e1620;white-space:nowrap}
+.node.p{border-color:var(--bambu);box-shadow:0 0 12px #4cc2ff22}
+.node.c{border-color:var(--snap);box-shadow:0 0 12px #ffb45422}
+.arrow{color:var(--dimmer)} .arrow.enc{color:var(--ok)} .arrow.plain{color:var(--lan)}
+
+/* byte grid */
+.bytes{display:grid;grid-template-columns:repeat(16,1fr);gap:3px;margin:14px 0;font-family:var(--mono);font-size:10.5px}
+.byte{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:3px;background:#0d141d;
+      border:1px solid #1d2937;cursor:default;transition:.12s}
+.byte:hover{transform:scale(1.28);z-index:5;border-color:#fff}
+.byte.hdr{background:#12303f;border-color:#1f5c7d;color:#9fdcff}
+.byte.user{background:#1e2a12;border-color:#3f5c22;color:#c7e8a0}
+.byte.code_{background:#2d1a2e;border-color:#6b3a6b;color:#f0b6f0}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:6px}
+.legend i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+/* tools */
+.tool{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:18px 20px;margin:18px 0}
+.tool h4{margin:0 0 4px;color:var(--txt);text-transform:none;letter-spacing:0;font-size:15.5px}
+.tool .desc{font-size:12.5px;color:var(--dimmer);margin:0 0 14px}
+.inp{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--dimmer);text-transform:uppercase;letter-spacing:.06em}
+input[type=text],input[type=number],select{background:#0a1017;border:1px solid var(--line2);border-radius:6px;
+      padding:8px 10px;color:var(--txt);font-family:var(--mono);font-size:13px;min-width:110px}
+input:focus,select:focus{outline:none;border-color:var(--bambu)}
+.out{margin-top:14px;background:#0a1017;border:1px solid var(--line);border-radius:8px;padding:13px 15px;
+     font-family:var(--mono);font-size:13px;white-space:pre-wrap;word-break:break-word;color:#bfe3ff;min-height:44px}
+.out .lbl{color:var(--dimmer);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-family:var(--sans)}
+.out .hi{color:var(--ok);font-weight:700} .out .er{color:var(--lan)}
+
+/* search */
+#search{width:100%;background:#0a1017;border:1px solid var(--line2);border-radius:8px;padding:10px 13px;
+        color:var(--txt);font-family:var(--sans);font-size:13px;margin-bottom:10px}
+#search:focus{outline:none;border-color:var(--bambu)}
+.hit{background:#fff}
+mark{background:#5a4a12;color:#ffe08a;padding:0 2px;border-radius:2px}
+.hidden{display:none!important}
+#count{font-size:11px;color:var(--dimmer);margin-bottom:14px}
+
+/* timeline */
+.tl{border-left:2px solid var(--line2);margin-left:8px;padding-left:22px}
+.tl .ev{position:relative;margin-bottom:20px}
+.tl .ev:before{content:"";position:absolute;left:-29px;top:5px;width:11px;height:11px;border-radius:50%;
+     background:var(--bambu);box-shadow:0 0 0 4px #0a0e14,0 0 10px var(--bambu)}
+.tl .ev.bad:before{background:var(--lan);box-shadow:0 0 0 4px #0a0e14,0 0 10px var(--lan)}
+.tl .d{font-family:var(--mono);font-size:11.5px;color:var(--dimmer)}
+.tl .h{font-weight:600;font-size:14.5px;margin:1px 0 3px}
+.tl p{font-size:13px;color:var(--dim);margin:0}
+
+/* misc */
+.pill{display:inline-block;font-family:var(--mono);font-size:11.5px;padding:2px 8px;border-radius:5px;
+      background:#16202c;border:1px solid var(--line2);color:#bfe3ff;margin:2px 3px 2px 0}
+details{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px 16px;margin:10px 0}
+summary{cursor:pointer;font-weight:600;font-size:14px;list-style:none;display:flex;gap:9px;align-items:center}
+summary:before{content:"▸";color:var(--dimmer);transition:.15s} details[open] summary:before{transform:rotate(90deg)}
+summary::-webkit-details-marker{display:none}
+.gcard{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--lan);border-radius:9px;
+       padding:14px 17px;margin:11px 0}
+.gcard .t{font-weight:700;font-size:14.5px;margin-bottom:5px}
+.gcard .m{font-size:13px;color:var(--dim)}
+.gcard .why{font-size:12.5px;color:var(--dimmer);margin-top:7px;font-style:italic}
+.tag{font-size:10px;font-family:var(--mono);padding:1px 6px;border-radius:4px;background:#16202c;
+     border:1px solid var(--line2);color:var(--dim);margin-right:5px}
+.tag.p1s{color:var(--bambu);border-color:#1f5c7d} .tag.h2s{color:var(--x1);border-color:#5c3f7d}
+.tag.u1{color:var(--snap);border-color:#7a5620} .tag.cam{color:var(--ok);border-color:#2f6b28}
+.topbar{position:fixed;top:0;right:0;left:262px;background:#0a0e14ee;backdrop-filter:blur(8px);
+        border-bottom:1px solid var(--line);padding:9px 44px;display:flex;gap:14px;align-items:center;z-index:50}
+.topbar .filters{display:flex;gap:6px;align-items:center;font-size:11.5px;color:var(--dimmer)}
+.fbtn{background:#0e1620;border:1px solid var(--line2);border-radius:14px;padding:3px 11px;font-size:11px;
+      cursor:pointer;color:var(--dim);font-family:var(--sans)}
+.fbtn.on{border-color:var(--bambu);color:#dff2ff}
+main{padding-top:76px}
+@media(max-width:900px){#wrap{grid-template-columns:1fr}nav{position:relative;height:auto}
+  .topbar{left:0;position:static}main{padding-top:20px}}
+</style>
+</head>
+<body data-f="all">
+
+<div id="wrap">
+<nav id="nav">
+  <h1>Printer Protocol<br>Field Guide</h1>
+  <div class="sub">Bambu P1S · H2S · X1 &nbsp;/&nbsp; Snapmaker U1 (Paxx)<br>Hard-won behavior &amp; protocol notes</div>
+  <input id="search" placeholder="Search this guide…" autocomplete="off">
+  <div id="count"></div>
+  <div class="grp">Orientation</div>
+  <a href="#mental">1 · Mental model</a>
+  <a href="#explorer">2 · Mode explorer</a>
+  <a href="#arch">3 · Architecture</a>
+  <div class="grp">Bambu cloud plane</div>
+  <a href="#auth">4 · Auth &amp; tokens</a>
+  <a href="#mqtt">5 · MQTT transport</a>
+  <a href="#commands">6 · Command catalog</a>
+  <a href="#report">7 · Report fields</a>
+  <a href="#hms">8 · HMS decoding</a>
+  <a href="#signing">8b · Command signing</a>
+  <div class="grp">Per printer / mode</div>
+  <a href="#modes">9 · P1S vs H2S vs X1 vs LAN</a>
+  <a href="#camera">10 · Three camera protocols</a>
+  <a href="#snapmaker">11 · Snapmaker U1 / Paxx</a>
+  <a href="#ams">12 · AMS &amp; filament</a>
+  <div class="grp">Reference</div>
+  <a href="#tools">13 · Interactive decoders</a>
+  <a href="#gotchas">14 · Gotcha index</a>
+  <a href="#unknowns">15 · Known unknowns</a>
+  <a href="#timeline">16 · Discovery timeline</a>
+</nav>
+
+<div>
+<div class="topbar">
+  <div class="filters">
+    <span>Confidence filter:</span>
+    <button class="fbtn on" data-f="all">All</button>
+    <button class="fbtn" data-f="conf">Confirmed only</button>
+    <button class="fbtn" data-f="code">Code only</button>
+  </div>
+  <div style="margin-left:auto;font-size:11.5px;color:var(--dimmer)">
+    <span class="b conf">Confirmed</span> <span class="b code">Code</span>
+    <span class="b doc">Doc</span> <span class="b unk">Unknown</span>
+  </div>
+</div>
+
+<main id="main">
+
+<!-- ============ 1 ============ -->
+<section id="mental">
+<h2><span class="num">1</span>The mental model</h2>
+<p class="lead">Three printers, three completely different control planes. The single biggest source of
+confusion is that "Bambu printer" does not describe one protocol — and that <em>mode</em> changes
+behavior more than <em>model</em> does.</p>
+
+<div class="grid g3">
+  <div class="card"><h4 style="color:var(--bambu)">Bambu P1S</h4>
+    <p>Stock, <b>pre-Bambu-Connect</b> firmware. Cloud MQTT only. Camera is a bespoke binary-TLS
+    protocol on port 6000. AMS 1 sends <b>delta</b> updates with no humidity/temp.</p></div>
+  <div class="card"><h4 style="color:var(--x1)">Bambu H2S</h4>
+    <p><b>Bambu Connect</b> from day one. Cloud MQTT for control, but camera needs a LAN path:
+    RTSPS on port 322. AMS 2 Pro sends <b>full</b> updates with humidity + temp.</p></div>
+  <div class="card"><h4 style="color:var(--snap)">Snapmaker U1</h4>
+    <p><b>Paxx</b> custom firmware = Klipper + Moonraker. Plain HTTP on port 80, no cloud at all.
+    OctoPrint-style shims mixed with native Moonraker routes.</p></div>
+</div>
+
+<h3>The five lessons that cost the most time</h3>
+<div class="grid g2">
+  <div class="note"><span class="t">Lesson 1 — Absent ≠ zero</span>
+  Bambu reports are <b>partial</b>. A heartbeat omits most fields. Treating a missing field as
+  <code>0</code>/<code>""</code>/<code>idle</code> causes the entire flicker bug family: state
+  reverting, filenames blanking, temps showing <code>?</code>. <b>Only write a field when the key was
+  actually present.</b></div>
+
+  <div class="note"><span class="t">Lesson 2 — "LAN Only Liveview" ≠ "LAN Mode"</span>
+  Two different toggles. <b>Liveview</b> opens RTSPS:322 for the camera and cloud MQTT keeps working.
+  <b>Full LAN Mode</b> makes the printer stop publishing to the cloud entirely — it goes dark for any
+  cloud client, by design, with no error.</div>
+
+  <div class="note"><span class="t">Lesson 3 — Modern firmware cryptographically verifies commands</span>
+  Post-Jan-2025 Bambu firmware <b>rejects every unsigned <code>print</code>-namespace command</b>
+  (<code>err_code 84033543</code>). The fix is an RSA-SHA256 <code>header</code> envelope —
+  <b>not</b> Developer Mode, which only makes the header optional. Acks <em>do</em> exist: they arrive
+  inline on the <code>report</code> topic. See <a href="#signing">§8b</a>.</div>
+
+  <div class="note"><span class="t">Lesson 4 — Numbers lie, strings hide</span>
+  Bambu packs two temperatures into one integer. AMS mixes string and numeric types in the same
+  object. Snapmaker returns HTTP <b>200 with an embedded error body</b>. Status codes are not
+  evidence of success.</div>
+
+  <div class="note"><span class="t">Lesson 5 — Model codes ≠ marketing names</span>
+  <code>O1S</code> is the H2S. <code>BL-P001</code> is the X1 Carbon. Matching on display names
+  silently misroutes cameras to the wrong protocol and port.</div>
+
+  <div class="note"><span class="t">Bonus — Firmware can just stop talking</span>
+  Some firmware resolves an HMS condition by <b>stopping sending the key</b> rather than sending an
+  empty array. If you only clear on explicit <code>hms:[]</code>, the printer latches into
+  <code>error</code> forever.</div>
+</div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section id="explorer">
+<h2><span class="num">2</span>Mode explorer</h2>
+<p class="lead">Pick a printer + mode. The transport chain, credentials, and what breaks all change.</p>
+
+<div class="explorer">
+  <div class="chips" id="chips"></div>
+  <div id="pipe" class="pipe"></div>
+  <dl class="kv" id="detail"></dl>
+  <div id="breaks" style="margin-top:16px"></div>
+</div>
+</section>
+
+<!-- ============ 3 ============ -->
+<section id="arch">
+<h2><span class="num">3</span>Architecture</h2>
+<p class="lead">How a self-hosted dashboard reaches three heterogeneous fleets without leaking vendor
+quirks into the UI.</p>
+
+<pre><span class="c">                    ┌──────────────┐
+                    │   Browser    │  ← WebSocket push + MJPEG &lt;img&gt;
+                    └──────┬───────┘
+                           │  HTTP :8080 (LAN-trust; auth at reverse proxy)
+              ┌────────────┴──────────────────────────┐
+              │            Go server                  │
+              │  REST + WS hub + normalized PrinterStatus
+              └───┬───────────────┬───────────────┬───┘
+                  │               │               │
+     ┌────────────▼───┐   ┌───────▼────────┐  ┌───▼──────────────┐
+     │ <span class="f">Bambu driver</span>     │   │ <span class="f">Snapmaker driver</span>  │  │ <span class="f">Camera layer</span>      │
+     │ cloud MQTT     │   │ HTTP poll 3s   │  │ bambus:// :6000 │
+     │ <span class="s">TLS :8883</span>       │   │ <span class="n">plaintext :80</span>   │  │ RTSPS :322→go2rtc│
+     └────────┬───────┘   └───────┬────────┘  │ MJPEG proxy     │
+              │                   │           └─────────────────┘
+     us.mqtt.bambulab.com     http://u1.local
+     device/{serial}/report   /api/printer
+     device/{serial}/request  /printer/gcode/script</span></pre>
+
+<h3>The normalization contract</h3>
+<p>Every driver must fill one <code>PrinterStatus</code>. Two design decisions are worth stealing:</p>
+<ul>
+<li><b>Temperatures, <code>light_on</code>, <code>homed</code> are nullable.</b> <code>null</code> means
+"unknown / not reported / unsupported" and must render as <code>—</code>, never as <code>off</code>
+or <code>0</code>. Rendering <code>null</code> as "off" told users their physically-on light was off.</li>
+<li><b>Capability flags beat inference.</b> <code>has_chamber</code> is set by the driver from the model
+code — <em>not</em> inferred from a nil chamber temperature, because nil only means "not this cycle".</li>
+</ul>
+<div class="warn"><span class="t">Interface smell worth knowing</span>
+<code>SetHomed(*bool)</code> exists on the vendor-neutral interface purely because Paxx cannot report
+homed state. On Bambu it is a no-op. Sometimes a vendor-specific hole has to be poked through a
+neutral abstraction — but name it honestly so nobody thinks it's universal.</div>
+</section>
+
+<!-- ============ 4 ============ -->
+<section id="auth">
+<h2><span class="num">4</span>Bambu auth &amp; tokens</h2>
+<p class="lead">Only five HTTP endpoints exist in production. The token is the confusing part.</p>
+
+<div class="tbl-wrap"><table>
+<tr><th>Method</th><th>Path</th><th>Body</th><th>Used for</th></tr>
+<tr><td><code>POST</code></td><td><code>/v1/user-service/user/login</code></td>
+    <td><code>{account,password,apiError:""}</code></td><td>Password login → <code>accessToken</code></td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/user-service/user/sendemail/code</code></td>
+    <td><code>{email,type:"codeLogin"}</code></td><td>2FA email code</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/user-service/user/login</code></td>
+    <td><code>{account,code}</code></td><td>2FA second leg</td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/design-user-service/my/preference</code></td>
+    <td>—</td><td><code>uid</code> — <b>the only token validator</b></td></tr>
+<tr><td><code>GET</code></td><td><code>/v1/iot-service/api/user/bind</code></td>
+    <td>—</td><td>Device list: <code>dev_id</code>, <code>dev_access_code</code>, model names</td></tr>
+<tr><td><code>POST</code></td><td><code>/v1/iot-service/api/user/ttcode</code></td>
+    <td><code>{dev_id}</code></td><td>TUTK remote-camera creds (<b>unused</b>)</td></tr>
+</table></div>
+<p>Bases: <code>https://api.bambulab.com</code> (global) / <code>https://api.bambulab.cn</code> (china).
+Headers are just <code>Content-Type: application/json</code> + <code>Authorization: Bearer …</code>.</p>
+
+<div class="note"><span class="t">No client spoofing required</span>
+There is <b>no</b> <code>X-BBL-Client-*</code> or User-Agent impersonation anywhere, and every account
+endpoint works fine with Go's default client UA. Those headers only matter for the slicer-plugin
+resource feed. Don't hunt for a requirement that doesn't exist.</div>
+
+<h3>Two token species, one slot <span class="b conf">Confirmed</span></h3>
+<p>The MQTT password is <em>literally the same string</em> used as the HTTP Bearer value. But that
+string can be either of two different things:</p>
+<div class="grid g2">
+<div class="card"><h4>① Opaque login token</h4>
+<p>What <code>/user/login</code> returns as <code>accessToken</code>. Real sample begins
+<code>AQBK…</code>, ~144 chars, <b>not a JWT</b>.</p></div>
+<div class="card"><h4>② Browser JWT</h4>
+<p><code>eyJ…</code> pulled from <code>localStorage</code> after an SSO sign-in. Required when the
+account uses Google/Apple SSO, where password login is impossible.</p></div>
+</div>
+
+<div class="trap"><span class="t">Gotcha — expiry is usually unknown, and "unknown" means "valid forever"</span>
+A real token file contained <code>"expires_at": -62135596800</code> — that is Go's
+<code>time.Time{}.Unix()</code>. Loaders ignore non-positive values, so expiry stays zero and the
+validity check returns <b>true unconditionally</b>: nothing ever refreshes proactively. The only thing
+that catches a dead token is a device-list call failing at startup. Community reports put lifetime
+around 3 months. <b>Design for "token dies silently", not "token refreshes".</b></div>
+
+<div class="warn"><span class="t">Gotcha — 2FA responses omit <code>success</code></span>
+After the 2FA leg the API may return an <code>accessToken</code> while <b>omitting</b> the
+<code>success</code> field. Treat any non-empty <code>accessToken</code> as success or login fails
+spuriously.</div>
+
+<p>Token cache: <code>~/.printer-dashboard/bambu_token_&lt;email&gt;.json</code>
+(<code>@</code>→<code>_at_</code>, <code>.</code>→<code>_dot_</code> — despite a comment calling it a
+hash), schema <code>{token,user_id,region,email?,expires_at}</code>, dir <code>0700</code> / file
+<code>0600</code>.</p>
+
+<h3>Device discovery</h3>
+<pre><span class="c">// GET /v1/iot-service/api/user/bind</span>
+{ <span class="s">"message"</span>: <span class="s">"..."</span>,
+  <span class="s">"devices"</span>: [ { <span class="s">"dev_id"</span>: <span class="s">"…"</span>,        <span class="c">// == serial == MQTT topic component</span>
+                 <span class="s">"name"</span>: <span class="s">"…"</span>, <span class="s">"online"</span>: <span class="n">true</span>, <span class="s">"print_status"</span>: <span class="s">"…"</span>,
+                 <span class="s">"dev_model_name"</span>: <span class="s">"…"</span>, <span class="s">"dev_product_name"</span>: <span class="s">"…"</span>,
+                 <span class="s">"dev_access_code"</span>: <span class="s">"…"</span> } ] }</pre>
+<div class="warn"><span class="t">Two traps here</span>
+① Deriving a local ID from a <b>truncated</b> serial made one device silently overwrite another. Use
+the full serial.
+② <code>dev_access_code</code> is returned by the cloud but never used — camera setup reads the code
+off the printer LCD. Whether they match is <span class="b unk">Unknown</span> and worth one test: if
+they do, camera onboarding automates completely.</div>
+</section>
+
+<!-- ============ 5 ============ -->
+<section id="mqtt">
+<h2><span class="num">5</span>MQTT transport</h2>
+<p class="lead">Encrypted, cloud-routed, and fire-and-forget.</p>
+
+<div class="tbl-wrap"><table>
+<tr><th>Parameter</th><th>Value</th><th>Note</th></tr>
+<tr><td>Broker</td><td><code>ssl://us.mqtt.bambulab.com:8883</code></td><td><code>cn.mqtt.bambulab.com:8883</code> for china region</td></tr>
+<tr><td>Transport</td><td>MQTT over TLS</td><td><span class="b conf">Confirmed</span></td></tr>
+<tr><td>TLS verify</td><td><code>InsecureSkipVerify: true</code></td><td>Cloud cert not reliably in minimal trust stores</td></tr>
+<tr><td>Username</td><td><code>u_{user_id}</code></td><td>numeric uid from <code>/preference</code></td></tr>
+<tr><td>Password</td><td>the account token</td><td>see §4 — may not be a JWT</td></tr>
+<tr><td>Client ID</td><td><code>printer-dashboard-{id}-{unixnano}</code></td><td>unique per process start</td></tr>
+<tr><td>Clean session</td><td><code>true</code></td><td>no retained state across restarts</td></tr>
+<tr><td>Keepalive / ping</td><td>30 s / 10 s</td><td></td></tr>
+<tr><td>Reconnect</td><td>auto, max 30 s; initial connect retried <b>indefinitely</b> (1 s→30 s)</td><td>no permanent-failed state</td></tr>
+<tr><td>Subscribe</td><td><code>device/{dev_id}/report</code> QoS 0</td><td>all telemetry</td></tr>
+<tr><td>Publish</td><td><code>device/{dev_id}/request</code> QoS 0, retain=false</td><td>all commands</td></tr>
+</table></div>
+
+<div class="trap"><span class="t">There is no separate ack topic — but acks do exist</span>
+<code>publishCommand</code> returning success only means the <b>broker</b> accepted the publish. The
+firmware's <code>result</code>/<code>reason</code>/<code>err_code</code> reply arrives
+<b>inline on the <code>report</code> topic</b>, interleaved with status — so you must demultiplex acks
+from status and register a waiter <b>before</b> publishing. Keep ack timeouts non-fatal so printers
+that never ack are not falsely blamed. An earlier note here claimed acks were impossible; that was
+wrong — see <a href="#signing">§8b</a>.</div>
+
+<div class="warn"><span class="t">Test-suite warning</span>
+<b>No test asserts any of this.</b> The MQTT mocks discard topic and QoS
+(<code>func(_ string,_ byte,_ bool,…)</code>). A wrong-topic or QoS regression passes the entire suite
+green. The suite proves our <em>parsing</em> is stable, not that the wire format is right.</div>
+
+<h3>Forcing a full snapshot: <code>pushall</code></h3>
+<pre><span class="c">// publish → device/{serial}/request</span>
+{<span class="s">"pushing"</span>:{<span class="s">"command"</span>:<span class="s">"pushall"</span>,<span class="s">"version"</span>:<span class="n">1</span>,<span class="s">"push_target"</span>:<span class="n">1</span>}}</pre>
+<p>Sent once immediately after subscribe to get current state. <b>Research says a delta-only printer
+like the P1S needs this periodically — no code anywhere does that.</b> A field missed at startup can
+stay wrong until reconnect.</p>
+</section>
+
+<!-- ============ 6 ============ -->
+<section id="commands">
+<h2><span class="num">6</span>Command catalog</h2>
+<p class="lead">Exact bytes. Click a command to copy it.</p>
+<div class="trap"><span class="t">Read <a href="#signing">§8b</a> first</span>
+Everything below in the <code>print</code> namespace is <b>rejected outright</b> on post-Jan-2025
+firmware (H2S) unless wrapped in an RSA-SHA256 <code>header</code> envelope. What is shown is the
+<i>inner</i> payload; signing wraps it. <code>system</code> and <code>pushing</code> stay unsigned.</div>
+<div id="cmdgen"></div>
+
+<div class="trap"><span class="t">The most expensive gotcha in the repo — <code>ledctrl</code></span>
+Bambu firmware <b>silently ignores</b> a light command that is missing <code>sequence_id</code>,
+<code>led_on_time</code>, <code>led_off_time</code>, <code>loop_times</code>, or
+<code>interval_time</code>. MQTT publishes fine. No error anywhere. The light doesn't change. This
+cost a full debugging session. <b>Assume "missing field ⇒ silent ignore" is a general Bambu pattern</b>,
+not a light-specific quirk.</div>
+
+<div class="warn"><span class="t"><code>sequence_id</code> asymmetry is deliberate — don't "fix" it</span>
+<code>print</code>-namespace commands never set it; the <code>system</code> light command always sets
+<code>"0"</code>. Tests assert the absence as intended. Investigation concluded it's inconsequential
+but could <b>not</b> prove it either way. Adding unverified fields to a working command path without
+firmware ground truth is the riskier choice.</div>
+
+<div class="note"><span class="t">Jog convention worth copying verbatim</span>
+Switch to relative (<code>G91</code>) → emit <b>one</b> <code>G1</code> containing only axes with
+non-zero deltas (omit the axis term rather than emitting <code>Z0</code>) → restore
+<code>G90</code>. Leaving a printer in relative mode is a nasty latent bug. Note the trailing
+<code>\n</code> on every Bambu <code>gcode_line</code>.</div>
+
+<h3>Documented but not implemented <span class="b doc">Doc</span></h3>
+<pre><span class="c">// AMS — payloads from upstream research; VERIFY before use, none exist in this codebase</span>
+{<span class="s">"print"</span>:{<span class="s">"command"</span>:<span class="s">"ams_change_filament"</span>,<span class="s">"target"</span>:<span class="n">0</span>,<span class="s">"curr_temp"</span>:<span class="n">0</span>,<span class="s">"tar_temp"</span>:<span class="n">220</span>}}
+{<span class="s">"print"</span>:{<span class="s">"command"</span>:<span class="s">"unload_filament"</span>}}
+{<span class="s">"print"</span>:{<span class="s">"command"</span>:<span class="s">"ams_control"</span>,<span class="s">"param"</span>:<span class="s">"resume"</span>}}   <span class="c">// resume|done|pause|reset</span>
+{<span class="s">"print"</span>:{<span class="s">"command"</span>:<span class="s">"ams_filament_setting"</span>,<span class="s">"ams_id"</span>:<span class="n">0</span>,<span class="s">"tray_id"</span>:<span class="n">0</span>,
+          <span class="s">"tray_type"</span>:<span class="s">"PLA"</span>,<span class="s">"tray_color"</span>:<span class="s">"FF0000FF"</span>,
+          <span class="s">"nozzle_temp_min"</span>:<span class="n">190</span>,<span class="s">"nozzle_temp_max"</span>:<span class="n">230</span>}}</pre>
+<p style="font-size:13px;color:var(--dim)">Live risk: sending newer AMS commands to stock P1S firmware
+may trip the client-version-gate HMS described in §8.</p>
+</section>
+
+<!-- ============ 7 ============ -->
+<section id="report">
+<h2><span class="num">7</span>Report fields &amp; presence semantics</h2>
+<p class="lead">Top-level keys: <code>print</code>, <code>camera</code>, <code>system</code>. A report
+with no <code>print</code> key is legal — ignore it for status.</p>
+
+<div class="tbl-wrap"><table>
+<tr><th>Field</th><th>Type</th><th>Notes</th></tr>
+<tr><td><code>gcode_state</code></td><td>string</td><td><b>may be absent</b> on heartbeats — see state map</td></tr>
+<tr><td><code>gcode_file</code></td><td>string</td><td>H2S populates; <b>P1S often leaves empty</b></td></tr>
+<tr><td><code>subtask_name</code></td><td>string</td><td><b>P1S carries the filename here</b></td></tr>
+<tr><td><code>mc_percent</code></td><td>int</td><td>0–100, not 0–1</td></tr>
+<tr><td><code>mc_remaining_time</code></td><td>int</td><td><b>minutes</b> — ×60 for seconds</td></tr>
+<tr><td><code>bed_temper</code> / <code>bed_target_temper</code></td><td>float</td><td>no range validation applied</td></tr>
+<tr><td><code>nozzle_temper</code> / <code>nozzle_target_temper</code></td><td>float</td><td>no range validation applied</td></tr>
+<tr><td><code>chamber_temper</code> / <code>chamber_target_temper</code></td><td>float</td><td>validated −50..100 / 0..100</td></tr>
+<tr><td><code>info.temp</code></td><td>number</td><td><b>packed 32-bit</b> — see decoder</td></tr>
+<tr><td><code>layer_num</code> / <code>total_layer_num</code></td><td>int</td><td></td></tr>
+<tr><td><code>home_flag</code></td><td>int</td><td><b>bitmask</b>; bit 0 = axes homed</td></tr>
+<tr><td><code>print_error</code></td><td>int</td><td>0 = none — <b>often stays 0 during real failures</b></td></tr>
+<tr><td><code>hms</code></td><td>array</td><td>absent ≠ empty — see §8</td></tr>
+<tr><td><code>lights_report</code></td><td>array</td><td><code>{node:"chamber_light",mode:"on"}</code> — the <b>live</b> state</td></tr>
+<tr><td><code>ams</code></td><td>object</td><td>see §12</td></tr>
+<tr><td><code>wifi_signal</code>, <code>stg_cur</code>, <code>stg_total</code>, <code>lifecycle</code></td><td>—</td><td><b>parsed then dropped</b> — available, unused</td></tr>
+<tr><td><code>camera.ipcam_url</code></td><td>string</td><td>if present, <b>overrides</b> any constructed camera URL</td></tr>
+<tr><td><code>system.ledctrl</code></td><td>object</td><td><b>command ACK only</b> — never live state</td></tr>
+</table></div>
+
+<h3>State map</h3>
+<p><span class="pill">RUNNING → printing</span><span class="pill">PREPARE → printing</span>
+<span class="pill">PAUSE → paused</span><span class="pill">SUCCESS / FINISH → complete</span>
+<span class="pill">FAILED → error</span><span class="pill">IDLE / "" → idle</span>
+<span class="pill">STANDBY → idle</span><span class="pill">other → unknown</span></p>
+
+<div class="trap"><span class="t">The SUCCESS → IDLE flicker</span>
+Firmware reports <code>SUCCESS</code> when a print finishes, then settles to <code>IDLE</code> on the
+<b>very next push</b>. Applying that immediately makes "complete" flash and vanish within ~2 reports.
+Fix: require <b>2 consecutive</b> idle reports before overwriting a latched <code>complete</code>; any
+non-idle state still overrides instantly. <br><br>
+Related subtlety: <code>CurrentFile</code> is deliberately keyed off the <em>raw</em> per-report state,
+not the latched one — so the filename clears <b>one report before</b> the COMPLETE badge. That
+asymmetry is intentional, to decouple the two timings.</div>
+
+<div class="trap"><span class="t"><code>print_error</code> misleads in BOTH directions</span>
+① <b>False negative:</b> a P1S print failed because the cover came off; <code>print_error</code> was 0
+the whole time. That class surfaces only through HMS.<br>
+② <b>False positive:</b> <code>print_error=83935249</code> (<code>0x0500C011</code>) froze a healthy
+P1S in <code>error</code>. It is an <b>SD-card-degradation advisory</b> from the vendored
+<code>device_error</code> table — Bambu Handy shows nothing because it arrives on the
+<code>print_error</code> channel while <code>hms</code> was <code>[]</code>.<br>
+Correct policy: <code>print_error</code> outranks <code>gcode_state</code> only when
+<code>gcode_state</code> is present <em>and</em> unhealthy; otherwise it is a non-blocking
+<b>advisory</b>. A latched error nothing can un-latch is worse than a missed one — the old clear path
+was gated on <code>State != "error"</code>, so even a restart did not help.</div>
+
+<h3><code>info.temp</code> is a packed integer</h3>
+<pre><span class="f">current °C</span> =  value &amp; 0xFFFF
+<span class="f">target  °C</span> = (value &gt;&gt; 16) &amp; 0xFFFF</pre>
+<div class="note"><span class="t">Forensic proof</span>
+The original bug report showed a chamber reading of <b>3932184</b>. That is exactly
+<code>(60 &lt;&lt; 16) | 24</code> → <b>target 60 °C, current 24 °C</b>. The first attempted fix —
+"divide by 100000 if &gt; 500", which produced a plausible-looking 39.3 °C — was wrong.
+<b>Suspect packing before you suspect a unit scale.</b></div>
+</section>
+
+<!-- ============ 8 ============ -->
+<section id="hms">
+<h2><span class="num">8</span>HMS decoding</h2>
+<p class="lead">Bambu's Health Management System is an independent error channel with a bit-packed wire
+format and no severity field.</p>
+<pre><span class="c">// print.hms — plain integers, no severity on the wire</span>
+{<span class="s">"attr"</span>: <span class="n">201327360</span>, <span class="s">"code"</span>: <span class="n">196615</span>}
+
+<span class="f">human</span>    = <span class="s">"HMS_%04X-%04X-%04X-%04X"</span> % (attr&gt;&gt;16, attr&amp;0xFFFF, code&gt;&gt;16, code&amp;0xFFFF)
+<span class="f">module</span>   = (attr &gt;&gt; 24) &amp; 0xFF   → {0x05 mainboard, 0x0C xcam, 0x07 ams, 0x08 toolhead, 0x03 mc}
+<span class="f">severity</span> = code &gt;&gt; 16            → {1 fatal, 2 serious, 3 common, 4 info}</pre>
+<ul>
+<li>Severity <b>1 or 2 trips <code>State="error"</code> independently</b> of <code>print_error</code>
+and <code>gcode_state</code>. This is the only channel that catches cover-off / disturbance failures.</li>
+<li>The module table is deliberately <b>non-exhaustive</b>; unknown bytes → <code>"unknown"</code>.
+That is correct, not a bug.</li>
+<li>Vendored message table: <b>4998</b> <code>device_hms</code> + <b>946</b> <code>device_error</code>
+entries; the <code>device_error</code> half is never queried. Unrecognized codes → empty message,
+which is expected.</li>
+<li>Real example: <code>attr=0x03001200, code=0x00020001</code> →
+<span class="pill">HMS_0300-1200-0002-0001</span> <em>serious</em> — "The front cover of the toolhead
+fell off."</li>
+</ul>
+
+<div class="trap"><span class="t">Absent ≠ empty — and firmware may just stop talking</span>
+<code>hms: []</code> is the explicit <b>clear</b> signal; an <b>absent</b> key must not wipe reported
+state. But some firmware resolves a condition by simply <b>stopping sending the key</b>. Clearing only
+on explicit <code>[]</code> latches the printer into <code>error</code> forever. Fix: decay after
+<b>2 consecutive</b> healthy reports that omit <code>hms</code>.</div>
+
+<div class="trap"><span class="t">We got this one wrong the first time: <code>HMS_0500-0500-0001-0007</code></span>
+<em>"MQTT Command verification failed. Please update Studio (including the network plugin) or
+Handy…"</em> An earlier write-up here called this an unfixable firmware client-identity gate and said
+to dismiss it. <b>Wrong.</b> It is the <b>command-signature gate</b> from <a href="#signing">§8b</a>:
+a rejected <code>print</code> command raises this HMS, which sets <code>state:"error"</code>, which
+blocks the movement gate — so it presented as "all move buttons are dead". <b>Signing fixes it.</b>
+Two operational notes: the dismiss endpoint only suppresses <em>notifications</em>, not the state; a
+printer restart does clear it. The stock message text is aimed at Bambu Studio/Handy and is not
+diagnostic.</div>
+</section>
+
+<!-- ============ 8b ============ -->
+<section id="signing">
+<h2><span class="num">8b</span>Command signing <span class="b conf">Confirmed</span></h2>
+<p class="lead">The single most important protocol discovery in the project — and it overturned a
+conclusion previously recorded here.</p>
+
+<div class="trap"><span class="t">The headline</span>
+Bambu firmware released after roughly <b>January 2025</b> cryptographically verifies
+<b>every MQTT command in the <code>print</code> namespace</b>. Unsigned ⇒ rejected with
+<code>err_code 84033543</code> ("mqtt message verify failed").
+<ul style="margin:8px 0 0">
+<li><b>Developer Mode is NOT required.</b> It only makes the signature envelope optional.</li>
+<li>The P1S accepts unsigned frames only because its firmware <b>predates</b> the gate — it will start
+rejecting them after a firmware update.</li>
+<li><code>system</code> (e.g. <code>ledctrl</code>) and <code>pushing</code> (<code>pushall</code>)
+are <b>not</b> verified. That is why the light always worked while movement never did.</li>
+</ul></div>
+
+<h3>The envelope</h3>
+<pre><span class="c">// 1. payload — user_id is a TOP-LEVEL SIBLING, not inside "print"</span>
+{ <span class="s">"print"</span>: { <span class="s">"sequence_id"</span>: <span class="s">"5000"</span>, <span class="s">"command"</span>: <span class="s">"gcode_line"</span>, <span class="s">"param"</span>: <span class="s">"G28\n"</span> },
+  <span class="s">"user_id"</span>: <span class="s">"1578637590"</span> }
+
+<span class="c">// 2. sign the BYTE-EXACT JSON of that object — no canonicalisation</span>
+sign_string = base64( RSA-SHA256( privateKey, payload ) )
+
+<span class="c">// 3. append the header, publish the result UNMODIFIED</span>
+{ ...payload, <span class="s">"header"</span>: {
+    <span class="s">"sign_ver"</span>: <span class="s">"v1.0"</span>, <span class="s">"sign_alg"</span>: <span class="s">"RSA_SHA256"</span>,
+    <span class="s">"sign_string"</span>: <span class="s">"&lt;base64&gt;"</span>,
+    <span class="s">"cert_id"</span>: <span class="s">"&lt;lowercase hex serial&gt;CN=&lt;issuer CN&gt;"</span>,
+    <span class="s">"payload_len"</span>: <span class="s">"&lt;utf8 byte length as a JSON STRING&gt;"</span> } }</pre>
+
+<div class="grid g2">
+<div class="card"><h4><code>payload_len</code> must be a <b>string</b></h4>
+<p>A number yields <code>84033547</code> — <b>indistinguishable from a bad certificate.</b> The easiest
+detail to get wrong and the most expensive.</p></div>
+<div class="card"><h4><code>cert_id</code> is a serial, not a hash</h4>
+<p>Lowercase hex X.509 <b>serial</b> + <code>CN=</code> + issuer CN. Bambu's own IDs are 32 hex because
+their serials are 16 bytes. Every fingerprint-based theory was wrong.</p></div>
+<div class="card"><h4><code>sequence_id</code> ≥ 2000 on signed frames</h4>
+<p>A string, and a <b>fixed floor</b> — not a high-water mark. Below it the printer answers
+<code>84033545</code> <em>even with a trusted cert</em>. Studio uses a 20000–29999 window.</p></div>
+<div class="card"><h4>Sign the exact wire bytes</h4>
+<p>The signature covers the envelope minus <code>header</code>, <b>including</b> the trailing
+<code>user_id</code> sibling, and the printer re-checks byte-exact bytes. So <code>sign()</code>
+<b>splices</b> the header on rather than re-marshalling.</p></div>
+</div>
+
+<h3>err_code ladder — <code>84033543</code>–<code>84033548</code> are one family</h3>
+<div class="tbl-wrap"><table>
+<tr><th>err_code</th><th>Meaning</th></tr>
+<tr><td><code>84033543</code></td><td>No signature present → triggers signing auto-detection</td></tr>
+<tr><td><code>84033544</code></td><td>Contested: file-verify stage (bad <code>md5</code>, plaintext <code>url</code>, <code>ftp:///</code>) <b>or</b> <code>sequence_id</code> reuse across restarts</td></tr>
+<tr><td><code>84033545</code></td><td>"need reset device pub key" — signature valid, <code>cert_id</code> not trusted; <b>also</b> a trusted cert with <code>sequence_id &lt; 2000</code></td></tr>
+<tr><td><code>84033546</code></td><td>Required header field missing or malformed</td></tr>
+<tr><td><code>84033547</code></td><td>Signature rejected — wrong key, wrong bytes, <b>or numeric <code>payload_len</code></b></td></tr>
+</table></div>
+
+<h3>The trust store</h3>
+<ul>
+<li><code>security.app_cert_install</code> installs <code>{command, sequence_id, app_cert, crl}</code>
+and is itself <b>not verified</b> — that is what makes bootstrapping possible.</li>
+<li><code>crl</code> must be <b>non-empty</b> (empty ⇒ <code>"crl value is null"</code>) but <b>its
+signature is not validated</b>, so a self-minted CRL is accepted.</li>
+<li><b>The store lives in printer RAM and a reboot clears it.</b> So install on <b>every connect</b>,
+not once at setup. Right after a reboot <code>app_cert_list</code> answers
+<code>device-endreaddevcertfailed</code>.</li>
+<li>Install <b>adds</b>; there is no command to remove a single cert.</li>
+<li>A cert only needs installing — it need not have been provisioned through Bambu's cloud. But an
+arbitrary self-signed cert still fails signing with <code>84033547</code>, so <b>the chain is
+enforced</b>. The own-key shortcut does not work.</li>
+<li>The shared Bambu app cert/key have been <b>public since January 2025</b> (extracted from Bambu
+Connect, embedded in every copy). Not secret, not user-specific. Its <b>2025-12-12 expiry is not
+enforced</b>. Cached to the data directory as <code>bambu_app_{cert,key,crl}.pem</code> so an operator
+can replace them without a rebuild.</li>
+</ul>
+
+<h3>Acks do exist — a previous conclusion here was wrong</h3>
+<p>Earlier research in this repo concluded firmware acks were infeasible on cloud MQTT.
+<b>Incorrect.</b> The firmware replies with <code>result</code>/<code>reason</code>/<code>err_code</code>
+<b>inline on the same <code>report</code> topic</b>, interleaved with status. So:</p>
+<ul>
+<li>Register a waiter <b>before</b> publishing; turn a non-success ack into an error. Keep
+<b>timeouts non-fatal</b> so printers that never ack aren't falsely blamed.</li>
+<li><b>Never let an ack fall through into status parsing.</b> An ack carries no
+<code>home_flag</code>, which reads as zero and <b>silently marks a homed printer unhomed</b>.</li>
+</ul>
+
+<div class="note"><span class="t">Runtime adoption</span>
+The first <code>print</code> command goes out <b>unsigned</b>; an <code>84033543</code> flips
+<code>signRequired</code> and retries signed. Printers predating the gate never pay a rejected command,
+so the P1S is behaviourally unchanged. <code>commandRejectedError</code> carries the numeric
+<code>err_code</code> so callers branch on the verification family instead of matching message text.</div>
+
+<div class="warn"><span class="t">Already ruled out — don't re-test</span>
+Identical failure over <b>cloud and LAN</b>, so transport/encoding/topic/payload are all excluded —
+<b>the cloud is a forwarder, not a different command language</b>. Eleven <code>gcode_line</code>
+payload variants all produce the same rejection when unsigned: <b>payload shape does not influence
+verification</b>. Chain-of-trust theories were refuted (a real Bambu-chain cert failed identically
+while <code>payload_len</code> was still numeric).</div>
+</section>
+
+<!-- ============ 9 ============ -->
+<section id="modes">
+<h2><span class="num">9</span>Per-printer &amp; per-mode behavior</h2>
+
+<div class="tabs" data-group="modes">
+  <button class="tab on" data-pane="mp1s">P1S · pre-Bambu-Connect</button>
+  <button class="tab" data-pane="mh2s">H2S · Bambu Connect</button>
+  <button class="tab" data-pane="mx1">X1 series</button>
+  <button class="tab" data-pane="mlan">Full LAN Mode</button>
+</div>
+
+<div class="tabpane on" data-pane="mp1s">
+<div class="tbl-wrap"><table>
+<tr><th>Aspect</th><th>Behavior</th></tr>
+<tr><td>Control</td><td>Cloud MQTT only</td></tr>
+<tr><td>Filename</td><td>arrives in <b><code>subtask_name</code></b>; <code>gcode_file</code> empty during print</td></tr>
+<tr><td>Chamber heater</td><td><b>none</b> — <code>has_chamber=false</code>; <code>set_ctt</code> not applicable</td></tr>
+<tr><td>Chamber temp</td><td>direct <code>chamber_temper</code></td></tr>
+<tr><td>AMS</td><td>AMS 1: <b>delta updates only</b>; <b>no</b> humidity, <b>no</b> temp sensors</td></tr>
+<tr><td>AMS tray <code>state</code></td><td><b>reports <code>0</code> for every tray, including loaded ones</b></td></tr>
+<tr><td>Camera</td><td><code>bambus://</code> binary TLS, <b>port 6000</b></td></tr>
+<tr><td>Cover sensor</td><td><b>none</b> (open gantry) — cover-off appears as a force/vibration disturbance HMS code <span class="b doc">Doc</span></td></tr>
+<tr><td>Camera access code</td><td>on printer LCD (Settings → Network); works <b>without</b> LAN mode on this older firmware</td></tr>
+</table></div>
+<div class="trap"><span class="t">AMS <code>state: 0</code> trap</span>
+Because P1S reports <code>state:0</code> on loaded trays, any "is this slot loaded?" logic derived
+from <code>state</code> says <em>empty</em> for a fully-loaded P1S AMS. Working rule:
+<code>loaded = state ∈ {2,3,10,11} || tray_type != ""</code>. The fallback is safe because H2S/X1
+always send <code>tray_type:""</code> for genuinely empty trays.</div>
+</div>
+
+<div class="tabpane" data-pane="mh2s">
+<div class="tbl-wrap"><table>
+<tr><th>Aspect</th><th>Behavior</th></tr>
+<tr><td>Control</td><td>Cloud MQTT only</td></tr>
+<tr><td>Filename</td><td><code>gcode_file</code> populated normally</td></tr>
+<tr><td>Chamber heater</td><td><b>yes</b> — <code>has_chamber=true</code>; <code>set_ctt</code> works</td></tr>
+<tr><td>Chamber temp</td><td>arrives as <b>packed <code>info.temp</code></b></td></tr>
+<tr><td>AMS</td><td>AMS 2 Pro: <b>full updates</b>; <code>humidity</code> (0–5 index), <code>humidity_raw</code> (%), <code>temp</code> (°C)</td></tr>
+<tr><td>Cameras</td><td><b>exactly one</b>: <code>/streaming/live/1</code>. <code>/live/2</code> <b>404s on real hardware</b></td></tr>
+<tr><td>Camera transport</td><td><b>RTSPS port 322</b>, requires <b>"LAN Only Liveview"</b></td></tr>
+<tr><td>After power-on</td><td><code>lights_report</code> and temps may be absent for a while — UI must show <code>—</code></td></tr>
+</table></div>
+<div class="note"><span class="t">"LAN Only Liveview" is a separate toggle from full LAN Mode</span>
+This distinction is easy to get wrong and matters enormously:
+<ul style="margin:8px 0 0">
+<li><b>Liveview ON</b> ⇒ opens RTSPS:322 for video. Cloud MQTT <b>keeps working</b>. This is the working configuration.</li>
+<li><b>Full LAN Mode ON</b> ⇒ printer <b>stops publishing to cloud MQTT entirely</b>.</li>
+</ul>
+So "the H2S needs a LAN path for video but is still cloud-controlled" is not a contradiction.</div>
+<div class="warn"><span class="t">Stale comments lie about a second camera</span>
+Three comments in the codebase still describe a <code>/streaming/live/2</code> toolhead feed. Real
+hardware 404s on it. Don't re-add a second stream without <code>ffprobe</code> confirmation.</div>
+</div>
+
+<div class="tabpane" data-pane="mx1">
+<p>Known through a routing fix, but it's a clean lesson:</p>
+<ul>
+<li>X1 cameras serve <b>RTSPS on 322</b>, like H2 — <b>not</b> the port-6000 binary protocol used by P1/A1.</li>
+<li>Model codes are internal strings: <b><code>BL-P001</code> = X1 Carbon</b>, <b><code>O1S</code> = H2S</b>.
+Matching marketing names alone silently misroutes cameras.</li>
+<li>Keep camera-routing predicates separate from feature predicates: X1 uses RTSPS but must <b>not</b>
+inherit H2 semantics like <code>HasChamber</code>. Split <code>UsesRTSPS()</code> from
+<code>IsH2S()</code> for exactly this reason.</li>
+</ul>
+<div class="tbl-wrap"><table>
+<tr><th>Model string</th><th>Camera protocol</th><th><code>has_chamber</code></th></tr>
+<tr><td><code>H2S</code> <code>H2D</code> <code>H2C</code> <code>H2D PRO</code> <code>P2S</code> <code>X2D</code> <code>O1S</code></td><td>RTSPS :322</td><td><b>yes</b></td></tr>
+<tr><td><code>BL-P001</code> (X1 Carbon)</td><td>RTSPS :322</td><td>no</td></tr>
+<tr><td><code>P1S</code>, <code>A1</code>, others, empty</td><td><code>bambus://</code> :6000</td><td>no</td></tr>
+</table></div>
+</div>
+
+<div class="tabpane" data-pane="mlan">
+<p><b>A printer in full LAN Mode stops publishing to Bambu cloud MQTT by design.</b> It is not broken;
+it is behaving correctly. Symptoms in a cloud-only client: <code>online:false</code>, all telemetry
+<code>null</code>, no error, no explanation.</p>
+<p>Mitigation implemented here is <b>detection only</b>: zero reports for <b>60 s</b> after
+subscribe+pushall ⇒ log a warning naming LAN Mode. Full local-broker support is not implemented.</p>
+<div class="note"><span class="t">Known-good shape for a future local path</span> <span class="b doc">Doc</span>
+<code>ssl://&lt;printer_ip&gt;:8883</code>, username <code>bblp</code>, password = access code, same
+topics, same payload parser. Note this is the <b>same</b> <code>bblp</code>/access-code credential pair
+the port-6000 camera uses — which is a useful hint about how Bambu models local identity.</div>
+</div>
+
+<h3>Plaintext vs encrypted</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Path</th><th>Encrypted</th><th>Note</th></tr>
+<tr><td>Bambu cloud MQTT :8883</td><td><b>TLS</b></td><td>verification disabled in our client</td></tr>
+<tr><td>Bambu cloud API</td><td><b>TLS</b></td><td>normal verification</td></tr>
+<tr><td>Bambu camera :6000</td><td><b>TLS, self-signed</b></td><td>see cipher trap in §10</td></tr>
+<tr><td>Bambu camera RTSPS :322</td><td><b>TLS</b></td><td>self-signed</td></tr>
+<tr><td>Snapmaker U1 :80</td><td><b>plaintext HTTP</b></td><td>access code in URL + header</td></tr>
+</table></div>
+<p>There is <b>no AES-layer payload encryption</b> anywhere here. The LAN-MQTT AES scheme some Bambu
+libraries implement is unused because we never speak local MQTT.</p>
+</section>
+
+<!-- ============ 10 ============ -->
+<section id="camera">
+<h2><span class="num">10</span>Three camera protocols</h2>
+<p class="lead">The most expensive reverse engineering in the project. Three printers, three
+completely different video paths.</p>
+
+<div class="tabs" data-group="cam">
+  <button class="tab on" data-pane="c6000">bambus:// :6000</button>
+  <button class="tab" data-pane="c322">RTSPS :322 + go2rtc</button>
+  <button class="tab" data-pane="ctutk">TUTK (abandoned)</button>
+  <button class="tab" data-pane="csnap">Snapmaker</button>
+</div>
+
+<div class="tabpane on" data-pane="c6000">
+<p><b>Not HTTP.</b> Raw TLS socket with custom binary framing.
+<code>bambus://&lt;ip&gt;:6000?token=&lt;access_code&gt;</code></p>
+<p>Sequence: TCP dial → TLS handshake → send 80-byte auth packet → receive continuous frames at
+<b>~1 FPS</b>.</p>
+
+<h4>Auth packet — 80 bytes, little-endian</h4>
+<div class="bytes" id="bytegrid"></div>
+<div class="legend">
+  <span><i style="background:#12303f;border:1px solid #1f5c7d"></i>header / magic</span>
+  <span><i style="background:#1e2a12;border:1px solid #3f5c22"></i>username <code>bblp</code> (16–47)</span>
+  <span><i style="background:#2d1a2e;border:1px solid #6b3a6b"></i>access code (48–79)</span>
+</div>
+<label class="f" style="margin-top:10px">Try an access code
+  <input type="text" id="acinput" value="12345678" maxlength="40"></label>
+<pre id="acout"></pre>
+<div class="warn"><span class="t">Unexplained magic constants</span>
+<code>0x40</code> (64) ≠ 80 and <code>0x3000</code> (12288) are magic. Nobody here derived them.
+Don't "clean them up".</div>
+
+<h4>Frame format</h4>
+<pre>16-byte header:  [0:4] uint32 LE payload size | [4:7] 0x00 | [8:11] 0x01 | [12:15] 0x00
+then payload_size bytes of raw JPEG (FF D8 FF … FF D9)</pre>
+
+<div class="trap"><span class="t">The H2S/O1S cipher trap</span>
+H2S/O1S printers on port 6000 offer <b>only</b> <code>TLS_RSA_WITH_AES_256_GCM_SHA384</code> — a
+static-RSA suite that <b>Go excludes from its defaults</b>. You must hand-list it, and re-list Go's
+other defaults explicitly or you lose forward secrecy on everything else. Without this the handshake
+just fails. Hard-won.</div>
+
+<div class="trap"><span class="t">Framing has no validation and no resync</span>
+Header bytes 4–15 and the JPEG <code>FFD8</code>/<code>FFD9</code> markers are documented but
+<b>never checked</b>; only <code>payloadSize == 0</code> errors. There is <b>no resync and no max frame
+size</b>, and the read deadline is <b>cleared after the first frame</b>. A desync or a silently-stalled
+camera blocks forever and only recovers via reconnect backoff (1 s→30 s). Also: connections are keyed
+by <code>host:port</code> only, so a <b>rotated access code reuses the stale connection</b> until
+restart.</div>
+</div>
+
+<div class="tabpane" data-pane="c322">
+<pre><span class="c">// requires "LAN Only Liveview" enabled on the printer</span>
+rtsps://bblp:&lt;ACCESS_CODE&gt;@&lt;LAN_IP&gt;:<span class="n">322</span>/streaming/live/<span class="n">1</span></pre>
+<p>Username is the literal <code>bblp</code>; password is the access code. Only
+<code>/streaming/live/1</code> exists — <code>/live/2</code> <b>404s on real hardware</b>.</p>
+<p>The camera emits <b>H264 over RTSPS</b>, which browsers can't display. So:</p>
+<pre>printer --RTSPS:322--&gt; go2rtc (one subprocess per camera) --ffmpeg--&gt; MJPEG --&gt; browser</pre>
+<ul>
+<li>Launched <code>go2rtc -c &lt;tmpfile&gt;.yaml</code>, found via <code>PATH</code>. Per-instance
+ports: API <code>basePort + offset</code> (<b>basePort default 1984</b>), RTSP listener
+<code>127.0.0.1:18554 + offset</code>, monotonic offset, never reused.</li>
+<li><b>Why a dedicated RTSP listener per instance:</b> go2rtc's <code>ffmpeg:</code> pseudo-source reads
+back over RTSP. If two instances both default to <code>:8554</code>, the second bind fails and its
+transcode is left with no loopback URL.</li>
+<li>Two streams per camera: <code>&lt;key&gt;: rtsps://…</code> and
+<code>&lt;key&gt;_mjpeg: ffmpeg:&lt;key&gt;#video=mjpeg</code> — the extra hop exists because go2rtc's
+MJPEG endpoints require a JPEG/RAW source.</li>
+<li>Stream key = <code>host:port</code> + path with <code>/</code>→<code>_</code>
+(<code>10.0.0.50:322_streaming_live_1</code>). The path <b>must</b> be included or feeds on one
+host:port silently shadow each other.</li>
+<li>Readiness = poll <code>/api/streams</code> up to 10 s. <b>No supervisor</b> — a crashed instance is
+never auto-restarted; recovery is a manual reconnect endpoint.</li>
+</ul>
+<div class="warn"><span class="t">The #1 "camera is broken" false alarm</span>
+<b><code>go2rtc</code> missing from <code>PATH</code> ⇒ 502.</b> It works in Docker (binary baked at
+<code>/usr/local/bin/go2rtc</code>) and 502s when you run a bare local binary. This exact
+misdiagnosis consumed a whole investigation.</div>
+<div class="trap"><span class="t">Two unfixed latent bugs</span>
+① <code>go2rtc.go:186</code> passes the caller's <b>HTTP request context</b> into
+<code>waitForReady</code> — a browser aborting during the 10 s readiness window kills the instance that
+just started and returns 502, despite a prominent comment insisting subprocesses never inherit request
+contexts.<br>
+② The helpful <code>501 install go2rtc</code> branch is <b>unreachable in production</b> (the server
+always allocates a non-nil manager), so a missing binary surfaces as an opaque 502 — which is exactly
+how the misdiagnosis above happened.</div>
+<div class="note"><span class="t">The flicker that wasn't an error</span>
+The famous "camera flicker" was the handler serving a <b>gray 1×1 placeholder with <code>200 OK</code></b>
+on transient failure. The browser's <code>onload</code> fired happily — a <em>success</em> that looked
+like a broken stream. Fix: last-good-frame cache + only serve frames that actually parse as JPEG.
+<b>When a stream flickers, check whether you're being handed a valid placeholder.</b><br><br>
+Separately: browsers cancel in-flight image loads constantly. Those surface as
+<code>context canceled</code> / <code>context deadline exceeded</code> and were being reported as auth
+failures. Use a dedicated 15 s timeout context and filter those out of the error state.</div>
+<div class="warn"><span class="t">Proxy has no auth gate</span>
+<code>GET /api/camera/proxy?url=…</code> and <code>GET /api/camera/frame</code> dispatch on scheme
+(<code>http</code>/<code>https</code> passthrough, <code>rtsps</code>→go2rtc, <code>bambus</code>→buffer,
+else 501) with only no-cache middleware. This is LAN-trust by design — if you expose the dashboard
+beyond the LAN, the camera proxy is an unauthenticated window into your printers.</div>
+</div>
+
+<div class="tabpane" data-pane="ctutk">
+<p>Bambu's remote camera uses proprietary <b>TUTK P2P</b>. Credentials come from
+<code>POST /v1/iot-service/api/user/ttcode</code> → <code>{ttcode, authkey, passwd, region}</code>
+(plus <code>stream_key</code>, <code>stream_salt</code>, <code>channel_name</code>, <code>app_id</code>).</p>
+<p><b>Status: implemented, then abandoned — zero production callers.</b> <code>GetTTCode</code>,
+<code>StartTUTK</code>, <code>LoadLibrary</code> are all uncalled dead code. LAN-only was sufficient.</p>
+<div class="warn"><span class="t">The cost of picking this back up</span>
+The official plugin (<code>libBambuSource.so</code>, <code>liblive555.so</code>) is fetched at build
+time from <code>api.bambulab.com/v1/iot-service/api/slicer/resource?slicer/plugins/cloud=02.07.00.00</code>
+— <b>that</b> endpoint does require <code>X-BBL-Client-*</code> headers. The cgo binding was written
+arm64-only and <b>never compiled for amd64</b> until multi-arch CI enabled it, which then produced three
+separate build breaks: a Go <b>reserved-keyword</b> struct selector (<code>info.type</code> → cgo renames
+it <code>._type</code>), a missing <code>#include &lt;unistd.h&gt;</code> for <code>usleep</code>, and an
+<b>anonymous C union</b> that cgo maps to <code>[12]byte</code> with no Go representation, requiring an
+<code>unsafe.Pointer</code> reinterpret. Expect that class of problem.</div>
+</div>
+
+<div class="tabpane" data-pane="csnap">
+<p>Plain HTTP on the printer's own port (default <b>80</b>):</p>
+<ul>
+<li><code>/webcam/stream.mjpg</code> — built-in webcam, MJPEG</li>
+<li><code>/screen/snapshot</code> — touchscreen snapshot, <b>PNG</b> (interactive page at <code>/screen/</code>)</li>
+</ul>
+<p>Access code appended as <code>?access_code=</code> when configured. The U1 runs <b>Fluidd</b>
+(Klipper web UI) on port 80.</p>
+<div class="warn"><span class="t">Stale plan doc</span>
+<code>PLAN.md</code>'s guess of <code>/api/v2/camera/stream</code> on port 8080 was never true and was
+never implemented. Real answers: port 80, <code>/webcam/stream.mjpg</code>.</div>
+</div>
+</section>
+
+<!-- ============ 11 ============ -->
+<section id="snapmaker">
+<h2><span class="num">11</span>Snapmaker U1 · Paxx firmware</h2>
+<p class="lead">"Paxx" is the community firmware — but what it actually <em>is</em> turned out to be the
+biggest surprise: <b>Klipper + Moonraker</b>.</p>
+
+<div class="trap"><span class="t">The founding wrong assumption</span>
+The original client assumed a flat "Paxx REST API". It was wrong and the client was rewritten. The
+practical consequence: the API surface is a <b>hybrid</b> of OctoPrint-style shims and true Moonraker
+routes, and you must know which is which. Default port is <b>80</b>, not 8080.</div>
+
+<div class="tbl-wrap"><table>
+<tr><th>Method</th><th>Path</th><th>Family</th><th>Purpose</th></tr>
+<tr><td><code>GET</code></td><td><code>/api/printer</code></td><td>OctoPrint-style</td><td>temps + state (primary telemetry)</td></tr>
+<tr><td><code>POST</code></td><td><code>/api/print/{pause,resume,cancel}</code></td><td>OctoPrint-style</td><td>job control</td></tr>
+<tr><td><code>POST</code></td><td><code>/api/printer/command</code></td><td>OctoPrint-style</td><td>used for skip-object</td></tr>
+<tr><td><code>GET</code></td><td><code>/printer/objects/query?print_stats&amp;virtual_sdcard&amp;gcode_move</code></td><td><b>Moonraker</b></td><td>file, layers, progress, position</td></tr>
+<tr><td><code>POST</code></td><td><code>/printer/gcode/script</code></td><td><b>Moonraker</b></td><td><code>{"script":"G28"}</code> — all control</td></tr>
+<tr><td><code>WS</code></td><td><code>/websocket</code></td><td>Moonraker</td><td>nominally status push — <b>see below</b></td></tr>
+</table></div>
+<p>Auth: access code sent <b>both</b> as <code>?access_code=</code> and <code>X-Access-Code</code>
+header. No session, no expiry.</p>
+
+<div class="trap"><span class="t">The WebSocket is decorative</span>
+<ul style="margin:8px 0 0">
+<li>No Moonraker <b>JSON-RPC <code>printer.objects.subscribe</code></b> handshake is ever sent — and
+Moonraker emits nothing meaningful without it.</li>
+<li>The read loop parses frames as the flat <code>/api/printer</code> shape, not
+<code>notify_status_update</code>.</li>
+<li><code>wsReadWait</code> (10 s) is <b>shorter than</b> <code>wsPingPeriod</code> (30 s), so a pong can
+never rescue the read deadline — a quiet connection dies ~10 s after any frame.</li>
+<li>The <b>3 s REST poll ticker runs unconditionally</b>, because the WS path carries no
+<code>gcode_move</code> data at all.</li>
+</ul>
+<b>Net effect: all real data comes from 3-second REST polling.</b> WS errors are never logged or
+surfaced. If you're debugging "why isn't Snapmaker pushing", this is why.</div>
+
+<div class="warn"><span class="t">Latent bug — auth corrupts Moonraker query URLs</span>
+The request builder appends <code>?access_code=…</code> <b>unconditionally</b>. The objects-query path
+already contains a <code>?</code>, so with an access code configured the URL becomes
+<code>…gcode_move?access_code=X</code>, corrupting the last object name. Untested; silently degrades
+progress/layers/Z-position. Use <code>&amp;</code> when a query already exists.</div>
+
+<div class="trap"><span class="t">Moonraker returns HTTP 200 with an embedded error</span>
+A body like <code>{"error":{"message":"Klippy Not Connected"}}</code> arrives with a <b>200</b> status.
+Only the gcode path checks for this. Pause/resume/cancel, skip-object, and both fetch paths do
+<b>not</b> — so a Klipper-side failure on pause reads as success. Assume <b>any</b> Moonraker call can
+lie this way.</div>
+
+<h3>Hardware quirks worth knowing cold</h3>
+<div class="tbl-wrap"><table>
+<tr><th>Quirk</th><th>Detail</th></tr>
+<tr><td>LED state is unqueryable</td><td>Moonraker's <code>led</code> object query <b>always returns <code>null</code></b> for <code>cavity_led</code>. Real state cannot be read — store the last <em>commanded</em> state.</td></tr>
+<tr><td><code>cavity_led</code> is RGB-driven</td><td>It looks white via R=G=B=1. <code>SET_LED LED=cavity_led WHITE=1</code> is a <b>no-op on real hardware</b>. Set all four channels.</td></tr>
+<tr><td><code>G28</code> takes 30+ s</td><td>Needs a dedicated <b>120 s</b> HTTP client; the normal 10 s client times out.</td></tr>
+<tr><td><code>homed_axes</code> not exposed</td><td>Infer homing: <code>G28</code> success ⇒ homed; print start ⇒ not homed; <code>"Must home"</code> ⇒ not homed.</td></tr>
+<tr><td>Don't infer homed from Z</td><td>Paxx <b>parks Z at ~9.9 mm</b> after homing — far from the bed, so Z position tells you nothing.</td></tr>
+<tr><td><code>"Must home"</code></td><td>Real string: <code>Must home Z axis first: 5.130 4.947 199.982 [11251.005]</code>. Klipper keeps saved Z but still demands a fresh home. Detect the substring, return 400, don't mark homed.</td></tr>
+<tr><td><code>CurrentFile</code> never clears</td><td>Moonraker keeps reporting the last filename; no idle-clear exists. Known open issue.</td></tr>
+<tr><td>State text is OctoPrint-cased</td><td>Matching is case-sensitive on <code>"Operational"</code>, <code>"Complete"</code>, <code>"Cancelled"</code>. Anything else → <code>unknown</code>, which then hard-blocks jog/home.</td></tr>
+</table></div>
+<p><b>State mapping:</b> flags take priority over text — <code>printing</code>→printing,
+<code>paused</code>→paused, <code>error</code>→error; else text <code>Operational</code>→idle,
+<code>Printing</code>, <code>Paused</code>, <code>Error</code>,
+<code>Complete</code>/<code>Cancelled</code>→complete.</p>
+<p><b>Timeouts:</b> 10 s status/commands, 120 s gcode, 5 s WS handshake, 3 s poll, 15 s WS reconnect.
+<b>Zero retries anywhere.</b></p>
+
+<div class="trap"><span class="t">Skip-object on U1 is a no-op</span>
+<code>SkipObject</code> POSTs to <code>/api/printer/command</code> with a <b>nil body</b> — no G-code at
+all. There is no Klipper/Moonraker <code>EXCLUDE_OBJECT</code> integration anywhere, yet the local skip
+counter still increments, so <b>the UI reports a skip the printer never performed</b>. If skip-object
+matters to you, this is real work, not a config issue.</div>
+</section>
+
+<!-- ============ 12 ============ -->
+<section id="ams">
+<h2><span class="num">12</span>AMS &amp; filament</h2>
+<pre><span class="c">// print.ams — note the type chaos: id/temps/weight are STRINGS, state/remain are NUMBERS</span>
+<span class="s">"ams"</span>: {
+  <span class="s">"ams"</span>: [{
+    <span class="s">"id"</span>: <span class="s">"0"</span>,              <span class="c">// STRING. 0-3 AMS/AMS2Pro; 128-135 AMS-HT [Doc]</span>
+    <span class="s">"humidity"</span>: <span class="s">"4"</span>,        <span class="c">// index 0-5, lower=drier. ABSENT on AMS 1</span>
+    <span class="s">"humidity_raw"</span>: <span class="s">"23"</span>,   <span class="c">// %. ABSENT on AMS 1</span>
+    <span class="s">"temp"</span>: <span class="s">"25.0"</span>,         <span class="c">// °C. ABSENT on AMS 1</span>
+    <span class="s">"tray"</span>: [{
+      <span class="s">"id"</span>: <span class="s">"0"</span>, <span class="s">"state"</span>: <span class="n">3</span>,   <span class="c">// NUMBER: 0 empty, 2 loaded, 3 ready, 10 reading, 11 loaded+data</span>
+      <span class="s">"tray_type"</span>: <span class="s">"PLA"</span>, <span class="s">"tray_color"</span>: <span class="s">"000000FF"</span>,  <span class="c">// RRGGBBAA</span>
+      <span class="s">"tray_info_idx"</span>: <span class="s">"GFA00"</span>,
+      <span class="s">"nozzle_temp_min"</span>: <span class="s">"190"</span>, <span class="s">"nozzle_temp_max"</span>: <span class="s">"230"</span>,  <span class="c">// STRINGS</span>
+      <span class="s">"remain"</span>: <span class="n">750</span>,          <span class="c">// NUMBER, mm; -1 unknown</span>
+      <span class="s">"tray_weight"</span>: <span class="s">"250"</span>, <span class="s">"tag_uid"</span>: <span class="s">"8A160AB5…"</span>
+    }]
+  }],
+  <span class="s">"tray_now"</span>: <span class="s">"0"</span>,             <span class="c">// (ams_id*4)+tray_id; 254=external, 255=none</span>
+  <span class="s">"ams_exist_bits"</span>: <span class="s">"1"</span>, <span class="s">"tray_exist_bits"</span>: <span class="s">"e"</span>  <span class="c">// parsed, never read</span>
+}</pre>
+<div class="trap"><span class="t">The type chaos is a parse bomb</span>
+A type mismatch aborts the <b>entire report parse</b>, not just AMS — one wrong type kills all printer
+status, silently. When adding AMS fields, match the wire type exactly.</div>
+
+<h3>The expensive bug: P1S delta updates</h3>
+<p>P1S sends <b>delta</b> AMS updates; H2S sends <b>full</b> updates. A P1S delta may arrive as
+<code>ams</code> present with an <b>empty inner array</b> (only <code>tray_now</code> changed), or with
+unit objects that <b>lack the <code>tray</code> array</b> (only humidity changed). Naive
+"replace cached AMS" logic therefore <b>wipes</b> filament type/color/remaining on nearly every report
+— and with <code>omitempty</code> the field vanishes from the API response entirely.</p>
+<p><b>Fix: merge, don't replace.</b> Units merged by <code>ID</code>, trays by <code>Index</code>;
+cached entries absent from the delta are <b>retained</b>; an empty <code>tray</code> array means keep
+cached trays wholesale; scalars use <code>firstNonEmpty(new, cached)</code>; and
+<code>ActiveTrayID</code> is written <b>only</b> when <code>tray_now</code> is non-empty.</p>
+<div class="warn"><span class="t">Still open</span>
+Research says P1S <b>"must call <code>pushall</code> periodically"</b> — our code sends it exactly
+<b>once at connect</b>, with no timer anywhere. Combined with the merge cache, a field missed at startup
+can stay wrong <b>until reconnect</b>. Adding a periodic pushall closes it.</div>
+
+<h3>Snapmaker filament — specced, zero implemented <span class="b doc">Doc</span></h3>
+<pre><span class="c">FEED_AUTO MODULE=left CHANNEL=0 LOAD=1</span>
+<span class="c">FEED_AUTO MODULE=left CHANNEL=0 UNLOAD=1 STAGE=prepare|doing|cancel</span>
+<span class="c">GET /printer/objects/query?filament_feed    -> channel_state, channel_error</span>
+<span class="c">GET /printer/objects/query?filament_detect  -> MAIN_TYPE, ARGB_COLOR, HOTEND_MIN/MAX_TEMP</span></pre>
+<p><code>channel_state</code>: <code>wait_insert → preload_prepare → preload_feeding →
+preload_finish</code>; <code>load_prepare → load_homing → load_picking → load_feeding → load_heating →
+load_extruding → load_flushing → load_finish</code>; <code>unload_prepare → unload_finish|unload_fail</code>.
+<code>channel_error</code>: <code>ok, no_filament, residual_filament, motor_speed, wheel_speed, timeout,
+move, move_home, move_switch, move_extrude, custom_gcode, heat</code>. U1 reports <b>no</b> remaining
+length/weight at all.</p>
+</section>
+
+<!-- ============ 13 ============ -->
+<section id="tools">
+<h2><span class="num">13</span>Interactive decoders</h2>
+<p class="lead">Real utilities for reading live payloads. All computation is local.</p>
+
+<div class="tool">
+  <h4>HMS code decoder</h4>
+  <p class="desc">Paste the raw <code>attr</code> and <code>code</code> integers from a
+  <code>print.hms</code> entry.</p>
+  <div class="inp">
+    <label class="f">attr<input type="number" id="hmsAttr" value="201327360"></label>
+    <label class="f">code<input type="number" id="hmsCode" value="196615"></label>
+  </div>
+  <div class="out" id="hmsOut"></div>
+</div>
+
+<div class="tool">
+  <h4>Packed chamber temperature (<code>info.temp</code>)</h4>
+  <p class="desc">Low 16 bits = current °C, high 16 bits = target °C. Try the famous
+  <code>3932184</code>.</p>
+  <div class="inp"><label class="f">info.temp<input type="number" id="tempIn" value="3932184"></label></div>
+  <div class="out" id="tempOut"></div>
+</div>
+
+<div class="tool">
+  <h4>AMS <code>tray_now</code> encoder / decoder</h4>
+  <p class="desc">Global tray id = <code>(ams_id × 4) + tray_id</code>; 254 = external spool, 255 = none.</p>
+  <div class="inp">
+    <label class="f">AMS unit id<input type="number" id="amsId" value="1" min="0" max="3"></label>
+    <label class="f">Tray slot<input type="number" id="amsSlot" value="2" min="0" max="3"></label>
+    <label class="f">…or decode a tray_now<input type="number" id="trayNow" placeholder="e.g. 6"></label>
+  </div>
+  <div class="out" id="amsOut"></div>
+</div>
+
+<div class="tool">
+  <h4>Home-flag bitmask</h4>
+  <p class="desc">Bit 0 is the homed signal; other bits encode unrelated state.</p>
+  <div class="inp"><label class="f">home_flag<input type="number" id="hfIn" value="3"></label></div>
+  <div class="out" id="hfOut"></div>
+</div>
+</section>
+
+<!-- ============ 14 ============ -->
+<section id="gotchas">
+<h2><span class="num">14</span>Gotcha index</h2>
+<p class="lead">Every documented trap, scannable. Filter by printer.</p>
+<div class="chips" id="gfilters">
+  <button class="chip on" data-g="all">All</button>
+  <button class="chip" data-g="p1s">P1S</button>
+  <button class="chip" data-g="h2s">H2S / X1</button>
+  <button class="chip" data-g="u1">Snapmaker U1</button>
+  <button class="chip" data-g="cam">Camera</button>
+  <button class="chip" data-g="gen">General</button>
+</div>
+<div id="gotchas"></div>
+</section>
+
+<!-- ============ 15 ============ -->
+<section id="unknowns">
+<h2><span class="num">15</span>Known unknowns</h2>
+<p class="lead">Explicitly unresolved. Do not fill these in from intuition.</p>
+<div class="tbl-wrap"><table>
+<tr><th>Question</th><th>Status</th></tr>
+<tr><td>Local (LAN) MQTT support</td><td>Protocol facts now <b>fully measured</b> (same topics, plaintext payloads, enforced access-code auth, ~1 report/s) but still <b>not implemented</b>.</td></tr>
+<tr><td>Does the H2S report homing via <code>home_flag</code> bit 0?</td><td><b>Open.</b> H2S reads <code>0xc0675590</code> with bit 0 clear, and after an <em>accepted</em> <code>G28</code> the flag did not flip within 60 s. May need a parser change.</td></tr>
+<tr><td><code>84033544</code> — which cause?</td><td>Contested between the file-verify stage and <code>sequence_id</code> reuse across restarts.</td></tr>
+<tr><td>Container token persistence</td><td>Known defect: the container cannot write <code>bambu_token.json</code> on the mounted volume (host-owned; container runs as <code>app</code>), so token refresh does not persist.</td></tr>
+<tr><td>Does cloud <code>dev_access_code</code> equal the LCD access code?</td><td>Never tested. If yes, camera onboarding automates fully. <b>Cheapest high-value experiment available.</b></td></tr>
+<tr><td>AMS-HT unit IDs 128–135</td><td>Documented, unmodelled. Breaks <code>(id*4)+i</code> math (IDs ≥512 can never match <code>tray_now</code>).</td></tr>
+<tr><td><code>ams_exist_bits</code> / <code>tray_exist_bits</code></td><td>Parsed, never consumed; bit meaning "may vary by firmware".</td></tr>
+<tr><td><code>ams_filament_drying</code> payload</td><td>Only the name and a 65 °C cap are recorded.</td></tr>
+<tr><td>Port-6000 concurrent-connection limit</td><td>Asserted in a plan doc, never verified.</td></tr>
+<tr><td>Snapmaker 200-with-embedded-error on non-gcode paths</td><td>Known gap, un-audited.</td></tr>
+<tr><td>Snapmaker filament / RFID integration</td><td>Fully specced, zero implemented.</td></tr>
+<tr><td>Snapmaker <code>CurrentFile</code> clearing</td><td>Open bug.</td></tr>
+<tr><td>P1S camera regression coverage</td><td>Never re-tested since the H2S go2rtc refactor.</td></tr>
+<tr><td>Has the Snapmaker WS ever actually delivered?</td><td>Effectively dead by design; never confirmed working on hardware.</td></tr>
+</table></div>
+
+<h3>Documentation traps to avoid inheriting</h3>
+<div class="trap"><span class="t">Two docs in this repo are actively wrong</span>
+① <code>README.md</code> says Bambu printers use "<b>LAN MQTT protocol</b>". That is <b>wrong</b> — this
+deployment is cloud MQTT. ② <code>PLAN.md</code>'s Snapmaker section lists port 8080, <code>/ws</code>,
+and <code>/api/v2/camera/stream</code> — all disproven (real: port 80, <code>/websocket</code>,
+<code>/webcam/stream.mjpg</code>). <b>When a plan doc and the code disagree, trust the code and the
+hardware.</b></div>
+</section>
+
+<!-- ============ 16 ============ -->
+<section id="timeline">
+<h2><span class="num">16</span>Discovery timeline</h2>
+<p class="lead">How the knowledge was actually earned — including the wrong turns.</p>
+<div class="tl">
+  <div class="ev bad"><div class="d">2026-07-08</div><div class="h">Started on LAN MQTT — abandoned same day</div>
+    <p>First Bambu client targeted a local broker on the printer. Rewritten to cloud MQTT the same day
+    to avoid requiring LAN/developer mode. This decision shapes everything downstream.</p></div>
+  <div class="ev"><div class="d">2026-07-08</div><div class="h">Snapmaker rewritten for Moonraker</div>
+    <p>"The U1 runs Moonraker (Klipper) under the hood, not the flat Paxx API we assumed." Port default
+    corrected 8080 → <b>80</b>.</p></div>
+  <div class="ev"><div class="d">2026-07-08</div><div class="h">Partial-report flicker class discovered</div>
+    <p><code>gcode_file</code> blanking on heartbeat reports led to the pointer-field "only write when
+    present" convention that now governs every optional field.</p></div>
+  <div class="ev"><div class="d">2026-07-11</div><div class="h">Chamber temp 3932184 → packed integer</div>
+    <p>First fix ("divide by 100000 if &gt;500") gave a plausible 39.3 °C and was wrong. Correct decode:
+    <code>(60&lt;&lt;16)|24</code> = target 60, current 24.</p></div>
+  <div class="ev"><div class="d">2026-07-12</div><div class="h">P1S cover-off failure with <code>print_error=0</code></div>
+    <p>Proved HMS was entirely unparsed. HMS added as an <b>independent</b> error channel — the only one
+    that catches this failure class.</p></div>
+  <div class="ev"><div class="d">2026-07-12</div><div class="h"><code>ledctrl</code> silent no-op</div>
+    <p>Light toggle did nothing with no error anywhere. Firmware requires five fields; and light
+    <em>state</em> lives in <code>print.lights_report</code>, not the <code>system.ledctrl</code> ACK.</p></div>
+  <div class="ev bad"><div class="d">2026-07-16</div><div class="h">WRONG TURN: "verification failed" HMS declared not-our-bug</div>
+    <p>Investigation concluded a firmware client identity/version gate with no app-side fix, and
+    concluded <b>ack verification was impossible</b> on cloud MQTT. <b>Both conclusions were later
+    overturned.</b> Recorded here because "impossible" claims in a knowledge base are the most
+    dangerous thing in it.</p></div>
+  <div class="ev"><div class="d">2026-10-08 → 10-11</div><div class="h">Command signing cracked (K-108/K-109)</div>
+    <p>The H2S rejects every unsigned <code>print</code> command because post-Jan-2025 firmware
+    verifies them with a key from Bambu's closed-source plugin. Signing with an RSA-SHA256
+    <code>header</code> envelope moved it from <code>84033543</code> (no signature) to
+    <code>84033545</code> (valid signature, untrusted cert) — proving the mechanism and that
+    <b>Developer Mode is not required</b>. Cert installed on every connect because the trust store is
+    RAM-only. Home All and jog now work on the H2S.</p></div>
+  <div class="ev"><div class="d">2026-10-08</div><div class="h"><code>print_error=83935249</code> — an SD-card advisory, not a fault</div>
+    <p>A healthy P1S was frozen in <code>error</code>. Three stacked defects: any non-zero
+    <code>print_error</code> overrode a healthy <code>gcode_state</code>; nothing could un-latch it;
+    and the <code>device_error</code> table was unreachable (wrong key width, and model names needed
+    aliasing <code>C12</code>→<code>P1S</code>). Non-zero <code>print_error</code> under a healthy
+    state is now a non-blocking advisory.</p></div>
+  <div class="ev"><div class="d">2026-07-29</div><div class="h">"H2S camera is disabled" — false alarm</div>
+    <p>Root cause: <code>go2rtc</code> not in <code>PATH</code> for a local binary. Works fine in Docker.
+    Follow-up work then filtered browser-cancel errors that were masquerading as auth failures.</p></div>
+  <div class="ev"><div class="d">2026-07-27/30</div><div class="h">Paxx homing reality</div>
+    <p><code>homed_axes</code> not exposed; Z parks at ~9.9 mm so Z can't imply homed; <code>G28</code>
+    needs 120 s; <code>"Must home"</code> substring detection added.</p></div>
+  <div class="ev"><div class="d">2026-07-31</div><div class="h">X1 misrouting + LAN-Mode silence</div>
+    <p>X1 (<code>BL-P001</code>) was being sent to port 6000; camera routing split from chamber
+    semantics. Separately: printers in full LAN Mode go silent on cloud MQTT <b>by design</b> — 60 s
+    silence detection added so the failure is at least named.</p></div>
+  <div class="ev"><div class="d">2026-08-02</div><div class="h">P1S AMS delta wipe fixed</div>
+    <p>Delta updates with empty inner arrays were wiping cached filament data. Merge semantics added.
+    Notable: an earlier spec had signed off "no backend changes needed" while its own open-questions
+    section flagged the exact behavior as high severity.</p></div>
+</div>
+</section>
+
+<footer style="border-top:1px solid var(--line);padding-top:22px;color:var(--dimmer);font-size:12.5px">
+<p>Companion to <code>docs/PRINTER-PROTOCOL-MATRIX.md</code> — the authoritative spec sheet with
+<code>file:line</code> citations. This page is the conceptual on-ramp; the markdown is the reference.</p>
+<p>Confidence markers: <span class="b conf">Confirmed</span> observed on real hardware ·
+<span class="b code">Code</span> implemented &amp; tested here · <span class="b doc">Doc</span> upstream
+community research, unverified · <span class="b unk">Unknown</span> explicitly unresolved.</p>
+</footer>
+
+</main>
+</div>
+</div>
+
+<script>
+/* ---------- data ---------- */
+const MODES = {
+  p1s:{label:"P1S · cloud only",nodes:[["Browser","p"],["Go server","p"],["Bambu Cloud MQTT :8883","c"],["P1S","p"]],
+    enc:"TLS",rows:{
+      "Transport":"MQTT over TLS — ssl://us.mqtt.bambulab.com:8883",
+      "Credentials":"username u_{user_id} / password = account token",
+      "Topics":"device/{serial}/report  ⇄  device/{serial}/request",
+      "Camera":"bambus://{ip}:6000?token={access_code}  (binary TLS)",
+      "Chamber heater":"none — has_chamber=false",
+      "Filename field":"subtask_name (gcode_file often empty)",
+      "AMS":"AMS 1 — delta updates, no humidity/temp, state always 0",
+      "LAN toggles needed":"none (camera access code is on the LCD)"}},
+  h2s:{label:"H2S · cloud + Liveview",nodes:[["Browser","p"],["Go server","p"],["Bambu Cloud MQTT :8883","c"],["H2S","p"],["go2rtc :1984","c"]],
+    enc:"TLS",rows:{
+      "Transport":"MQTT over TLS (control) + RTSPS :322 (video, LAN)",
+      "Credentials":"account token (control) · bblp / access_code (RTSPS)",
+      "Topics":"device/{serial}/report  ⇄  device/{serial}/request",
+      "Camera":"rtsps://bblp:{code}@{ip}:322/streaming/live/1 → go2rtc → MJPEG",
+      "Chamber heater":"yes — has_chamber=true, set_ctt works",
+      "Chamber temp":"packed info.temp (low16=current, high16=target)",
+      "AMS":"AMS 2 Pro — full updates, humidity + humidity_raw + temp",
+      "Command signing":"REQUIRED for print namespace — unsigned gives err_code 84033543; cert re-installed every connect",
+      "LAN toggles needed":"\"LAN Only Liveview\" ON (cloud keeps working)"}},
+  x1:{label:"X1 series (BL-P001)",nodes:[["Browser","p"],["Go server","p"],["Bambu Cloud MQTT :8883","c"],["X1 Carbon","p"],["go2rtc","c"]],
+    enc:"TLS",rows:{
+      "Transport":"same cloud MQTT as every Bambu model",
+      "Camera":"RTSPS :322 like H2 — NOT port 6000",
+      "Model code":"BL-P001 = X1 Carbon (marketing names don't match)",
+      "Chamber heater":"no — must NOT inherit H2 semantics",
+      "Key lesson":"split UsesRTSPS() from IsH2S()"}},
+  lan:{label:"Full LAN Mode ON",nodes:[["Browser","p"],["Go server","p"],["Bambu Cloud MQTT :8883","c"],["Printer (silent)","p"]],
+    enc:"TLS",rows:{
+      "Symptom":"online:false, all telemetry null, no error",
+      "Cause":"printer stops publishing to cloud MQTT — by design",
+      "Detection":"60 s of zero reports after subscribe+pushall",
+      "Fix":"not implemented; would need ssl://{ip}:8883 + bblp/access_code",
+      "Do not confuse with":"\"LAN Only Liveview\" (camera only, cloud fine)"}},
+  u1:{label:"Snapmaker U1 · Paxx",nodes:[["Browser","p"],["Go server","p"],["U1 :80 HTTP","c"]],
+    enc:"PLAINTEXT",rows:{
+      "Transport":"plaintext HTTP on port 80 (Klipper + Moonraker)",
+      "Credentials":"optional access_code — query param AND X-Access-Code header",
+      "Telemetry":"3 s REST poll (WebSocket is effectively dead)",
+      "Endpoints":"/api/printer · /api/print/* · /printer/objects/query · /printer/gcode/script",
+      "Camera":"http://{ip}:80/webcam/stream.mjpg  +  /screen/snapshot (PNG)",
+      "Chamber heater":"no",
+      "Timeouts":"10 s normal · 120 s gcode (G28 takes 30+ s) · zero retries"}}
+};
+
+const CMDS = [
+  ["Pause",'{"print":{"command":"pause"}}'],
+  ["Resume",'{"print":{"command":"resume"}}'],
+  ["Stop",'{"print":{"command":"stop"}}'],
+  ["Skip object",'{"print":{"command":"project_file","param":"skip_object"}}'],
+  ["Chamber target (H2S/X1)",'{"print":{"command":"set_ctt","ctt_val":45,"temper_check":true}}'],
+  ["Bed target",'{"print":{"command":"gcode_line","param":"M140 S60\\n"}}'],
+  ["Nozzle target",'{"print":{"command":"gcode_line","param":"M104 S210\\n"}}'],
+  ["Home all",'{"print":{"command":"gcode_line","param":"G28\\n"}}'],
+  ["Jog (relative)",'{"print":{"command":"gcode_line","param":"G91\\nG1 X10 F3000\\nG90\\n"}}'],
+  ["Chamber light ON",'{"system":{"sequence_id":"0","command":"ledctrl","led_node":"chamber_light","led_mode":"on","led_on_time":500,"led_off_time":500,"loop_times":0,"interval_time":0}}'],
+  ["Force full snapshot",'{"pushing":{"command":"pushall","version":1,"push_target":1}}']
+];
+
+const GOTCHAS = [
+ ["gen","Absent field ≠ zero value","Bambu heartbeat reports omit most fields. Writing a missing field as 0/\"\"/idle causes the whole flicker family.","Only write optional fields when the key was present. Render null as —, never off.","p1s","h2s"],
+ ["gen","Acks arrive inline on the report topic","There is no separate ack topic, but the firmware DOES reply with result/reason/err_code on `report`. An earlier note here called acks infeasible — wrong.","Register a waiter before publishing; keep timeouts non-fatal; never let an ack into status parsing.","p1s","h2s"],
+ ["gen","Post-Jan-2025 firmware rejects unsigned print commands","err_code 84033543. The P1S is exempt only because its firmware predates the gate.","Sign with an RSA-SHA256 header envelope. Developer Mode is NOT the answer.","h2s"],
+ ["h2s","payload_len must be a JSON string","A numeric payload_len yields 84033547, indistinguishable from a bad certificate — sent hours chasing the wrong thing.","Serialize it as a string. Test it explicitly.","h2s"],
+ ["h2s","cert_id is a hex serial + CN, not a hash","Every fingerprint-based theory about cert_id was wrong.","Lowercase hex X.509 serial followed by CN=<issuer CN>.","h2s"],
+ ["h2s","sequence_id must be >= 2000 on signed frames","Below the floor you get 84033545 even with a trusted cert, which looks like a trust-store problem.","Inject a string sequence_id >= 2000 when signing.","h2s"],
+ ["h2s","The printer trust store is RAM-only","A reboot silently clears it, so signing breaks after every power cycle with no config change.","Run app_cert_install on every connect, not once at setup.","h2s"],
+ ["h2s","print_error=83935249 is an SD-card advisory, not a fault","It froze a healthy P1S in `error`; Bambu Handy showed nothing because it arrives on print_error while hms was [].","Non-zero print_error under a healthy gcode_state is an advisory, not an error.","p1s"],
+ ["p1s","ledctrl silently ignored if a field is missing","Firmware requires sequence_id, led_on_time, led_off_time, loop_times, interval_time. No error is surfaced anywhere.","Send all fields. Assume 'missing field ⇒ silent ignore' is a general Bambu pattern.","p1s","h2s"],
+ ["p1s","P1S puts the filename in subtask_name","gcode_file is often empty during a P1S print.","Fall back gcode_file → subtask_name → keep previous.","p1s"],
+ ["p1s","P1S AMS reports state:0 on loaded trays","State-derived 'loaded' says empty for a full AMS.","loaded = state∈{2,3,10,11} || tray_type != \"\"","p1s"],
+ ["p1s","P1S AMS sends delta updates","Empty inner ams array or missing tray array wipes cached filament data if you replace instead of merge.","Merge by unit ID and tray index; retain cached entries absent from the delta.","p1s"],
+ ["h2s","info.temp is a packed 32-bit int","3932184 looked like a broken sensor; it was (60<<16)|24 = target 60, current 24.","Decode low16=current, high16=target. Suspect packing before unit scaling.","h2s"],
+ ["h2s","Only one camera exists","/streaming/live/2 404s on real hardware, though three code comments still claim it exists.","Offer /live/1 only. ffprobe before adding streams.","h2s"],
+ ["h2s","'LAN Only Liveview' ≠ 'LAN Mode'","Liveview opens RTSPS:322 and cloud keeps working; full LAN Mode silences the cloud entirely.","Treat them as orthogonal toggles in docs and UI.","h2s"],
+ ["h2s","HMS 0500-0500-0001-0007 is the signature gate","We first called it an unfixable client-version gate. It is the command-signature rejection raising HMS, which sets state:error and blocks the movement gate.","Sign the commands. Note the dismiss endpoint only suppresses notifications, not the state.","h2s"],
+ ["h2s","print_error stays 0 during real failures","A cover-off print failure showed print_error=0 the whole time.","Treat HMS severity 1/2 as an independent error trigger.","p1s"],
+ ["h2s","Firmware may stop sending hms instead of sending []","Clearing only on explicit [] latches the printer into 'error' forever.","Decay after 2 consecutive healthy reports that omit the key.","p1s","h2s"],
+ ["cam","H2S/O1S offer only one TLS cipher on :6000","TLS_RSA_WITH_AES_256_GCM_SHA384 is excluded from Go's defaults, so the handshake just fails.","Hand-list that suite plus Go's defaults explicitly.","h2s"],
+ ["cam","Frame parsing has no validation or resync","Header magic and JPEG markers are never checked; read deadline cleared after frame 1; no max frame size.","Add bounds + resync if you extend it.","p1s"],
+ ["cam","go2rtc missing from PATH ⇒ 502","Works in Docker, 502s on a bare local binary. Caused a whole misdiagnosis.","Check PATH before debugging the printer.","h2s"],
+ ["cam","The 'install go2rtc' 501 is unreachable","Server always allocates a manager, so a missing binary surfaces as an opaque 502.","Improve the error surface if you touch this.","h2s"],
+ ["cam","Request context leaks into go2rtc readiness","A browser abort during the 10 s readiness window kills the instance just started.","Pass a background context, not r.Context().","h2s"],
+ ["cam","Gray 1×1 placeholder served with 200 OK","That was the 'flicker' — a success that looked like a broken stream.","Serve last-good frame; only serve bytes that parse as JPEG.","h2s","p1s"],
+ ["cam","Browser cancels image loads constantly","context canceled / deadline errors were being reported as auth failures.","Filter those out of the camera error state.","h2s"],
+ ["cam","No auth on /api/camera/*","LAN-trust only — an unauthenticated window into printers if exposed.","Gate it before any non-LAN exposure.","gen"],
+ ["u1","Paxx is Klipper + Moonraker, not a flat API","Original assumption was wrong; API is a hybrid of OctoPrint shims and Moonraker routes.","Know which family each endpoint belongs to.","u1"],
+ ["u1","Port is 80, not 8080","Confirmed against real hardware.","Default 80.","u1"],
+ ["u1","The WebSocket is decorative","No objects.subscribe handshake; read wait (10 s) < ping period (30 s); 3 s REST poll always runs.","All data comes from polling. Don't debug the WS.","u1"],
+ ["u1","Moonraker returns 200 with an embedded error",'A body like {"error":{"message":"Klippy Not Connected"}} arrives with HTTP 200. Only the gcode path checks it.',"Check every Moonraker response body for an error field.","u1"],
+ ["u1","cavity_led is RGB — WHITE alone is a no-op","And the led object query always returns null, so real state is unreadable.","Set RED/GREEN/BLUE/WHITE together; track commanded state.","u1"],
+ ["u1","G28 takes 30+ seconds","The normal 10 s HTTP client times out.","Use a 120 s client for gcode.","u1"],
+ ["u1","homed_axes not exposed; Z parks at ~9.9 mm","You cannot infer homed from Z position.","Infer from G28 success / print start / 'Must home' errors.","u1"],
+ ["u1","Skip-object sends no G-code at all","Nil body POST, yet the UI counter increments — the skip never happens.","Implement EXCLUDE_OBJECT or stop claiming it.","u1"],
+ ["u1","Auth corrupts Moonraker query URLs","'?access_code=' appended to a URL that already has '?'.","Use & when a query exists.","u1"],
+ ["u1","State text is case-sensitive","Matches OctoPrint-cased 'Operational'/'Complete'/'Cancelled'; anything else → unknown, which blocks jog/home.","Normalize or verify the exact strings your firmware returns.","u1"]
+];
+
+/* ---------- renderers ---------- */
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+
+// mode explorer
+const chipBox=$("#chips");
+Object.entries(MODES).forEach(([k,m],i)=>{
+  const b=document.createElement("button");b.className="chip"+(i===0?" on":"");b.textContent=m.label;b.dataset.k=k;
+  b.onclick=()=>{$$("#chips .chip").forEach(c=>c.classList.remove("on"));b.classList.add("on");showMode(k);};
+  chipBox.appendChild(b);
+});
+function showMode(k){
+  const m=MODES[k];
+  $("#pipe").innerHTML=m.nodes.map((n,i)=>
+    (i?`<span class="arrow ${m.enc==='TLS'?'enc':'plain'}">${i===m.nodes.length-1&&k==='lan'?'✕ silent':'──'+m.enc.toLowerCase()+'──▶'}</span>`:'')+
+    `<span class="node ${n[1]}">${n[0]}</span>`).join("");
+  $("#detail").innerHTML=Object.entries(m.rows).map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join("");
+  const br={p1s:`<div class="trap"><span class="t">What breaks here</span>AMS deltas wipe cached filament data; filename is in <code>subtask_name</code>; <code>print_error</code> stays 0 on cover-off; the :6000 camera has no framing validation.</div>`,
+    h2s:`<div class="trap"><span class="t">What breaks here</span>Camera dies if "LAN Only Liveview" is off or go2rtc isn't on PATH; packed <code>info.temp</code> looks like garbage if decoded naively; the client-version HMS fires regardless of your payloads.</div>`,
+    x1:`<div class="trap"><span class="t">What breaks here</span>Routing by marketing name sends the camera to port 6000 and it never connects. Inheriting H2 semantics wrongly claims a chamber heater.</div>`,
+    lan:`<div class="trap"><span class="t">What breaks here</span>Everything — silently. The printer simply stops publishing to the cloud. No error, no hint, just nulls.</div>`,
+    u1:`<div class="trap"><span class="t">What breaks here</span>Pause can fail with HTTP 200; skip-object never executes; homing state is guesswork; the WebSocket contributes nothing.</div>`}[k];
+  $("#breaks").innerHTML=br;
+}
+showMode("p1s");
+
+// tabs
+$$(".tabs").forEach(g=>g.querySelectorAll(".tab").forEach(t=>{
+  t.onclick=()=>{const grp=t.parentElement.dataset.group;
+    g.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));t.classList.add("on");
+    let p=t.parentElement.nextElementSibling;
+    while(p && p.classList.contains("tabpane")){p.classList.toggle("on",p.dataset.pane===t.dataset.pane);p=p.nextElementSibling;}
+  };
+}));
+
+// command generator
+$("#cmdgen").innerHTML=`<div class="tbl-wrap"><table><tr><th>Command</th><th>Exact JSON → device/{serial}/request</th></tr>`+
+  CMDS.map(([n,j])=>`<tr><td style="white-space:nowrap">${n}</td><td><code class="cmdb" style="white-space:pre-wrap;word-break:break-all;cursor:pointer" title="click to copy">${j.replace(/</g,"&lt;")}</code></td></tr>`).join("")+`</table></div>
+  <div id="copymsg" style="font-size:12px;color:var(--ok);height:16px"></div>`;
+$$(".cmdb").forEach(c=>c.onclick=()=>{navigator.clipboard?.writeText(c.textContent).then(()=>{
+  $("#copymsg").textContent="copied ✓";setTimeout(()=>$("#copymsg").textContent="",1400);});});
+
+// byte grid
+function buildBytes(code){
+  const g=$("#bytegrid");g.innerHTML="";
+  const b=new Array(80).fill(0);
+  b[0]=0x40;b[4]=0x30;
+  for(let i=0;i<4;i++) b[16+i]="bblp".charCodeAt(i);
+  for(let i=0;i<Math.min(code.length,32);i++) b[48+i]=code.charCodeAt(i);
+  for(let i=0;i<80;i++){
+    const d=document.createElement("div");
+    d.className="byte "+(i<16?"hdr":i<48?"user":"code_");
+    d.textContent=b[i].toString(16).padStart(2,"0").toUpperCase();
+    d.title=`byte ${i} — `+(i<16?"header/magic":i<48?"username 'bblp' (NUL-padded)":"access code (NUL-padded)");
+    g.appendChild(d);
+  }
+  $("#acout").textContent=
+`offset  00 01 02 03   04 05 06 07   08 09 0A 0B   0C 0D 0E 0F
+   +00  ${[0,1,2,3].map(i=>b[i].toString(16).padStart(2,'0')).join(' ')}  ${[4,5,6,7].map(i=>b[i].toString(16).padStart(2,'0')).join(' ')}  ${[8,9,10,11].map(i=>b[i].toString(16).padStart(2,'0')).join(' ')}  ${[12,13,14,15].map(i=>b[i].toString(16).padStart(2,'0')).join(' ')}
+   +16  ${b.slice(16,32).map(x=>x.toString(16).padStart(2,'0')).join(' ')}
+   +32  ${b.slice(32,48).map(x=>x.toString(16).padStart(2,'0')).join(' ')}
+   +48  ${b.slice(48,64).map(x=>x.toString(16).padStart(2,'0')).join(' ')}
+   +64  ${b.slice(64,80).map(x=>x.toString(16).padStart(2,'0')).join(' ')}
+
+uint32 LE @0  = ${new DataView(new ArrayBuffer(4)).setUint32(0,0x40,true)||'0x00000040'} (64)   uint32 LE @4 = 0x00003000 (12288)
+username      = "bblp" + NUL padding to 32      access code = ${JSON.stringify(code).slice(0,34)}${code.length>32?' TRUNCATED':''}`;
+}
+buildBytes("12345678");
+$("#acinput").oninput=e=>buildBytes(e.target.value);
+
+// decoders
+function hms(){
+  const a=+$("#hmsAttr").value>>>0, c=+$("#hmsCode").value>>>0;
+  const mods={5:"mainboard",0xC:"xcam",7:"ams",8:"toolhead",3:"mc"};
+  const sev={1:"fatal",2:"serious",3:"common",4:"info"};
+  const hx=n=>n.toString(16).toUpperCase().padStart(4,"0");
+  const code=`HMS_${hx(a>>16)}-${hx(a&0xFFFF)}-${hx(c>>16)}-${hx(c&0xFFFF)}`;
+  const mod=mods[(a>>>24)&0xFF]||"unknown", s=sev[c>>16]||"unknown";
+  const trips=(s==="fatal"||s==="serious");
+  $("#hmsOut").innerHTML=`<span class="lbl">human code</span>\n<span class="hi">${code}</span>\n\n`+
+    `<span class="lbl">module</span> ${(a>>>24)&0xFF} → ${mod}\n`+
+    `<span class="lbl">severity</span> ${c>>16} → <span class="${trips?'er':'hi'}">${s}</span> ${trips?'→ trips State="error"':''}\n\n`+
+    `<span class="lbl">table key</span> ${((a>>16)&0xFFFF).toString(16).padStart(4,'0')}${(a&0xFFFF).toString(16).padStart(4,'0')}${((c>>16)&0xFFFF).toString(16).padStart(4,'0')}${(c&0xFFFF).toString(16).padStart(4,'0')}`;
+}
+["hmsAttr","hmsCode"].forEach(id=>$("#"+id).oninput=hms);hms();
+
+function temps(){
+  const v=+$("#tempIn").value; const iv=Math.trunc(v);
+  const cur=iv&0xFFFF, tgt=(iv>>16)&0xFFFF;
+  let note="";
+  if(cur>100||cur<-50) note+="\n⚠ current outside −50..100 → would be rejected, previous value retained";
+  if(tgt>100) note+="\n⚠ target outside 0..100 → would be rejected";
+  $("#tempOut").innerHTML=`<span class="lbl">decoded</span>\ncurrent = <span class="hi">${cur} °C</span>   target = <span class="hi">${tgt} °C</span>`+
+    `\n\n<span class="lbl">derivation</span>\n${v} = (${tgt} << 16) | ${cur}`+(note?`\n\n<span class="er">${note.trim()}</span>`:"");
+}
+$("#tempIn").oninput=temps;temps();
+
+function ams(){
+  const u=+$("#amsId").value, s=+$("#amsSlot").value, tn=$("#trayNow").value;
+  let out=`<span class="lbl">AMS ${u} / slot ${s}</span>\ntray_now = (${u} × 4) + ${s} = <span class="hi">${u*4+s}</span>`;
+  if(tn!==""){
+    const t=+tn;
+    if(t===254) out+=`\n\n<span class="lbl">decode ${t}</span>\n<span class="hi">external spool</span> (not from AMS)`;
+    else if(t===255) out+=`\n\n<span class="lbl">decode ${t}</span>\n<span class="hi">no tray active</span>`;
+    else if(t>=128*4) out+=`\n\n<span class="lbl">decode ${t}</span>\n<span class="er">AMS-HT range — unmodelled here; (id×4)+i math breaks</span>`;
+    else out+=`\n\n<span class="lbl">decode ${t}</span>\nAMS unit <span class="hi">${Math.floor(t/4)}</span>, tray slot <span class="hi">${t%4}</span>`;
+  }
+  $("#amsOut").innerHTML=out;
+}
+["amsId","amsSlot","trayNow"].forEach(id=>$("#"+id).oninput=ams);ams();
+
+function hf(){
+  const v=+$("#hfIn").value, homed=(v&1)!==0;
+  let bits="";for(let i=7;i>=0;i--) bits+=(v>>i)&1;
+  $("#hfOut").innerHTML=`<span class="lbl">home_flag</span> ${v} = 0b${bits}\nbit 0 = <span class="${homed?'hi':'er'}">${homed?1:0}</span> → axes <span class="${homed?'hi':'er'}">${homed?'HOMED':'NOT homed'}</span>\nother bits encode unrelated state (auto-leveling, filament) — ignored`;
+}
+$("#hfIn").oninput=hf;hf();
+
+// gotchas
+function renderG(f){
+  $("#gotchas").innerHTML=GOTCHAS.filter(g=>f==="all"||g[0]===f||g.slice(4).includes(f)).map(g=>
+   `<div class="gcard"><div class="t">${g[1]}</div><div class="m">${g[2]}</div>
+    <div class="why">→ ${g[3]}</div>
+    <div style="margin-top:8px">${g.slice(4).map(t=>`<span class="tag ${t}">${t.toUpperCase()}</span>`).join("")}</div></div>`).join("")
+   ||`<p style="color:var(--dimmer)">No entries.</p>`;
+}
+renderG("all");
+$$("#gfilters .chip").forEach(c=>c.onclick=()=>{
+  $$("#gfilters .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");renderG(c.dataset.g);});
+
+// confidence filter
+$$(".fbtn").forEach(b=>b.onclick=()=>{$$(".fbtn").forEach(x=>x.classList.remove("on"));b.classList.add("on");
+  document.body.dataset.f=b.dataset.f;});
+
+// search
+$("#search").addEventListener("input",e=>{
+  const q=e.target.value.trim().toLowerCase();
+  $$("main section").forEach(s=>{
+    if(!q){s.classList.remove("hidden");s.querySelectorAll("mark").forEach(m=>m.replaceWith(m.textContent));return;}
+    const hit=s.textContent.toLowerCase().includes(q);
+    s.classList.toggle("hidden",!hit);
+  });
+  $("#count").textContent=q?`${$$("main section:not(.hidden)").length} section(s) match`:"";
+});
+
+// scrollspy
+const links=$$("nav a[href^='#']");
+const obs=new IntersectionObserver(es=>{es.forEach(en=>{if(en.isIntersecting){
+  links.forEach(l=>l.classList.toggle("act",l.getAttribute("href")==="#"+en.target.id));}});},
+  {rootMargin:"-15% 0px -75% 0px"});
+$$("main section").forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>
