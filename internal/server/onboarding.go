@@ -841,32 +841,23 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .add-printer:hover { background: var(--accent-hover); }
 
-    /* Semantic-zoom switch: collapses every card at once down to its
-       always-visible summary. One button that toggles, so the entire control is a
-       single tap target you can hit anywhere — the segmented pair it replaces
-       required a precise hit on whichever half was currently inactive, which is
-       fiddly on a phone. aria-pressed carries the state, and both the icon and
-       the label change with it so the current level is still legible at a glance. */
-    .view-toggle {
-      display: inline-flex; align-items: center; gap: 6px;
-      border: 1px solid var(--border-subtle); background: var(--bg-card);
-      color: var(--text-muted); font: inherit; font-size: 0.8125rem;
-      font-weight: 600; line-height: 1; cursor: pointer;
-      padding: 8px 13px; border-radius: var(--radius-control);
-    }
-    .view-toggle:hover { color: var(--text); }
-    .view-toggle[aria-pressed="true"] {
-      background: #e9ebee; color: var(--text);
-      box-shadow: inset 0 1px 2px rgba(0,0,0,.10);
-    }
-    .view-toggle svg { width: 15px; height: 15px; flex-shrink: 0; }
-    /* Phones: the header has the title, the printer count, the zoom switch and
-       Add Printer all competing for one line, so the switch drops to its icon and
-       grows to a comfortable touch target. The icon — three lines vs two —
-       already encodes the zoom level on its own. */
+    /* Semantic-zoom switch — deliberately the same control as the chamber light
+       (see .toggle) rather than a button. It is a two-state view setting, and a
+       sliding switch reads as "which of these two am I on" at a glance in a way
+       a button that merely relabels itself does not. Wider than the light switch
+       only because the thumb carries a word instead of "on"/"off"; everything
+       else — pill track, white thumb, accent fill, slide — is inherited so the
+       two switches are unmistakably the same kind of control.
+       Checked means compact, so the default detailed view is the resting/off
+       state and "compact view" is what you are switching on. */
+    .zoom-toggle { width: 8.5em; height: 26px; }
+    .zoom-toggle .thumb { font-size: 0.8125rem; }
+    /* Phones: the header has the title, status, bell, zoom switch and Add Printer
+       all competing for one line, so the switch tightens rather than wrapping the
+       header onto a second row. */
     @media (max-width: 767px) {
-      .view-toggle .vt-label { display: none; }
-      .view-toggle { padding: 10px 14px; }
+      .zoom-toggle { width: 7em; height: 24px; }
+      .zoom-toggle .thumb { font-size: 0.75rem; }
     }
 
     /* ─── Desktop (>=768px) ─── */
@@ -1165,7 +1156,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     Printer Dashboard
     <span class="count" id="printer-count"></span>
     <span class="header-actions">
-      <button type="button" class="view-toggle" id="view-toggle" aria-pressed="false" title="Toggle compact view" onclick="toggleViewMode()"><span class="vt-icon" id="vt-icon"></span><span class="vt-label" id="vt-label"></span></button>
+      <label class="toggle zoom-toggle" title="Compact view"><input type="checkbox" id="view-toggle" aria-label="Compact view" onchange="setViewMode(this.checked ? 'compact' : 'detailed')"><span class="slider"><span class="thumb" id="vt-label">detailed</span></span></label>
       <a href="/onboarding" class="add-printer">+ Add Printer</a>
     </span>
   </h1>
@@ -1302,29 +1293,15 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return defaultViewMode();
     }
 
-    // Three lines for detailed, two for compact. The icon encodes the zoom level
-    // on its own, which is what lets the label drop away on phones.
-    function svgLines(n) {
-      var ys = n === 2 ? [8, 16] : [6, 12, 18];
-      var s = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-        'stroke-width="2" stroke-linecap="round">';
-      for (var i = 0; i < ys.length; i++) {
-        s += '<line x1="4" y1="' + ys[i] + '" x2="20" y2="' + ys[i] + '"/>';
-      }
-      return s + '</svg>';
-    }
-
     function applyViewMode(mode) {
       var compact = mode === 'compact';
       document.body.classList.toggle('compact', compact);
+      // The switch is a real checkbox, so it is driven rather than listened to:
+      // the initial mode comes from storage and may not match the markup default.
       var btn = document.getElementById('view-toggle');
-      if (btn) {
-        btn.setAttribute('aria-pressed', compact ? 'true' : 'false');
-        var icon = document.getElementById('vt-icon');
-        var label = document.getElementById('vt-label');
-        if (icon) icon.innerHTML = svgLines(compact ? 2 : 3);
-        if (label) label.textContent = compact ? 'Compact' : 'Detailed';
-      }
+      if (btn) btn.checked = compact;
+      var label = document.getElementById('vt-label');
+      if (label) label.textContent = compact ? 'compact' : 'detailed';
       // A display:none detail region measures 0, so an open popover's clamp and
       // the bell counts have to be recomputed once it is visible again.
       refreshAllOverlays();
@@ -1333,11 +1310,6 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     function setViewMode(mode) {
       try { window.localStorage.setItem(VIEW_MODE_KEY, mode); } catch (e) { /* see readViewMode */ }
       applyViewMode(mode);
-    }
-
-    // The whole control is one button, so a click anywhere on it flips the level.
-    function toggleViewMode() {
-      setViewMode(document.body.classList.contains('compact') ? 'detailed' : 'compact');
     }
 
     applyViewMode(readViewMode());
