@@ -654,11 +654,19 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       background: var(--tag-warning-bg); color: var(--tag-warning-text);
     }
     .hms-row .hms-dismiss {
-      flex-shrink: 0; border: none; background: transparent; color: inherit;
-      font-size: 0.75rem; font-weight: 600; cursor: pointer; opacity: 0.75;
-      padding: 2px 6px; border-radius: var(--radius-control);
+      /* Sized as a touch target, not a text link: this is the control you reach
+         for on a phone while standing at the printer, so it clears the ~44px
+         minimum and drops the 0.75 opacity that made it easy to miss against a
+         coloured row. Given a visible border so its bounds are legible rather
+         than implied by a hover state that never fires on touch. */
+      flex-shrink: 0; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 44px; min-height: 44px; padding: 8px 14px;
+      border: 1px solid currentColor; background: rgba(255,255,255,.55);
+      color: inherit; font: inherit; font-size: 0.9375rem; font-weight: 700;
+      border-radius: var(--radius-control);
     }
-    .hms-row .hms-dismiss:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+    .hms-row .hms-dismiss:hover { background: rgba(255,255,255,.9); }
     /* The HMS code is a diagnostic identifier, not the actionable part of the
        row — dim it and keep it on one line so the human-readable message stays
        what you scan first, and a long code never breaks mid-token. */
@@ -687,13 +695,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .notice-popover-inner { display: flex; flex-direction: column; gap: var(--notice-gap); }
     .notice-popover-inner > * { flex-shrink: 0; }
     .notice-popover-head {
+      /* Readable at arm's length, not a fine-print caption: the previous
+         0.6875rem uppercase/subtle treatment was a label, but this is the only
+         heading inside a scrollable list and it needs to survive a phone screen.
+         padding-bottom is the breathing room before the first notification --
+         --notice-gap only spaces siblings inside .notice-popover-inner, so the
+         head-to-first-row distance has to come from here. */
       display: flex; align-items: center; justify-content: space-between;
-      font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.04em; color: var(--text-subtle); padding: 2px 4px 0;
+      gap: 12px; font-size: 1.0625rem; font-weight: 700;
+      letter-spacing: 0.01em; color: var(--text);
+      padding: 4px 2px 14px;
     }
     .notice-popover-head .notice-close {
-      border: none; background: none; cursor: pointer; color: inherit;
-      font-size: 1.15rem; line-height: 1; padding: 0 4px 2px;
+      /* 44px tap target with a much larger glyph -- the old 1.15rem × inside a
+         ~20px box was a fingernail hit on mobile. Negative margins keep the
+         enlarged target from inflating the header box itself. */
+      flex-shrink: 0; border: none; background: none; cursor: pointer;
+      color: inherit; font: inherit; font-size: 1.9rem; font-weight: 400;
+      line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 44px; height: 44px; margin: -10px -10px -10px 0;
       border-radius: var(--radius-control);
     }
     .notice-popover-head .notice-close:hover { background: rgba(0,0,0,0.07); }
