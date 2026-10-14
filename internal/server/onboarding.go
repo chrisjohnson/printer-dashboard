@@ -2378,6 +2378,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // renderCard() and updateCard() agree on shape, and so updateCard() can
     // refresh its contents while it is closed. Shared-helper precedent as
     // bannerHtml()/hmsRowsHtml() (see K-053).
+    //
+    // Advisories are passed through to hmsRowsHtml() alongside errors and
+    // warnings: they render as non-dismissible .hms-row entries, so the bell's
+    // DOM-derived count picks them up without any extra bookkeeping here.
     function noticePopoverHtml(p) {
       return '<div class="notice-popover" id="notices-' + escapeJsString(p.id) + '">' +
         '<div class="notice-popover-head"><span>Notifications</span>' +
@@ -2385,16 +2389,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\', false)">\u00d7</button></div>' +
         '<div class="notice-popover-inner">' +
           bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
-          '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>' +
+          '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [],
+            p.hms_warnings || [], p.advisories || []) + '</div>' +
         '</div></div>';
-    }
-
-    // How many notices a printer currently has: the error banner (only when it
-    // is actually being shown, i.e. not suppressed as an HMS restatement) plus
-    // every HMS row. This is the number shown on the header bell.
-    function noticeCount(p) {
-      return (showErrorBanner(p) ? 1 : 0) +
-        (p.hms_errors || []).length + (p.hms_warnings || []).length;
     }
 
     // The header bell. Always rendered and hidden when empty, so renderCard()
