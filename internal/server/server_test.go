@@ -1672,14 +1672,14 @@ func TestDashboardTemplate_ErrorBanner(t *testing.T) {
 		t.Error("indexDashboardTemplate should define .error-banner CSS class")
 	}
 	// The banner is no longer a bare errorHtml const inlined into renderCard: it
-	// is emitted by the shared infoStackHtml() helper, which wraps it together
-	// with the job caption and the HMS rows into one scrollable stack. Guard the
-	// helper and its call site rather than the old local variable name.
-	if !strings.Contains(indexDashboardTemplate, "function infoStackHtml(") {
-		t.Error("indexDashboardTemplate should define the infoStackHtml() banner helper")
+	// is emitted by the shared noticePopoverHtml() helper, which wraps it together
+	// with the HMS rows into the dropdown behind the header bell. Guard the helper
+	// and its call site rather than the old local variable name.
+	if !strings.Contains(indexDashboardTemplate, "function noticePopoverHtml(") {
+		t.Error("indexDashboardTemplate should define the noticePopoverHtml() banner helper")
 	}
-	if !strings.Contains(indexDashboardTemplate, "infoStackHtml(p)") {
-		t.Error("indexDashboardTemplate should render the info stack from renderCard via infoStackHtml(p)")
+	if !strings.Contains(indexDashboardTemplate, "noticePopoverHtml(p)") {
+		t.Error("indexDashboardTemplate should render the notice popover from renderCard via noticePopoverHtml(p)")
 	}
 	// The banner must be suppressed when it would only restate the HMS error
 	// rows: the backend composes ErrorMsg from exactly those summaries when HMS
@@ -1691,11 +1691,15 @@ func TestDashboardTemplate_ErrorBanner(t *testing.T) {
 	if !strings.Contains(indexDashboardTemplate, "hmsErrorSummary(errors) === p.error_msg") {
 		t.Error("showErrorBanner should suppress the banner when it equals the joined HMS error summaries")
 	}
-	// Stacked notices are height-capped so several HMS entries can't grow a card
-	// without bound, and the whole detail region is one node so the compact zoom
-	// level is a single display toggle rather than per-section rules.
-	if !strings.Contains(indexDashboardTemplate, ".info-scroll") {
-		t.Error("indexDashboardTemplate should define the .info-scroll capped container")
+	// Notices live behind a header bell rather than inline, so a printer reporting
+	// a dozen HMS entries cannot change its own card height (and so the row's).
+	// The bell is what makes them reachable from the compact zoom level, where
+	// .card-detail — and therefore any inline notice markup — is hidden.
+	if !strings.Contains(indexDashboardTemplate, ".notice-popover") {
+		t.Error("indexDashboardTemplate should define the .notice-popover dropdown")
+	}
+	if !strings.Contains(indexDashboardTemplate, "function noticeChipHtml(") {
+		t.Error("indexDashboardTemplate should define noticeChipHtml() so notices stay reachable when compact")
 	}
 	if !strings.Contains(indexDashboardTemplate, "body.compact .card-detail") {
 		t.Error("indexDashboardTemplate should hide .card-detail in compact zoom mode")

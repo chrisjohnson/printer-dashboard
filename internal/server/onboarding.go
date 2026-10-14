@@ -525,24 +525,27 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        Cards deliberately keep the grid default align-items:stretch so every
        cell in a row is exactly as tall as the tallest one: this is meant to
        scale to a large fleet, where ragged heights make the grid unreadable and
-       every printer's controls stop lining up. The slack that stretch creates
-       is absorbed by .info-stack (see .card-detail) instead of being left as a
-       void mid-card, which is what .bottom-sections' old margin-top:auto did. */
+       every printer's controls stop lining up. Moving the notices into the bell
+       popover is what makes this tolerable — a printer reporting a dozen HMS
+       entries no longer changes its own height, let alone the whole row's, so
+       the leftover slack on a quiet card just trails below its content instead
+       of opening a hole mid-card. */
     .printers { display: grid; grid-template-columns: 1fr; gap: 12px; }
 
     /* Card — compact on mobile, expands on desktop */
     .card {
       background: var(--bg-card); background-clip: padding-box;
+      position: relative; /* containing block for .notice-popover */
       border-radius: var(--radius-card); padding: 12px;
       box-shadow: 0 0 0 1px rgba(0,0,0,.06), var(--shadow-card);
       display: flex; flex-direction: column; gap: 8px;
     }
     /* Everything below the always-visible summary (title, status badge, progress
-       bar, camera, transport controls): temps, the scrollable info stack, AMS,
-       and movement. This is the single node the compact zoom level hides, so the
-       two levels differ by exactly one display toggle rather than a pile of
-       per-section rules. flex:1 + min-height:0 lets it pass the stretched card
-       height down to .info-stack, which is the region designed to flex. */
+       bar, camera, transport controls): temps, the job caption, AMS, and
+       movement. This is the single node the compact zoom level hides, so the two
+       levels differ by exactly one display toggle rather than a pile of
+       per-section rules. Notices are deliberately NOT here — they live in the
+       header bell's popover so they are reachable at either zoom level. */
     .card-detail {
       display: flex; flex-direction: column; gap: 8px;
       flex: 1 1 auto; min-height: 0;
@@ -587,6 +590,27 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .notice-chip.has-error { background: var(--tag-error-bg); color: var(--tag-error-text); }
     .notice-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
     .notice-chip:hover { filter: saturate(1.3) brightness(0.96); }
+    /* A fatal error shakes the bell repeatedly. A count chip is too quiet for
+       the one thing you must not miss, and unlike auto-opening a popover this
+       never covers up the card or steals scroll position — it just keeps
+       re-asking for attention until it is dealt with.
+       A short swing followed by a long pause, rather than a constant wobble:
+       the eye re-registers each burst, and a continuous animation is noise.
+       transform-origin is the top of the bell so it swings from its mount. */
+    .notice-chip.shake { animation: bell-shake 2.8s ease-in-out infinite; transform-origin: 50% 3px; }
+    @keyframes bell-shake {
+      0%, 22%, 100% { transform: rotate(0deg); }
+      4%  { transform: rotate(15deg); }
+      8%  { transform: rotate(-13deg); }
+      12% { transform: rotate(10deg); }
+      16% { transform: rotate(-6deg); }
+      20% { transform: rotate(2deg); }
+    }
+    /* Vestibular safety: the shake is decorative emphasis, so drop it entirely
+       rather than toning it down. The chip stays red and keeps its count. */
+    @media (prefers-reduced-motion: reduce) {
+      .notice-chip.shake { animation: none; }
+    }
 
     .error-banner {
       background: var(--tag-error-bg); color: var(--tag-error-text);
@@ -603,11 +627,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        using the same --tag-error-*/--tag-warning-* variables as .tag.error/
        .tag.paused, so HMS severity coloring matches the rest of the card. */
     .hms-list {
-      /* Same gap as .info-scroll above, so the spacing between two adjacent HMS
-         rows is exactly the spacing between the banner and the first row — one
-         even rhythm through the whole stack. At 4px two rows sharing one severity
-         colour read as a single merged block, since the gap is the only thing
-         separating two otherwise identical backgrounds. */
+      /* Same gap as .notice-popover-inner above, so the spacing between two
+         adjacent HMS rows is exactly the spacing between the banner and the
+         first row — one even rhythm through the whole list. At 4px two rows
+         sharing one severity colour read as a single merged block, since the gap
+         is the only thing separating two otherwise identical backgrounds. */
       display: flex; flex-direction: column; gap: 8px;
     }
     .hms-row {
@@ -633,34 +657,39 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        what you scan first, and a long code never breaks mid-token. */
     .hms-row .hms-code { opacity: 0.6; font-size: 0.92em; white-space: nowrap; }
 
-    /* Info stack — the job caption (filename + layer) plus every dismissible and
-       non-dismissible message, grouped into ONE scrollable region. This is the
-       card's designated flexible region: it absorbs the slack that grid stretch
-       creates, so equal-height cells never leave a void, and its max-height is
-       what bounds the whole grid row when a printer reports a dozen HMS entries
-       at once.
-       Two elements because the bottom shadow has to be pinned to the visible
-       edge: an absolutely-positioned ::after inside the scrolling element is
-       positioned against the scrollable content box and scrolls away with it,
-       so the shadow lives on the non-scrolling wrapper instead.
-       .is-overflowing is measured in JS (CSS has no "is currently scrolled"
-       selector) — a static gradient would shade the last row even when nothing
-       is hidden behind it. */
-    .info-stack {
-      position: relative; display: flex;
-      flex: 1 1 auto; min-height: 0; max-height: 260px;
-    }
-    .info-scroll {
-      display: flex; flex-direction: column; gap: 8px;
-      flex: 1 1 auto; min-height: 0;
+    /* Notice popover — the dropdown the header bell opens, holding the error
+       banner and every HMS row. Notices used to sit inline in the card body;
+       moving them here keeps the card itself to a stable, scannable shape no
+       matter how many entries a printer reports, and gives one obvious place to
+       read and dismiss them from either zoom level.
+       Positioned by JS (top/left/right/max-height) rather than in CSS because
+       both its offset and its height limit are relative to the card's own box,
+       which flex layout decides at runtime. max-height is set to exactly the
+       distance from just under the header down to the card's bottom padding
+       edge, so the popover grows with its content and only starts scrolling
+       once it would have overflowed the cell — which is the whole point of
+       anchoring it to the cell rather than the viewport. */
+    .notice-popover {
+      position: absolute; z-index: 30; display: none;
+      background: var(--bg-card); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-card); padding: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.10);
       overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
     }
-    .info-scroll > * { flex-shrink: 0; }
-    .info-stack.is-overflowing::after {
-      content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 34px;
-      background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,.15));
-      pointer-events: none;
+    .notice-popover.open { display: block; }
+    .notice-popover-inner { display: flex; flex-direction: column; gap: 8px; }
+    .notice-popover-inner > * { flex-shrink: 0; }
+    .notice-popover-head {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--text-subtle); padding: 2px 4px 0;
     }
+    .notice-popover-head .notice-close {
+      border: none; background: none; cursor: pointer; color: inherit;
+      font-size: 1.15rem; line-height: 1; padding: 0 4px 2px;
+      border-radius: var(--radius-control);
+    }
+    .notice-popover-head .notice-close:hover { background: rgba(0,0,0,0.07); }
 
     /* Progress bar — always visible */
     .progress-section { margin: 4px 0; }
@@ -1023,10 +1052,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .move-section-collapsible > .move-section { display: flex; flex-direction: column; gap: 8px; }
     /* AMS + collapsible movement section, grouped so they stay adjacent. No
-       margin-top:auto here: .info-stack is the region that absorbs the slack
-       grid stretch creates, and an auto margin here would win that space first
-       (auto margins take all positive free space before flex-grow runs) and put
-       the void straight back mid-card. */
+       margin-top:auto here: an auto margin would claim all of the slack grid
+       stretch creates before flex-grow gets any (auto margins take all positive
+       free space first), pushing AMS and movement to the very bottom and opening
+       a hole in the middle of every quiet card. */
     .bottom-sections { display: flex; flex-direction: column; gap: 8px; }
 
     /* AMS (Automatic Material System) section */
@@ -1120,6 +1149,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="notice-chip" type="button" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notice-count"></span></button>
         <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
+      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
       <div class="progress-section">
         <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
         <div class="progress-text"><span>&nbsp;</span><span>&nbsp;</span></div>
@@ -1170,7 +1200,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           <span class="temp-values"><label class="toggle"><input type="checkbox"><span class="slider"><span class="thumb">off</span></span></label></span>
         </span>
       </div>
-      <div class="info-stack"><div class="info-scroll"><div class="job-meta">&nbsp;</div><div class="error-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
+      <div class="job-meta">&nbsp;</div>
       <div class="bottom-sections">
         <div class="ams-section" style="display:none;"></div>
         <details class="move-section-collapsible">
@@ -1251,7 +1281,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (compactBtn) compactBtn.setAttribute('aria-pressed', mode === 'compact' ? 'true' : 'false');
       // A display:none info stack measures 0, so its overflow shadow has to be
       // recomputed once the detail region is visible again.
-      refreshAllInfoStacks();
+      refreshAllOverlays();
     }
 
     function setViewMode(mode) {
@@ -1580,7 +1610,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           container.innerHTML = list.map(renderCard).join('');
           // renderCard() can only decide .has-notices from data; .is-
           // overflowing needs real measured layout, so it's applied here.
-          refreshAllInfoStacks();
+          refreshAllOverlays();
           // Populate each card's skipped-object badge from the server —
           // renderCard() itself has no skipped-count data to draw from, so
           // this is a follow-up fetch per printer once the card exists.
@@ -1892,24 +1922,22 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         ? '<span class="card-online yes">' + svgStatusDot(true) + '</span>'
         : '<span class="card-online">' + svgStatusDot(false) + 'Offline</span>';
 
-      // Info stack — job caption (filename + layer) plus the plain error banner
-      // and one dismissible HMS row per (already server-filtered)
-      // hms_errors/hms_warnings entry, all inside one scrollable region that
-      // both bounds the card's height and absorbs the slack grid stretch
-      // creates.
+      // Notice popover — the plain error banner plus one dismissible HMS row per
+      // (already server-filtered) hms_errors/hms_warnings entry, behind the
+      // header bell rather than inline in the card body.
       //
       // The banner is shown when state is "error" and error_msg is non-empty,
       // and suppressed when it would only restate an HMS row (see
       // showErrorBanner()). Both it and .hms-list are always present in the DOM
       // (hidden rather than omitted) so renderCard() and updateCard() agree on
-      // shape and a later WS update can find and refresh them without a full
-      // card rebuild. Built via the shared infoStackHtml()/hmsRowsHtml() helpers
-      // so this can't drift from updateCard()'s copy (see K-053 for the
-      // documented history of exactly this class of drift, and
-      // bannerHtml()/toggleBanner() above for the existing guard on the plain
-      // error banner). Errors continue to use error-banner/error_msg unchanged;
-      // HMS is a separate, non-blocking, per-entry-dismissible channel.
-      const infoStack = infoStackHtml(p);
+      // shape and a later WS update can refresh them while the popover is closed.
+      // Built via the shared noticePopoverHtml()/hmsRowsHtml() helpers so this
+      // can't drift from updateCard()'s copy (see K-053 for the documented
+      // history of exactly this class of drift, and bannerHtml()/toggleBanner()
+      // above for the existing guard on the plain error banner). Errors continue
+      // to use error-banner/error_msg unchanged; HMS is a separate,
+      // non-blocking, per-entry-dismissible channel.
+      const noticePopover = noticePopoverHtml(p);
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1918,6 +1946,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           noticeChipHtml(p) +
           onlineDot +
         '</div>' +
+        noticePopover +
         '<div class="progress-section">' +
           '<div class="progress-bar"><div class="fill" style="width:' + progress + '%"></div></div>' +
           '<div class="progress-text"><span>' + progress + '%</span><span>' + timeStr + '</span></div>' +
@@ -2031,7 +2060,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014') + '</span></span></label></span>' +
           '</span>' +
         '</div>' +
-        infoStack +
+        jobMetaHtml(p) +
         // AMS section — always in DOM (empty string when no AMS units) so
         // renderCard()/updateCard() agree on shape. The data-ams marker
         // lets updateCard() find/replace it directly.
@@ -2269,16 +2298,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return '<div class="job-meta">' + jobMetaInnerHtml(p) + '</div>';
     }
 
-    // Builds the whole info stack for one card: the job caption, the (possibly
-    // hidden) error banner, and the HMS row list, all inside the one scrollable
-    // region. Shared by renderCard() and mirrored by refreshInfoStack() in
-    // updateCard() so the two paths agree on shape — same shared-helper
-    // precedent as bannerHtml()/hmsRowsHtml() (see K-053).
-    function infoStackHtml(p) {
-      return '<div class="info-stack"><div class="info-scroll">' +
-        jobMetaHtml(p) +
-        bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
-        '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>' +
+    // Builds the notice popover for one card: the (possibly hidden) error
+    // banner and the HMS row list, behind the header bell. Notices no longer
+    // sit inline — the card body keeps its stable shape and the entries are read
+    // from here at either zoom level. Always rendered (hidden until opened) so
+    // renderCard() and updateCard() agree on shape, and so updateCard() can
+    // refresh its contents while it is closed. Shared-helper precedent as
+    // bannerHtml()/hmsRowsHtml() (see K-053).
+    function noticePopoverHtml(p) {
+      return '<div class="notice-popover" id="notices-' + escapeJsString(p.id) + '">' +
+        '<div class="notice-popover-head"><span>Notifications</span>' +
+        '<button class="notice-close" type="button" title="Close" ' +
+        'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\', false)">\u00d7</button></div>' +
+        '<div class="notice-popover-inner">' +
+          bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
+          '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>' +
         '</div></div>';
     }
 
@@ -2297,7 +2331,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // haven't read" is invisible in exactly the mode used to scan a whole fleet.
     function noticeChipHtml(p) {
       return '<button class="notice-chip" type="button" style="display:none;" ' +
-        'title="Notifications" onclick="focusNotices(\'' + escapeJsString(p.id) + '\')">' +
+        'aria-expanded="false" title="Notifications" ' +
+        'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\')">' +
         svgBell() + '<span class="notice-count"></span></button>';
     }
 
@@ -2314,48 +2349,90 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const label = chip.querySelector('.notice-count');
       if (label) label.textContent = count;
       chip.style.display = count > 0 ? '' : 'none';
-      // Fatal beats warning: red only when something fatal is present.
-      chip.classList.toggle('has-error', bannerShown || !!card.querySelector('.hms-row.hms-error'));
+      // Fatal beats warning: red, and shaking, only when something fatal is
+      // present. Warnings alone get the quiet amber chip.
+      const fatal = bannerShown || !!card.querySelector('.hms-row.hms-error');
+      chip.classList.toggle('has-error', fatal);
+      chip.classList.toggle('shake', fatal);
       chip.setAttribute('aria-label', count + (count === 1 ? ' notification' : ' notifications'));
     }
 
-    // The bell's job is to get you to the notices. In compact zoom they are
-    // hidden, so drop into detailed view first, then bring this card's stack
-    // into view. Zoom is deliberately global rather than per-card: expanding one
-    // card would stretch every card in its grid row anyway, so a per-card
-    // override would cost the equal-height grid for no gain.
-    function focusNotices(printerId) {
-      if (document.body.classList.contains('compact')) setViewMode('detailed');
+    // Opens/closes a card's notice popover.
+    //
+    // Positioning is measured here rather than expressed in CSS because both the
+    // offset and the height limit are relative to the card's own box, whose size
+    // flex layout only settles at runtime. top sits just under the header and
+    // max-height is exactly the distance left down to the card's bottom padding
+    // edge, so the popover grows with its content and only starts scrolling once
+    // it would have overflowed the cell — which is the whole point of anchoring it
+    // to the cell rather than the viewport. left/right reuse the card's own
+    // padding so the popover lines up with the card's content column at every
+    // breakpoint (padding changes at >=1200px).
+    function positionNoticePopover(card, pop) {
+      const cardRect = card.getBoundingClientRect();
+      const header = card.querySelector('.card-header');
+      const headerRect = header ? header.getBoundingClientRect() : cardRect;
+      const cs = window.getComputedStyle(card);
+      pop.style.left = cs.paddingLeft;
+      pop.style.right = cs.paddingRight;
+      pop.style.top = (headerRect.bottom - cardRect.top + 8) + 'px';
+      const room = cardRect.bottom - headerRect.bottom
+        - (parseFloat(cs.paddingBottom) || 0) - 8;
+      pop.style.maxHeight = Math.max(120, Math.floor(room)) + 'px';
+    }
+
+    function toggleNotices(printerId, force) {
       var card = document.getElementById('printer-' + printerId);
       if (!card) return;
-      var stack = card.querySelector('.info-stack') || card;
-      stack.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      var pop = card.querySelector('.notice-popover');
+      if (!pop) return;
+      var open = (typeof force === 'boolean') ? force : !pop.classList.contains('open');
+      // Measured before the class flip: max-height has to be in place while the
+      // popover is still display:none, otherwise it first paints full-height.
+      if (open) positionNoticePopover(card, pop);
+      pop.classList.toggle('open', open);
+      var chip = card.querySelector('.notice-chip');
+      if (chip) chip.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
-    // Re-measures an already-in-DOM info stack and toggles its bottom shadow.
-    // Must run after anything that changes the stack's height or visibility: an
-    // updateCard() replacement, a Dismiss click, a card resize, or a zoom-level
-    // change (a display:none stack measures 0 and would keep a stale shadow).
-    // .is-overflowing can only be known by measuring — CSS has no "is currently
-    // scrolled" selector, and a static gradient would shade the last row even
-    // when nothing is hidden behind it.
-    function refreshInfoStack(card) {
-      const stack = card.querySelector('.info-stack');
-      if (!stack) return;
-      const scroll = stack.querySelector('.info-scroll');
-      if (!scroll) return;
-      stack.classList.toggle('is-overflowing', scroll.scrollHeight - scroll.clientHeight > 2);
-    }
+    // Click anywhere outside a popover closes it; Escape closes all of them.
+    // Checked against the chip too so the bell's own click is not immediately
+    // undone by the same event reaching the document.
+    document.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (t && t.closest && (t.closest('.notice-popover') || t.closest('.notice-chip'))) return;
+      document.querySelectorAll('.notice-popover.open').forEach(function (pop) {
+        pop.classList.remove('open');
+        var card = pop.closest('.card');
+        var chip = card ? card.querySelector('.notice-chip') : null;
+        if (chip) chip.setAttribute('aria-expanded', 'false');
+      });
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      document.querySelectorAll('.notice-popover.open').forEach(function (pop) {
+        pop.classList.remove('open');
+      });
+    });
+    // The popover's box is pinned to its card's, so a grid reflow moves or
+    // resizes it. Re-measure rather than let it hang past the cell.
+    window.addEventListener('resize', function () {
+      document.querySelectorAll('.notice-popover.open').forEach(function (pop) {
+        var card = pop.closest('.card');
+        if (card) positionNoticePopover(card, pop);
+      });
+    });
 
-    // Per-card derived state that can only be known by measuring/inspecting the
-    // live DOM rather than from the status payload: the info stack's overflow
-    // shadow and the header bell's count.
+    // Per-card derived state that can only be known by inspecting the live DOM
+    // rather than the status payload: the bell's count/severity, and keeping an
+    // open popover sized to its card.
     function refreshCardOverlays(card) {
-      refreshInfoStack(card);
       refreshNoticeChip(card);
+      var pop = card.querySelector('.notice-popover');
+      if (pop && pop.classList.contains('open')) positionNoticePopover(card, pop);
     }
 
-    function refreshAllInfoStacks() {
+    function refreshAllOverlays() {
       document.querySelectorAll('.card').forEach(refreshCardOverlays);
     }
 
