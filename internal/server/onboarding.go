@@ -629,7 +629,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        .hms-list is the always-in-DOM container (mirrors .error-banner's
        hidden-via-display:none-rather-than-omitted pattern) so renderCard()
        and updateCard() agree on shape. Each .hms-row is styled by severity
-       using the same --tag-error-*/--tag-warning-* variables as .tag.error/
+       using the same tag error and warning variables as .tag.error /
        .tag.paused, so HMS severity coloring matches the rest of the card. */
     .hms-list {
       /* Uses the same --notice-gap as .notice-popover-inner so the spacing
