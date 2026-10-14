@@ -842,32 +842,31 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .add-printer:hover { background: var(--accent-hover); }
 
     /* Semantic-zoom switch: collapses every card at once down to its
-       always-visible summary. A segmented pair rather than one toggle button so
-       the current level is legible at a glance — the point of a fleet view is
-       reading it from across the room, not clicking it. */
+       always-visible summary. One button that toggles, so the entire control is a
+       single tap target you can hit anywhere — the segmented pair it replaces
+       required a precise hit on whichever half was currently inactive, which is
+       fiddly on a phone. aria-pressed carries the state, and both the icon and
+       the label change with it so the current level is still legible at a glance. */
     .view-toggle {
-      display: inline-flex; gap: 2px; padding: 2px;
-      background: #e9ebee; border-radius: var(--radius-control);
+      display: inline-flex; align-items: center; gap: 6px;
+      border: 1px solid var(--border-subtle); background: var(--bg-card);
+      color: var(--text-muted); font: inherit; font-size: 0.8125rem;
+      font-weight: 600; line-height: 1; cursor: pointer;
+      padding: 8px 13px; border-radius: var(--radius-control);
     }
-    .view-toggle button {
-      border: none; background: transparent; color: var(--text-muted);
-      font: inherit; font-size: 0.8125rem; font-weight: 600; cursor: pointer;
-      padding: 7px 12px; border-radius: calc(var(--radius-control) - 2px);
-      display: inline-flex; align-items: center; gap: 6px; line-height: 1;
+    .view-toggle:hover { color: var(--text); }
+    .view-toggle[aria-pressed="true"] {
+      background: #e9ebee; color: var(--text);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.10);
     }
-    .view-toggle button:hover { color: var(--text); }
-    .view-toggle button[aria-pressed="true"] {
-      background: var(--bg-card); color: var(--text);
-      box-shadow: 0 1px 2px rgba(0,0,0,.14);
-    }
-    .view-toggle button svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .view-toggle svg { width: 15px; height: 15px; flex-shrink: 0; }
     /* Phones: the header has the title, the printer count, the zoom switch and
-       Add Printer all competing for one line, so the switch drops to icons and
-       grows to a comfortable touch target. The icons — three lines vs two —
-       already encode the zoom level on their own. */
+       Add Printer all competing for one line, so the switch drops to its icon and
+       grows to a comfortable touch target. The icon — three lines vs two —
+       already encodes the zoom level on its own. */
     @media (max-width: 767px) {
       .view-toggle .vt-label { display: none; }
-      .view-toggle button { padding: 9px 13px; }
+      .view-toggle { padding: 10px 14px; }
     }
 
     /* ─── Desktop (>=768px) ─── */
@@ -1166,10 +1165,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     Printer Dashboard
     <span class="count" id="printer-count"></span>
     <span class="header-actions">
-      <span class="view-toggle" role="group" aria-label="Card detail level">
-        <button type="button" id="view-detailed" aria-pressed="true" onclick="setViewMode('detailed')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg><span class="vt-label">Detailed</span></button>
-        <button type="button" id="view-compact" aria-pressed="false" onclick="setViewMode('compact')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="8" x2="20" y2="8"/><line x1="4" y1="16" x2="20" y2="16"/></svg><span class="vt-label">Compact</span></button>
-      </span>
+      <button type="button" class="view-toggle" id="view-toggle" aria-pressed="false" title="Toggle compact view" onclick="toggleViewMode()"><span class="vt-icon" id="vt-icon"></span><span class="vt-label" id="vt-label"></span></button>
       <a href="/onboarding" class="add-printer">+ Add Printer</a>
     </span>
   </h1>
@@ -1306,20 +1302,42 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return defaultViewMode();
     }
 
+    // Three lines for detailed, two for compact. The icon encodes the zoom level
+    // on its own, which is what lets the label drop away on phones.
+    function svgLines(n) {
+      var ys = n === 2 ? [8, 16] : [6, 12, 18];
+      var s = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round">';
+      for (var i = 0; i < ys.length; i++) {
+        s += '<line x1="4" y1="' + ys[i] + '" x2="20" y2="' + ys[i] + '"/>';
+      }
+      return s + '</svg>';
+    }
+
     function applyViewMode(mode) {
-      document.body.classList.toggle('compact', mode === 'compact');
-      var detailedBtn = document.getElementById('view-detailed');
-      var compactBtn = document.getElementById('view-compact');
-      if (detailedBtn) detailedBtn.setAttribute('aria-pressed', mode === 'detailed' ? 'true' : 'false');
-      if (compactBtn) compactBtn.setAttribute('aria-pressed', mode === 'compact' ? 'true' : 'false');
-      // A display:none info stack measures 0, so its overflow shadow has to be
-      // recomputed once the detail region is visible again.
+      var compact = mode === 'compact';
+      document.body.classList.toggle('compact', compact);
+      var btn = document.getElementById('view-toggle');
+      if (btn) {
+        btn.setAttribute('aria-pressed', compact ? 'true' : 'false');
+        var icon = document.getElementById('vt-icon');
+        var label = document.getElementById('vt-label');
+        if (icon) icon.innerHTML = svgLines(compact ? 2 : 3);
+        if (label) label.textContent = compact ? 'Compact' : 'Detailed';
+      }
+      // A display:none detail region measures 0, so an open popover's clamp and
+      // the bell counts have to be recomputed once it is visible again.
       refreshAllOverlays();
     }
 
     function setViewMode(mode) {
       try { window.localStorage.setItem(VIEW_MODE_KEY, mode); } catch (e) { /* see readViewMode */ }
       applyViewMode(mode);
+    }
+
+    // The whole control is one button, so a click anywhere on it flips the level.
+    function toggleViewMode() {
+      setViewMode(document.body.classList.contains('compact') ? 'detailed' : 'compact');
     }
 
     applyViewMode(readViewMode());
