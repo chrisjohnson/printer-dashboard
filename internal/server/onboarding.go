@@ -494,6 +494,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
          so the two control types always read as the same width even if one
          is tweaked later — see input.target / .toggle below. */
       --control-width: 5.5em;
+      /* Single source of truth for the gap between notifications. Used by both
+         .notice-popover-inner (banner -> first row) and .hms-list (row -> row),
+         so the rhythm through the list cannot drift between severities or
+         between the two container levels. */
+      --notice-gap: 10px;
       --danger: #dc2626;
       --danger-hover: #b91c1c;
       /* Heat-source icon tints (by type) — warm bed, sky nozzle, cool chamber */
@@ -521,16 +526,36 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     h1 .count { color: var(--text-subtle); font-size: 0.8125rem; font-weight: 500; }
     .header-actions { margin-left: auto; display: flex; gap: 8px; }
 
-    /* Printer grid — mobile first: single column */
+    /* Printer grid — mobile first: single column.
+       Cards deliberately keep the grid default align-items:stretch so every
+       cell in a row is exactly as tall as the tallest one: this is meant to
+       scale to a large fleet, where ragged heights make the grid unreadable and
+       every printer's controls stop lining up. Moving the notices into the bell
+       popover is what makes this tolerable — a printer reporting a dozen HMS
+       entries no longer changes its own height, let alone the whole row's, so
+       the leftover slack on a quiet card just trails below its content instead
+       of opening a hole mid-card. */
     .printers { display: grid; grid-template-columns: 1fr; gap: 12px; }
 
     /* Card — compact on mobile, expands on desktop */
     .card {
       background: var(--bg-card); background-clip: padding-box;
+      position: relative; /* containing block for .notice-popover */
       border-radius: var(--radius-card); padding: 12px;
       box-shadow: 0 0 0 1px rgba(0,0,0,.06), var(--shadow-card);
       display: flex; flex-direction: column; gap: 8px;
     }
+    /* Everything below the always-visible summary (title, status badge, progress
+       bar, camera, transport controls): temps, the job caption, AMS, and
+       movement. This is the single node the compact zoom level hides, so the two
+       levels differ by exactly one display toggle rather than a pile of
+       per-section rules. Notices are deliberately NOT here — they live in the
+       header bell's popover so they are reachable at either zoom level. */
+    .card-detail {
+      display: flex; flex-direction: column; gap: 8px;
+      flex: 1 1 auto; min-height: 0;
+    }
+    body.compact .card-detail { display: none; }
     .card-header {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     }
@@ -552,6 +577,46 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .card-online.yes { color: var(--tag-success-text); }
     .card-online svg { width: 13px; height: 13px; flex-shrink: 0; }
 
+    /* Notification chip — a bell plus an unread count in the card header,
+       YouTube-style. The header is the one region that survives the compact zoom
+       level, so without this "this printer has things you haven't read" is
+       invisible exactly in the mode used to scan a whole fleet: the status badge
+       says ERROR but says nothing about how many entries, and HMS warnings on an
+       otherwise-idle printer vanish entirely. Red when anything fatal is present,
+       amber when it is warnings only. Always rendered and toggled to
+       display:none when empty, so renderCard()/updateCard() agree on shape. */
+    .notice-chip {
+      display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+      border: none; border-radius: var(--radius-pill); cursor: pointer;
+      padding: 2px 8px 2px 6px; font: inherit; font-size: 0.6875rem;
+      font-weight: 700; line-height: 1.5; font-variant-numeric: tabular-nums;
+      background: var(--tag-warning-bg); color: var(--tag-warning-text);
+    }
+    .notice-chip.has-error { background: var(--tag-error-bg); color: var(--tag-error-text); }
+    .notice-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+    .notice-chip:hover { filter: saturate(1.3) brightness(0.96); }
+    /* A fatal error shakes the bell repeatedly. A count chip is too quiet for
+       the one thing you must not miss, and unlike auto-opening a popover this
+       never covers up the card or steals scroll position — it just keeps
+       re-asking for attention until it is dealt with.
+       A short swing followed by a long pause, rather than a constant wobble:
+       the eye re-registers each burst, and a continuous animation is noise.
+       transform-origin is the top of the bell so it swings from its mount. */
+    .notice-chip.shake { animation: bell-shake 2.8s ease-in-out infinite; transform-origin: 50% 3px; }
+    @keyframes bell-shake {
+      0%, 22%, 100% { transform: rotate(0deg); }
+      4%  { transform: rotate(15deg); }
+      8%  { transform: rotate(-13deg); }
+      12% { transform: rotate(10deg); }
+      16% { transform: rotate(-6deg); }
+      20% { transform: rotate(2deg); }
+    }
+    /* Vestibular safety: the shake is decorative emphasis, so drop it entirely
+       rather than toning it down. The chip stays red and keeps its count. */
+    @media (prefers-reduced-motion: reduce) {
+      .notice-chip.shake { animation: none; }
+    }
+
     .error-banner {
       background: var(--tag-error-bg); color: var(--tag-error-text);
       padding: 8px 12px; border-radius: var(--radius-control);
@@ -564,10 +629,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        .hms-list is the always-in-DOM container (mirrors .error-banner's
        hidden-via-display:none-rather-than-omitted pattern) so renderCard()
        and updateCard() agree on shape. Each .hms-row is styled by severity
-       using the same --tag-error-*/--tag-warning-* variables as .tag.error/
+       using the same tag error and warning variables as .tag.error /
        .tag.paused, so HMS severity coloring matches the rest of the card. */
     .hms-list {
-      display: flex; flex-direction: column; gap: 4px;
+      /* Uses the same --notice-gap as .notice-popover-inner so the spacing
+         between two adjacent HMS rows is provably identical to the spacing
+         between the error banner and the first row — one shared value rather
+         than two that happen to match. Even spacing regardless of severity is
+         the point: at 8px two rows sharing one severity colour read as a single
+         merged shape, because the gap is the only thing separating two otherwise
+         identical rounded backgrounds. */
+      display: flex; flex-direction: column; gap: var(--notice-gap);
     }
     .hms-row {
       display: flex; align-items: center; justify-content: space-between;
@@ -582,11 +654,70 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       background: var(--tag-warning-bg); color: var(--tag-warning-text);
     }
     .hms-row .hms-dismiss {
-      flex-shrink: 0; border: none; background: transparent; color: inherit;
-      font-size: 0.75rem; font-weight: 600; cursor: pointer; opacity: 0.75;
-      padding: 2px 6px; border-radius: var(--radius-control);
+      /* Sized as a touch target, not a text link: this is the control you reach
+         for on a phone while standing at the printer, so it clears the ~44px
+         minimum and drops the 0.75 opacity that made it easy to miss against a
+         coloured row. Given a visible border so its bounds are legible rather
+         than implied by a hover state that never fires on touch. */
+      flex-shrink: 0; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 44px; min-height: 44px; padding: 8px 14px;
+      border: 1px solid currentColor; background: rgba(255,255,255,.55);
+      color: inherit; font: inherit; font-size: 0.9375rem; font-weight: 700;
+      border-radius: var(--radius-control);
     }
-    .hms-row .hms-dismiss:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+    .hms-row .hms-dismiss:hover { background: rgba(255,255,255,.9); }
+    /* The HMS code is a diagnostic identifier, not the actionable part of the
+       row — dim it and keep it on one line so the human-readable message stays
+       what you scan first, and a long code never breaks mid-token. */
+    .hms-row .hms-code { opacity: 0.6; font-size: 0.92em; white-space: nowrap; }
+
+    /* Notice popover — the dropdown the header bell opens, holding the error
+       banner and every HMS row. Notices used to sit inline in the card body;
+       moving them here keeps the card itself to a stable, scannable shape no
+       matter how many entries a printer reports, and gives one obvious place to
+       read and dismiss them from either zoom level.
+       Positioned by JS (top/left/right/max-height) rather than in CSS because
+       both its offset and its height limit are relative to the card's own box,
+       which flex layout decides at runtime. max-height is set to exactly the
+       distance from just under the header down to the card's bottom padding
+       edge, so the popover grows with its content and only starts scrolling
+       once it would have overflowed the cell — which is the whole point of
+       anchoring it to the cell rather than the viewport. */
+    .notice-popover {
+      position: absolute; z-index: 30; display: none;
+      background: var(--bg-card); border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-card); padding: 8px;
+      box-shadow: 0 6px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.10);
+      overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+    }
+    .notice-popover.open { display: block; }
+    .notice-popover-inner { display: flex; flex-direction: column; gap: var(--notice-gap); }
+    .notice-popover-inner > * { flex-shrink: 0; }
+    .notice-popover-head {
+      /* Readable at arm's length, not a fine-print caption: the previous
+         0.6875rem uppercase/subtle treatment was a label, but this is the only
+         heading inside a scrollable list and it needs to survive a phone screen.
+         padding-bottom is the breathing room before the first notification --
+         --notice-gap only spaces siblings inside .notice-popover-inner, so the
+         head-to-first-row distance has to come from here. */
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; font-size: 1.0625rem; font-weight: 700;
+      letter-spacing: 0.01em; color: var(--text);
+      padding: 4px 2px 14px;
+    }
+    .notice-popover-head .notice-close {
+      /* 44px tap target with a much larger glyph -- the old 1.15rem × inside a
+         ~20px box was a fingernail hit on mobile. Negative margins keep the
+         enlarged target from inflating the header box itself. */
+      flex-shrink: 0; border: none; background: none; cursor: pointer;
+      color: inherit; font: inherit; font-size: 1.9rem; font-weight: 400;
+      line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 44px; height: 44px; margin: -10px -10px -10px 0;
+      border-radius: var(--radius-control);
+    }
+    .notice-popover-head .notice-close:hover { background: rgba(0,0,0,0.07); }
 
     /* Progress bar — always visible */
     .progress-section { margin: 4px 0; }
@@ -656,11 +787,19 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
     .toggle input:checked + .slider .thumb { transform: translateX(100%); color: var(--accent); }
 
-    /* File name — hidden on mobile, shown on desktop (see media query below).
-       Always rendered in the markup (with a "—" placeholder when no file is
-       printing) so its row height is reserved from first paint; a later WS
+    /* Job meta — filename and layer count sharing ONE desktop-only line.
+       These used to be two separate always-rendered rows, which meant a
+       printer with no job and no layer data carried two stacked blank lines
+       of dead space between its controls and its notices. One line halves
+       that and reads as a single tidy caption instead. The container is still
+       always rendered (with a blank non-breaking space when there is nothing
+       to say) so its height is reserved from first paint and a later WS
        update swapping in a real filename never changes card height. */
-    .filename { display: none; font-size: 0.75rem; color: var(--text-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-meta {
+      display: none; font-size: 0.75rem; color: var(--text-subtle);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .job-meta .meta-sep { margin: 0 6px; opacity: 0.55; }
 
     /* Controls — always visible but less buttons on mobile */
     .controls { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -674,25 +813,81 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .controls button svg { width: 18px; height: 18px; flex-shrink: 0; }
     .controls button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-    .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Disabled controls go neutral outline instead of a faded solid fill.
+       On an idle printer three of the four controls are unavailable at once,
+       and four pale-tinted solid buttons read as "all of these are live" —
+       flattening the inactive ones to grey outlines makes the one or two
+       actually actionable buttons pop without moving anything around. */
+    .controls button:disabled {
+      background: #f4f5f7; border-color: var(--border-subtle);
+      color: var(--text-subtle); cursor: not-allowed;
+    }
     .controls button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     .controls button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+    .controls button.danger:disabled { background: #f4f5f7; border-color: var(--border-subtle); color: var(--text-subtle); }
     /* Resume is hidden on mobile (rarely needed one-handed); skip needs a
        confirmation modal now (see .skip-modal below) rather than firing
        immediately, so it's safe — and useful — to show on mobile too. */
     .btn-resume { display: none; }
 
-    /* Layer info — desktop only (see media query below). Always rendered
-       (with a "—" placeholder when no layer data yet) for the same
-       reserved-height reason as .filename above. */
-    .layer-info { display: none; font-size: 0.75rem; color: var(--text-subtle); }
+    /* Layer info now lives inside .job-meta above (see its comment); the
+       .layer-info class is kept on its span so it stays selectable/styled
+       independently if a per-part tweak is ever wanted. */
 
     .add-printer {
-      display: inline-block; margin-top: 12px; padding: 8px 16px;
+      display: inline-block; padding: 8px 16px;
       background: var(--accent); color: #fff; border-radius: var(--radius-control);
       text-decoration: none; font-size: 0.8125rem; font-weight: 600;
     }
     .add-printer:hover { background: var(--accent-hover); }
+
+    /* Semantic-zoom switch — a sliding switch, not a button, because it is a
+       two-state view setting and a switch shows which of the two you are on.
+       Putting the word inside the thumb (as an earlier revision did) turned the
+       thumb into a giant white lozenge that filled half the track and read as a
+       text input. So the label lives outside on the left, and the track holds a
+       round knob carrying the active icon with the inactive icon sitting faintly
+       on the side the knob is not on. The knob is opaque, so it covers the icon
+       it lands on and the JS swaps its glyph — one moving icon rather than two
+       competing ones.
+       Checked means compact, so the default detailed view is the resting/off
+       state and "compact view" is what you switch on. */
+    .zoom-switch { display: inline-flex; align-items: center; gap: 9px; }
+    .zoom-switch .zs-label {
+      font-size: 0.8125rem; font-weight: 600; color: var(--text-muted);
+      min-width: 4.6em; text-align: right;
+    }
+    .zoom-toggle { position: relative; display: inline-block; flex-shrink: 0;
+      width: 62px; height: 30px; }
+    .zoom-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .zoom-toggle .slider {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 0 8px; box-sizing: border-box;
+      background: #e3e4e8; border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill); cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .zoom-toggle .zs-ic { display: inline-flex; color: var(--text-subtle);
+      transition: color 0.2s; }
+    .zoom-toggle .zs-ic svg { width: 15px; height: 15px; }
+    .zoom-toggle .thumb {
+      position: absolute; top: 2px; left: 2px; width: 24px; height: 24px;
+      display: flex; align-items: center; justify-content: center;
+      background: #fff; border-radius: var(--radius-pill); color: var(--text-muted);
+      box-shadow: 0 1px 3px rgba(0,0,0,.22);
+      transition: transform 0.2s, color 0.2s; pointer-events: none;
+    }
+    .zoom-toggle .thumb svg { width: 15px; height: 15px; }
+    .zoom-toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+    .zoom-toggle input:checked + .slider .zs-ic { color: rgba(255,255,255,.8); }
+    .zoom-toggle input:checked + .slider .thumb { transform: translateX(32px); color: var(--accent); }
+    .zoom-toggle input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* Phones: the header has the title, status, bell, zoom switch and Add Printer
+       all competing for one line, so the label drops and the switch keeps its
+       size — the knob icon alone says which level you are on. */
+    @media (max-width: 767px) {
+      .zoom-switch .zs-label { display: none; }
+    }
 
     /* ─── Desktop (>=768px) ─── */
     @media (min-width: 768px) {
@@ -702,8 +897,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       .card { padding: 16px; gap: 8px; }
       .card-header h2 { font-size: 1.125rem; }
       .temps { font-size: 0.8125rem; gap: 8px 20px; }
-      .filename { display: block; }
-      .layer-info { display: block; }
+      .job-meta { display: block; }
       .btn-resume { display: inline-block; }
       .progress-bar { height: 8px; }
     }
@@ -714,7 +908,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       overflow: hidden; align-items: stretch;
     }
     .camera-slot {
-      flex: 1; position: relative; min-width: 0; min-height: 300px;
+      flex: 1; position: relative; min-width: 0; min-height: 220px;
       background: #0a0a0a; border-radius: var(--radius-card); overflow: hidden;
       border: 1px solid var(--border-subtle);
       display: flex; flex-direction: column;
@@ -741,6 +935,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .camera-nav button svg { width: 20px; height: 20px; flex-shrink: 0; display: block; }
     .camera-nav button:hover { background: #e9ebee; border-color: #d0d0d6; }
     .camera-nav .cam-label { font-size: 0.6875rem; color: var(--text-subtle); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Single-feed printers get no prev/next — there is nothing to flip to, and
+       two dead arrows made the caption read as a broken carousel control.
+       renderCard() omits the buttons entirely for one stream; this just recentres
+       the lone label, which .camera-nav's space-between would otherwise pin left. */
+    .camera-nav.solo { justify-content: center; }
     .cam-error {
       display: flex; align-items: center; justify-content: space-between;
       gap: 8px; padding: 8px 12px; background: var(--tag-error-bg); color: var(--tag-error-text);
@@ -845,7 +1044,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       display: inline-flex; align-items: center; justify-content: center;
     }
     .jog-pad button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-    .jog-pad button:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Same neutral-outline treatment as .controls button:disabled above —
+       the jog pad is disabled wholesale on any printer that isn't idle, so a
+       whole pad of pale solid buttons reads as noise. */
+    .jog-pad button:disabled,
+    .jog-pad .jog-z-plus:disabled, .jog-pad .jog-z-minus:disabled {
+      background: #f4f5f7; border-color: var(--border-subtle);
+      color: var(--text-subtle); cursor: not-allowed;
+    }
     .jog-pad .jog-spacer { visibility: hidden; }
     .jog-x-minus { grid-column: 1; grid-row: 1 / span 2; }
     .jog-y-plus { grid-column: 2; grid-row: 1; }
@@ -861,7 +1067,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     }
     .btn-home-all:hover:not(:disabled) { background: #e9ebee; border-color: #d0d0d6; }
-    .btn-home-all:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-home-all:disabled { color: var(--text-subtle); cursor: not-allowed; }
 
     /* Collapsible move section — <details> / <summary> styling */
     .move-section-collapsible { }
@@ -892,8 +1098,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       transform: rotate(90deg);
     }
     .move-section-collapsible > .move-section { display: flex; flex-direction: column; gap: 8px; }
-    /* Wrapper that pins AMS + collapsible move section to the bottom of the card */
-    .bottom-sections { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+    /* AMS + collapsible movement section, grouped so they stay adjacent, and
+       pinned to the bottom of the cell. They are the optional/secondary
+       controls, so lining them up on a baseline across a row of printers is more
+       useful than letting them float directly under the temps of whichever card
+       happens to be shortest.
+       This auto margin is safe now that notices live in the bell popover: there
+       is no competing flex-grow region for it to steal slack from. (When the
+       notices were inline, .info-stack was the flexible region and an auto margin
+       here consumed all positive free space before flex-grow could run, opening
+       a hole mid-card.) */
+    .bottom-sections { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
 
     /* AMS (Automatic Material System) section */
     .ams-section { display: flex; flex-direction: column; gap: 6px; margin: 0; }
@@ -921,6 +1136,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       border-radius: 4px; padding: 4px 2px; min-height: 44px;
     }
     .ams-tray.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,.2); }
+    /* Empty slots carry no information beyond "nothing here", so they recede
+       relative to loaded ones — the eye lands on the spools that exist. */
+    .ams-tray.empty { opacity: 0.5; }
     .ams-tray.external { border-style: dashed; }
     .ams-color { width: 16px; height: 16px; border-radius: 3px; border: 1px solid rgba(0,0,0,.1); flex-shrink: 0; }
     .ams-color.empty { background: repeating-conic-gradient(45deg, #ccc, #ccc 4px, #e5e5ea 4px, #e5e5ea 8px); }
@@ -967,6 +1185,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     Printer Dashboard
     <span class="count" id="printer-count"></span>
     <span class="header-actions">
+      <span class="zoom-switch"><span class="zs-label" id="vt-label">Detailed</span><label class="zoom-toggle" title="Compact view"><input type="checkbox" id="view-toggle" aria-label="Compact view" onchange="setViewMode(this.checked ? 'compact' : 'detailed')"><span class="slider"><span class="zs-ic" id="vt-ic-detailed"></span><span class="zs-ic" id="vt-ic-compact"></span><span class="thumb" id="vt-thumb"></span></span></label></span>
       <a href="/onboarding" class="add-printer">+ Add Printer</a>
     </span>
   </h1>
@@ -976,8 +1195,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       <div class="card-header">
         <h2>&nbsp;</h2>
         <span class="tag unknown">&nbsp;</span>
+        <button class="notice-chip" type="button" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notice-count"></span></button>
         <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
+      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
       <div class="progress-section">
         <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
         <div class="progress-text"><span>&nbsp;</span><span>&nbsp;</span></div>
@@ -998,6 +1219,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="danger" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>Cancel</button>
         <button class="btn-skip" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l9 7-9 7z"/><line x1="18" y1="5" x2="18" y2="19"/></svg>Skip Object</button>
       </div>
+      <div class="card-detail">
       <div class="temps">
         <span class="temp-row">
           <span class="label"><span class="temp-icon bed"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="9" x2="20" y2="9"/><path d="M8 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M12 13c-1 1-1 2 0 3s1 2 0 3"/><path d="M16 13c-1 1-1 2 0 3s1 2 0 3"/></svg></span>Bed:</span>
@@ -1027,16 +1249,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           <span class="temp-values"><label class="toggle"><input type="checkbox"><span class="slider"><span class="thumb">off</span></span></label></span>
         </span>
       </div>
-      <div class="filename">&nbsp;</div>
-      <div class="layer-info">&nbsp;</div>
-      <div class="error-banner" style="display:none;"></div>
+      <div class="job-meta">&nbsp;</div>
       <div class="bottom-sections">
         <div class="ams-section" style="display:none;"></div>
         <details class="move-section-collapsible">
-          <summary class="move-section-summary">Move</summary>
+          <summary class="move-section-summary">Movement Controls</summary>
           <div class="move-section" id="move-section-skeleton">
             <div class="move-header">
-              <span class="label">Move</span>
+              <span class="label">Step size</span>
               <select class="step-select">
                 <option value="0.1">0.1 mm</option>
                 <option value="1">1 mm</option>
@@ -1057,6 +1277,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           </div>
         </details>
       </div>
+      </div>
     </div>
     {{end}}
   </div>
@@ -1074,6 +1295,74 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // owning fetch settles, the caller clears its own entry, so the very
     // next WS update (genuinely newer server state) applies normally.
     window._pendingFields = {};
+
+    // ── Semantic zoom: detailed vs compact cards ───────────────────────────
+    // Compact keeps only each card's always-visible summary — title, status
+    // badge, progress bar, camera, transport controls — and hides .card-detail,
+    // so a whole fleet fits on one screen.
+    //
+    // Only an explicit click is persisted. A missing stored value means "never
+    // chosen" and falls back to a per-device default instead of freezing
+    // forever whatever device happened to choose first; that default is compact
+    // on phones, where a single column makes the full card taller than the
+    // viewport. Applied immediately (not after loadPrinters) so the skeleton
+    // cards never flash the detailed layout first.
+    var VIEW_MODE_KEY = 'printer-dashboard.view-mode';
+
+    function defaultViewMode() {
+      return (window.matchMedia && window.matchMedia('(max-width: 767px)').matches)
+        ? 'compact' : 'detailed';
+    }
+
+    function readViewMode() {
+      try {
+        var stored = window.localStorage.getItem(VIEW_MODE_KEY);
+        if (stored === 'detailed' || stored === 'compact') return stored;
+      } catch (e) { /* private mode / storage disabled — fall back to the default */ }
+      return defaultViewMode();
+    }
+
+    // Three lines for detailed, two for compact — the glyph that encodes the
+    // zoom level, used both on the knob and faintly in the track behind it.
+    function svgLines(n) {
+      var ys = n === 2 ? [8, 16] : [6, 12, 18];
+      var s = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round">';
+      for (var i = 0; i < ys.length; i++) {
+        s += '<line x1="4" y1="' + ys[i] + '" x2="20" y2="' + ys[i] + '"/>';
+      }
+      return s + '</svg>';
+    }
+
+    function applyViewMode(mode) {
+      var compact = mode === 'compact';
+      document.body.classList.toggle('compact', compact);
+      // The switch is a real checkbox, so it is driven rather than listened to:
+      // the initial mode comes from storage and may not match the markup default.
+      var btn = document.getElementById('view-toggle');
+      if (btn) btn.checked = compact;
+      var label = document.getElementById('vt-label');
+      if (label) label.textContent = compact ? 'Compact' : 'Detailed';
+      // The track icons are fixed — three lines on the left, two on the right —
+      // and the knob carries whichever one it is currently covering, so the lit
+      // glyph always matches the side the knob is on.
+      var detailedIc = document.getElementById('vt-ic-detailed');
+      var compactIc = document.getElementById('vt-ic-compact');
+      var thumb = document.getElementById('vt-thumb');
+      if (detailedIc) detailedIc.innerHTML = svgLines(3);
+      if (compactIc) compactIc.innerHTML = svgLines(2);
+      if (thumb) thumb.innerHTML = svgLines(compact ? 2 : 3);
+      // A display:none detail region measures 0, so an open popover's clamp and
+      // the bell counts have to be recomputed once it is visible again.
+      refreshAllOverlays();
+    }
+
+    function setViewMode(mode) {
+      try { window.localStorage.setItem(VIEW_MODE_KEY, mode); } catch (e) { /* see readViewMode */ }
+      applyViewMode(mode);
+    }
+
+    applyViewMode(readViewMode());
 
     function mergeWithCache(p) {
       const cached = window._printerCache[p.id] || {};
@@ -1234,14 +1523,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         }
       }
 
-      // 6. File name — row is always present (see renderCard); only swap the
-      // text so a job starting/finishing never changes the card's height.
-      const fileEl = card.querySelector('.filename');
-      if (fileEl) fileEl.textContent = p.current_file ? escapeHtml(p.current_file) : '—';
-
-      // 7. Layer info — same always-present pattern as file name.
-      const layerEl = card.querySelector('.layer-info');
-      if (layerEl) layerEl.textContent = (p.total_layers > 0) ? ('Layer ' + p.current_layer + ' / ' + p.total_layers) : '—';
+      // 6+7. Job meta (filename + layer) — the container is always present
+      // (see renderCard), and the whole line is rebuilt from the shared
+      // jobMetaHtml() helper so a job starting/finishing never changes the
+      // card's height and the two render paths can't drift. jobMetaHtml()
+      // escapes internally; don't wrap it again here.
+      const jobMetaEl = card.querySelector('.job-meta');
+      if (jobMetaEl) jobMetaEl.innerHTML = jobMetaInnerHtml(p);
 
       // 8. Error banner — always present in the DOM (see renderCard); entering
       // or leaving error state is real new information, so unlike filename/
@@ -1250,7 +1538,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // bannerHtml() (see K-053 for the documented history of these two
       // paths drifting apart — don't repeat that here).
       const errorEl = card.querySelector('.error-banner');
-      toggleBanner(errorEl, st === 'error' && !!p.error_msg, p.error_msg);
+      toggleBanner(errorEl, showErrorBanner(p), p.error_msg);
 
       // 8b. HMS rows — one row per (already server-filtered)
       // hms_errors/hms_warnings entry (dismissible) plus one per advisory
@@ -1263,6 +1551,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // just replace its innerHTML wholesale rather than diffing rows.
       const hmsListEl = card.querySelector('.hms-list');
       if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []);
+      // Re-measure the stack now that the banner and rows are settled: it may
+      // have gone from empty to non-empty (or vice versa), and it may now
+      // overflow the cap and need its scroll affordance showing.
+      refreshCardOverlays(card);
 
       // 8c. AMS section — one shared amsHtml() helper builds the full
       // markup (same precedent as hmsRowsHtml() above); replace
@@ -1389,6 +1681,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             window._printerCache[p.id] = p;
           });
           container.innerHTML = list.map(renderCard).join('');
+          // renderCard() can only decide .has-notices from data; .is-
+          // overflowing needs real measured layout, so it's applied here.
+          refreshAllOverlays();
           // Populate each card's skipped-object badge from the server —
           // renderCard() itself has no skipped-count data to draw from, so
           // this is a follow-up fetch per printer once the card exists.
@@ -1542,6 +1837,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         ? _svgOpen.replace('fill="none"', 'fill="currentColor"') + '<circle cx="12" cy="12" r="6"/></svg>'
         : _svgOpen + '<circle cx="12" cy="12" r="6"/></svg>';
     }
+    // Bell icon for the header notification chip.
+    function svgBell() {
+      return _svgOpen +
+        '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
+        '<path d="M13.73 21a2 2 0 0 1-3.46 0"/>' +
+        '</svg>';
+    }
     // Light bulb icon for the chamber light toggle.
     function svgLight() {
       return _svgOpen +
@@ -1634,8 +1936,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           if (isActive) cls += ' active';
 
           if (!tray || (!tray.loaded && !tray.type)) {
-            // Empty slot
-            html += '<div class="' + cls + '">' +
+            // Empty slot — .empty dims it so loaded spools read first
+            html += '<div class="' + cls + ' empty">' +
               '<div class="ams-color empty"></div>' +
               '<div class="ams-tray-info"><div class="ams-tray-type">Empty</div></div>' +
               '</div>';
@@ -1693,46 +1995,31 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         ? '<span class="card-online yes">' + svgStatusDot(true) + '</span>'
         : '<span class="card-online">' + svgStatusDot(false) + 'Offline</span>';
 
-      // File name (desktop only). Always rendered — with a "—" placeholder
-      // when no file is printing — so the row's height is reserved from
-      // first paint and a later WS update can't shift the card's height.
-      const fileHtml = '<div class="filename">' + (p.current_file ? escapeHtml(p.current_file) : '—') + '</div>';
-
-      // Layer info (desktop only). Same always-rendered/placeholder pattern.
-      const layerHtml = '<div class="layer-info">' + (p.total_layers > 0 ? ('Layer ' + p.current_layer + ' / ' + p.total_layers) : '—') + '</div>';
-
-      // Error banner — shown when state is "error" and error_msg is non-empty.
-      // Unlike .filename/.layer-info, this reflects genuinely new information
-      // (an actual error), so it's fine for it to change card height when it
-      // appears/disappears — that's a real state transition, not a loading
-      // artifact. The element is still always present in the DOM (hidden via
-      // display:none rather than omitted) so renderCard() and updateCard()
-      // agree on shape, and a later WS error update can find and show it
-      // without a full card rebuild.
-      const errorHtml = bannerHtml('error-banner', st === 'error' && !!p.error_msg, p.error_msg);
-
-      // HMS rows — one row per (already server-filtered) hms_errors/
-      // hms_warnings entry (dismissible) plus one per advisory (not
-      // dismissible — the printer re-asserts it), regardless of error state.
-      // The
-      // container is always rendered (empty when there are no entries) so
-      // renderCard() and updateCard() agree on shape and a later WS update
-      // can find and refresh it without a full card rebuild — same
-      // always-in-DOM precedent as errorHtml. Built via the shared
-      // hmsRowsHtml() helper so this can't drift from updateCard()'s copy
-      // (see K-053 for the documented history of exactly this class of
-      // drift, and bannerHtml()/toggleBanner() above for the existing
-      // guard on the plain error banner). Errors continue to use
-      // error-banner/error_msg unchanged; this is a separate, non-blocking
-      // channel.
-      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []) + '</div>';
+      // Notice popover — the plain error banner plus one dismissible HMS row per
+      // (already server-filtered) hms_errors/hms_warnings entry, behind the
+      // header bell rather than inline in the card body.
+      //
+      // The banner is shown when state is "error" and error_msg is non-empty,
+      // and suppressed when it would only restate an HMS row (see
+      // showErrorBanner()). Both it and .hms-list are always present in the DOM
+      // (hidden rather than omitted) so renderCard() and updateCard() agree on
+      // shape and a later WS update can refresh them while the popover is closed.
+      // Built via the shared noticePopoverHtml()/hmsRowsHtml() helpers so this
+      // can't drift from updateCard()'s copy (see K-053 for the documented
+      // history of exactly this class of drift, and bannerHtml()/toggleBanner()
+      // above for the existing guard on the plain error banner). Errors continue
+      // to use error-banner/error_msg unchanged; HMS is a separate,
+      // non-blocking, per-entry-dismissible channel.
+      const noticePopover = noticePopoverHtml(p);
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
           '<h2>' + escapeHtml(p.name) + '</h2>' +
           '<span class="tag ' + stCls + '">' + st + '</span>' +
+          noticeChipHtml(p) +
           onlineDot +
         '</div>' +
+        noticePopover +
         '<div class="progress-section">' +
           '<div class="progress-bar"><div class="fill" style="width:' + progress + '%"></div></div>' +
           '<div class="progress-text"><span>' + progress + '%</span><span>' + timeStr + '</span></div>' +
@@ -1785,10 +2072,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             html += '<img id="cam-' + p.id + '" src="' + frameUrl + '&_t=' + Date.now() + '" alt="' + label + '" style="display:block;width:100%;object-fit:contain;background:#000;" onload="this.closest(\'.camera-slot\').style.visibility=\'visible\';" onerror="this.closest(\'.camera-slot\').style.visibility=\'visible\';" data-frame-url="' + escapeHtml(frameUrl) + '">';
           }
           html += '<div class="cam-error" style="display:none;"><span class="cam-error-msg"></span><button class="cam-refresh-btn" title="Refresh camera" style="display:none;">Refresh</button></div>';
-          html += '<div class="camera-nav">';
-          html += '<button class="cam-prev" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',-1)">' + svgChevron('left') + '</button>';
+          // Prev/next only exist when there is actually something to flip to.
+          // Two dead arrows on a single-feed printer read as a broken carousel
+          // control, so the nav collapses to just the centred label.
+          const multiCam = streams.length > 1;
+          html += '<div class="camera-nav' + (multiCam ? '' : ' solo') + '">';
+          if (multiCam) html += '<button class="cam-prev" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',-1)">' + svgChevron('left') + '</button>';
           html += '<span class="cam-label">' + label + '</span>';
-          html += '<button class="cam-next" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',1)">' + svgChevron('right') + '</button>';
+          if (multiCam) html += '<button class="cam-next" onclick="cameraFlip(\'' + escapeJsString(p.id) + '\',1)">' + svgChevron('right') + '</button>';
           html += '</div></div>';
           return '<div class="camera-section" id="cam-section-' + p.id + '">' + html + '</div>';
         })() +
@@ -1799,6 +2090,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
           '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
         '</div>' +
+        // Everything below the always-visible summary lives in one wrapper, so
+        // the compact zoom level is a single display:none rather than a list of
+        // per-section rules that a future section could silently escape.
+        '<div class="card-detail">' +
         '<div class="temps">' +
         // Bed row
           '<span class="temp-row">' +
@@ -1838,19 +2133,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014') + '</span></span></label></span>' +
           '</span>' +
         '</div>' +
-        fileHtml +
-        layerHtml +
-        errorHtml +
-        hmsHtml +
+        jobMetaHtml(p) +
         // AMS section — always in DOM (empty string when no AMS units) so
         // renderCard()/updateCard() agree on shape. The data-ams marker
         // lets updateCard() find/replace it directly.
         '<div class="bottom-sections">' +
         amsHtml(p) +
         '<details class="move-section-collapsible">' +
-        '<summary class="move-section-summary">Move</summary>' +
+        '<summary class="move-section-summary">Movement Controls</summary>' +
         moveSectionHtml(p) +
       '</details>' +
+      '</div>' +
       '</div>' +
         '<button class="skipped-badge" id="skipped-badge-' + p.id + '" onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" style="display:none;"></button>' +
         skipModalHtml(p.id) +
@@ -1889,7 +2182,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const safeId = escapeJsString(p.id);
       return '<div class="move-section" id="move-section-' + p.id + '">' +
         '<div class="move-header">' +
-          '<span class="label">Move</span>' +
+          '<span class="label">Step size</span>' +
           '<select class="step-select" id="step-select-' + p.id + '">' +
             '<option value="0.1">0.1 mm</option>' +
             '<option value="1">1 mm</option>' +
@@ -2025,16 +2318,203 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }
     }
 
-    // Builds one HMS entry's row markup: severity styling, message-or-code
-    // text, and a Dismiss button carrying enough data (printer id + HMS
-    // code) for a click handler to call POST /api/printers/{id}/hms/dismiss.
-    // Message-or-code fallback mirrors the Go-side hmsEntrySummary() in
-    // bambu/parser.go (message when present, else the raw code) — same
-    // preference, independently implemented since it's a different language.
+    // The display text for one HMS entry: the human-readable message with the
+    // raw code appended in parens, or just the code when no message was found.
+    // Mirrors the Go-side hmsEntrySummary() in bambu/parser.go exactly (same
+    // preference, same format) — that function is what builds ErrorMsg when
+    // HMS is the only thing tripping the error state, so keeping this byte-
+    // identical is what makes hmsErrorSummary() a reliable dedupe test.
+    function hmsEntryText(entry) {
+      return entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+    }
+
+    // Rebuilds the exact ErrorMsg the Bambu backend composes when HMS errors
+    // are the only thing in the error state (see client.go's handleReport:
+    // it joins each hms_errors entry's hmsEntrySummary with "; "). Used by
+    // showErrorBanner() to detect that the plain error banner would merely
+    // restate the dismissible HMS rows below it.
+    function hmsErrorSummary(errors) {
+      return (errors || []).map(hmsEntryText).join('; ');
+    }
+
+    // Whether the plain error banner has anything unique to say.
+    //
+    // The banner and the HMS rows are two independent channels that often
+    // carry the same text: when HMS is the only thing tripping state=error,
+    // the backend sets ErrorMsg to the joined HMS error summaries, so the
+    // banner rendered the first fatal entry a second time — an undismissable
+    // duplicate of the dismissible row right below it. Suppress the banner in
+    // exactly that case and let the HMS rows carry it. Every other error
+    // source (print_error=…, MQTT connect/disconnect, Snapmaker poll
+    // failures) has no matching HMS row, so it keeps the banner as before.
+    function showErrorBanner(p) {
+      if ((p.state || 'unknown') !== 'error' || !p.error_msg) return false;
+      const errors = p.hms_errors || [];
+      if (errors.length && hmsErrorSummary(errors) === p.error_msg) return false;
+      return true;
+    }
+
+    // The inner content of the job-meta line (filename · Layer n / m). Parts
+    // that have no data are omitted entirely rather than rendered as a
+    // placeholder, so a printer with neither shows one blank reserved line
+    // instead of two dashes or a lone leading separator. Split from the wrapper
+    // so updateCard() can refresh just the inside of the existing element.
+    // Shared by renderCard() and updateCard() so the two paths agree on shape.
+    function jobMetaInnerHtml(p) {
+      const parts = [];
+      if (p.current_file) parts.push('<span class="filename">' + escapeHtml(p.current_file) + '</span>');
+      if (p.total_layers > 0) parts.push('<span class="layer-info">Layer ' + p.current_layer + ' / ' + p.total_layers + '</span>');
+      return parts.length ? parts.join('<span class="meta-sep">\u00b7</span>') : '\u00a0';
+    }
+
+    function jobMetaHtml(p) {
+      return '<div class="job-meta">' + jobMetaInnerHtml(p) + '</div>';
+    }
+
+    // Builds the notice popover for one card: the (possibly hidden) error
+    // banner and the HMS row list, behind the header bell. Notices no longer
+    // sit inline — the card body keeps its stable shape and the entries are read
+    // from here at either zoom level. Always rendered (hidden until opened) so
+    // renderCard() and updateCard() agree on shape, and so updateCard() can
+    // refresh its contents while it is closed. Shared-helper precedent as
+    // bannerHtml()/hmsRowsHtml() (see K-053).
+    //
+    // Advisories are passed through to hmsRowsHtml() alongside errors and
+    // warnings: they render as non-dismissible .hms-row entries, so the bell's
+    // DOM-derived count picks them up without any extra bookkeeping here.
+    function noticePopoverHtml(p) {
+      return '<div class="notice-popover" id="notices-' + escapeJsString(p.id) + '">' +
+        '<div class="notice-popover-head"><span>Notifications</span>' +
+        '<button class="notice-close" type="button" title="Close" ' +
+        'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\', false)">\u00d7</button></div>' +
+        '<div class="notice-popover-inner">' +
+          bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
+          '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [],
+            p.hms_warnings || [], p.advisories || []) + '</div>' +
+        '</div></div>';
+    }
+
+    // The header bell. Always rendered and hidden when empty, so renderCard()
+    // and updateCard() agree on shape (same always-in-DOM precedent as
+    // .error-banner). It lives in .card-header because that is the one region
+    // compact zoom never hides — without it, "this printer has things you
+    // haven't read" is invisible in exactly the mode used to scan a whole fleet.
+    function noticeChipHtml(p) {
+      return '<button class="notice-chip" type="button" style="display:none;" ' +
+        'aria-expanded="false" title="Notifications" ' +
+        'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\')">' +
+        svgBell() + '<span class="notice-count"></span></button>';
+    }
+
+    // Recomputes the chip from what is actually in the card's DOM rather than
+    // from p, so a Dismiss click that removes a row directly (no re-render)
+    // still leaves the count correct.
+    function refreshNoticeChip(card) {
+      const chip = card.querySelector('.notice-chip');
+      if (!chip) return;
+      const banner = card.querySelector('.error-banner');
+      const bannerShown = !!banner && banner.style.display !== 'none';
+      const rows = card.querySelectorAll('.hms-row');
+      const count = (bannerShown ? 1 : 0) + rows.length;
+      const label = chip.querySelector('.notice-count');
+      if (label) label.textContent = count;
+      chip.style.display = count > 0 ? '' : 'none';
+      // Fatal beats warning: red, and shaking, only when something fatal is
+      // present. Warnings alone get the quiet amber chip.
+      const fatal = bannerShown || !!card.querySelector('.hms-row.hms-error');
+      chip.classList.toggle('has-error', fatal);
+      chip.classList.toggle('shake', fatal);
+      chip.setAttribute('aria-label', count + (count === 1 ? ' notification' : ' notifications'));
+    }
+
+    // Opens/closes a card's notice popover.
+    //
+    // Positioning is measured here rather than expressed in CSS because both the
+    // offset and the height limit are relative to the card's own box, whose size
+    // flex layout only settles at runtime. top sits just under the header and
+    // max-height is exactly the distance left down to the card's bottom padding
+    // edge, so the popover grows with its content and only starts scrolling once
+    // it would have overflowed the cell — which is the whole point of anchoring it
+    // to the cell rather than the viewport. left/right reuse the card's own
+    // padding so the popover lines up with the card's content column at every
+    // breakpoint (padding changes at >=1200px).
+    function positionNoticePopover(card, pop) {
+      const cardRect = card.getBoundingClientRect();
+      const header = card.querySelector('.card-header');
+      const headerRect = header ? header.getBoundingClientRect() : cardRect;
+      const cs = window.getComputedStyle(card);
+      pop.style.left = cs.paddingLeft;
+      pop.style.right = cs.paddingRight;
+      pop.style.top = (headerRect.bottom - cardRect.top + 8) + 'px';
+      const room = cardRect.bottom - headerRect.bottom
+        - (parseFloat(cs.paddingBottom) || 0) - 8;
+      pop.style.maxHeight = Math.max(120, Math.floor(room)) + 'px';
+    }
+
+    function toggleNotices(printerId, force) {
+      var card = document.getElementById('printer-' + printerId);
+      if (!card) return;
+      var pop = card.querySelector('.notice-popover');
+      if (!pop) return;
+      var open = (typeof force === 'boolean') ? force : !pop.classList.contains('open');
+      // Measured before the class flip: max-height has to be in place while the
+      // popover is still display:none, otherwise it first paints full-height.
+      if (open) positionNoticePopover(card, pop);
+      pop.classList.toggle('open', open);
+      var chip = card.querySelector('.notice-chip');
+      if (chip) chip.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    // Click anywhere outside a popover closes it; Escape closes all of them.
+    // Checked against the chip too so the bell's own click is not immediately
+    // undone by the same event reaching the document.
+    document.addEventListener('click', function (ev) {
+      var t = ev.target;
+      if (t && t.closest && (t.closest('.notice-popover') || t.closest('.notice-chip'))) return;
+      document.querySelectorAll('.notice-popover.open').forEach(function (pop) {
+        pop.classList.remove('open');
+        var card = pop.closest('.card');
+        var chip = card ? card.querySelector('.notice-chip') : null;
+        if (chip) chip.setAttribute('aria-expanded', 'false');
+      });
+    });
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      document.querySelectorAll('.notice-popover.open').forEach(function (pop) {
+        pop.classList.remove('open');
+      });
+    });
+    // The popover's box is pinned to its card's, so a grid reflow moves or
+    // resizes it. Re-measure rather than let it hang past the cell.
+    window.addEventListener('resize', function () {
+      document.querySelectorAll('.notice-popover.open').forEach(function (pop) {
+        var card = pop.closest('.card');
+        if (card) positionNoticePopover(card, pop);
+      });
+    });
+
+    // Per-card derived state that can only be known by inspecting the live DOM
+    // rather than the status payload: the bell's count/severity, and keeping an
+    // open popover sized to its card.
+    function refreshCardOverlays(card) {
+      refreshNoticeChip(card);
+      var pop = card.querySelector('.notice-popover');
+      if (pop && pop.classList.contains('open')) positionNoticePopover(card, pop);
+    }
+
+    function refreshAllOverlays() {
+      document.querySelectorAll('.card').forEach(refreshCardOverlays);
+    }
+
+    // Builds one HMS entry's row markup: severity styling, the entry text
+    // (code rendered dimmer than the message via .hms-code), and a Dismiss
+    // button carrying enough data (printer id + HMS code) for a click handler
+    // to call POST /api/printers/{id}/hms/dismiss.
     function hmsRowHtml(printerId, entry, severityCls) {
-      const text = entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+      const code = '<span class="hms-code">(' + escapeHtml(entry.code) + ')</span>';
+      const text = entry.message ? (escapeHtml(entry.message) + ' ' + code) : code;
       return '<div class="hms-row ' + severityCls + '" data-hms-code="' + escapeHtml(entry.code) + '">' +
-        '<span class="hms-text">' + escapeHtml(text) + '</span>' +
+        '<span class="hms-text">' + text + '</span>' +
         '<button class="hms-dismiss" type="button" data-printer-id="' + escapeHtml(printerId) + '" data-hms-code="' + escapeHtml(entry.code) + '" onclick="dismissHms(\'' + escapeJsString(printerId) + '\',\'' + escapeJsString(entry.code) + '\')">Dismiss</button>' +
       '</div>';
     }
@@ -2094,7 +2574,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // proceed (e.g. send the pending jog command).
     function homeAll(id, callback) {
       window._jogBusy[id] = true;
-      var card = document.getElementById('card-' + id);
+      // Cards are rendered with id="printer-<id>" (see renderCard) — an
+      // earlier 'card-' prefix here meant this lookup always returned null, so
+      // the buttons silently never disabled while a home was in flight.
+      var card = document.getElementById('printer-' + id);
       if (card) {
         card.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
           btn.disabled = true;
@@ -2164,7 +2647,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // cache to homed=false and offer homing instead of a raw alert.
     function sendJog(id, body) {
       window._jogBusy[id] = true;
-      var card = document.getElementById('card-' + id);
+      var card = document.getElementById('printer-' + id);
       if (card) {
         card.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
           btn.disabled = true;
@@ -2413,6 +2896,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           for (var i = 0; i < rows.length; i++) {
             if (rows[i].getAttribute('data-hms-code') === code) { rows[i].remove(); break; }
           }
+          // Removing a row can take the stack back under the scroll cap (or to
+          // empty), so re-measure to drop the fade / the wrapper itself.
+          if (card) refreshCardOverlays(card);
         })
         .catch(function(e) { console.error('dismissHms network error:', e); });
     }
