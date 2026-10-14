@@ -1671,8 +1671,30 @@ func TestDashboardTemplate_ErrorBanner(t *testing.T) {
 	if !strings.Contains(indexDashboardTemplate, "error-banner") {
 		t.Error("indexDashboardTemplate should define .error-banner CSS class")
 	}
-	if !strings.Contains(indexDashboardTemplate, "errorHtml") {
-		t.Error("indexDashboardTemplate should define errorHtml in renderCard")
+	// The banner is no longer a bare errorHtml const inlined into renderCard:
+	// it is emitted by the shared noticesHtml() helper, which wraps it together
+	// with the HMS rows into one scrollable stack. Guard the helper and its call
+	// site rather than the old local variable name.
+	if !strings.Contains(indexDashboardTemplate, "function noticesHtml(") {
+		t.Error("indexDashboardTemplate should define the noticesHtml() banner helper")
+	}
+	if !strings.Contains(indexDashboardTemplate, "noticesHtml(p)") {
+		t.Error("indexDashboardTemplate should render the notices stack from renderCard via noticesHtml(p)")
+	}
+	// The banner must be suppressed when it would only restate the HMS error
+	// rows: the backend composes ErrorMsg from exactly those summaries when HMS
+	// is the only thing tripping the error state, so without this guard the
+	// first fatal entry was rendered twice — once undismissably.
+	if !strings.Contains(indexDashboardTemplate, "function showErrorBanner(") {
+		t.Error("indexDashboardTemplate should define showErrorBanner() dedupe guard")
+	}
+	if !strings.Contains(indexDashboardTemplate, "hmsErrorSummary(errors) === p.error_msg") {
+		t.Error("showErrorBanner should suppress the banner when it equals the joined HMS error summaries")
+	}
+	// Stacked notices are height-capped so several HMS entries can't grow a
+	// card without bound and stretch its grid neighbours.
+	if !strings.Contains(indexDashboardTemplate, ".notices-scroll") {
+		t.Error("indexDashboardTemplate should define the .notices-scroll capped container")
 	}
 }
 

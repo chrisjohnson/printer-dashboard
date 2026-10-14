@@ -521,8 +521,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     h1 .count { color: var(--text-subtle); font-size: 0.8125rem; font-weight: 500; }
     .header-actions { margin-left: auto; display: flex; gap: 8px; }
 
-    /* Printer grid — mobile first: single column */
-    .printers { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    /* Printer grid — mobile first: single column.
+       align-items:start lets each card end where its own content ends. The
+       grid default (stretch) made every card in a row as tall as the tallest
+       one, and .bottom-sections' margin-top:auto then pushed AMS + Move down
+       to fill the difference — leaving a large blank void through the middle
+       of otherwise-short cards next to one printer reporting several notices. */
+    .printers { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
 
     /* Card — compact on mobile, expands on desktop */
     .card {
@@ -587,6 +592,35 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       padding: 2px 6px; border-radius: var(--radius-control);
     }
     .hms-row .hms-dismiss:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+    /* The HMS code is a diagnostic identifier, not the actionable part of the
+       row — dim it and keep it on one line so the human-readable message stays
+       what you scan first, and a long code never breaks mid-token. */
+    .hms-row .hms-code { opacity: 0.6; font-size: 0.92em; white-space: nowrap; }
+
+    /* Notices stack — the plain error banner plus every HMS row, grouped into
+       ONE scrollable container. A printer can realistically report several
+       entries at once (a fatal comms error plus two lubrication reminders is
+       the live example), and left uncapped that grew the card far past its
+       neighbours and dominated the whole grid row. Height is capped at a few
+       compact rows and the rest scrolls in place, so the card's overall size
+       stays bounded while nothing is hidden without a visible cue:
+       .is-overflowing paints a bottom fade, which is the affordance on
+       platforms whose scrollbars are overlay-only and invisible at rest.
+       .has-notices keeps the wrapper out of the card's flex flow entirely
+       when there is nothing to show, so an idle printer pays no gap for it. */
+    .notices { display: none; position: relative; }
+    .notices.has-notices { display: block; }
+    .notices-scroll {
+      display: flex; flex-direction: column; gap: 4px;
+      max-height: 172px; overflow-y: auto; overscroll-behavior: contain;
+      scrollbar-width: thin;
+    }
+    .notices-scroll > * { flex-shrink: 0; }
+    .notices.is-overflowing::after {
+      content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+      background: linear-gradient(to bottom, rgba(255,255,255,0), var(--bg-card) 78%);
+      pointer-events: none;
+    }
 
     /* Progress bar — always visible */
     .progress-section { margin: 4px 0; }
@@ -656,11 +690,19 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
     .toggle input:checked + .slider .thumb { transform: translateX(100%); color: var(--accent); }
 
-    /* File name — hidden on mobile, shown on desktop (see media query below).
-       Always rendered in the markup (with a "—" placeholder when no file is
-       printing) so its row height is reserved from first paint; a later WS
+    /* Job meta — filename and layer count sharing ONE desktop-only line.
+       These used to be two separate always-rendered rows, which meant a
+       printer with no job and no layer data carried two stacked blank lines
+       of dead space between its controls and its notices. One line halves
+       that and reads as a single tidy caption instead. The container is still
+       always rendered (with a blank non-breaking space when there is nothing
+       to say) so its height is reserved from first paint and a later WS
        update swapping in a real filename never changes card height. */
-    .filename { display: none; font-size: 0.75rem; color: var(--text-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .job-meta {
+      display: none; font-size: 0.75rem; color: var(--text-subtle);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .job-meta .meta-sep { margin: 0 6px; opacity: 0.55; }
 
     /* Controls — always visible but less buttons on mobile */
     .controls { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -674,18 +716,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .controls button svg { width: 18px; height: 18px; flex-shrink: 0; }
     .controls button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-    .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Disabled controls go neutral outline instead of a faded solid fill.
+       On an idle printer three of the four controls are unavailable at once,
+       and four pale-tinted solid buttons read as "all of these are live" —
+       flattening the inactive ones to grey outlines makes the one or two
+       actually actionable buttons pop without moving anything around. */
+    .controls button:disabled {
+      background: #f4f5f7; border-color: var(--border-subtle);
+      color: var(--text-subtle); cursor: not-allowed;
+    }
     .controls button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
     .controls button.danger:hover:not(:disabled) { background: var(--danger-hover); border-color: var(--danger-hover); }
+    .controls button.danger:disabled { background: #f4f5f7; border-color: var(--border-subtle); color: var(--text-subtle); }
     /* Resume is hidden on mobile (rarely needed one-handed); skip needs a
        confirmation modal now (see .skip-modal below) rather than firing
        immediately, so it's safe — and useful — to show on mobile too. */
     .btn-resume { display: none; }
 
-    /* Layer info — desktop only (see media query below). Always rendered
-       (with a "—" placeholder when no layer data yet) for the same
-       reserved-height reason as .filename above. */
-    .layer-info { display: none; font-size: 0.75rem; color: var(--text-subtle); }
+    /* Layer info now lives inside .job-meta above (see its comment); the
+       .layer-info class is kept on its span so it stays selectable/styled
+       independently if a per-part tweak is ever wanted. */
 
     .add-printer {
       display: inline-block; margin-top: 12px; padding: 8px 16px;
@@ -702,8 +752,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       .card { padding: 16px; gap: 8px; }
       .card-header h2 { font-size: 1.125rem; }
       .temps { font-size: 0.8125rem; gap: 8px 20px; }
-      .filename { display: block; }
-      .layer-info { display: block; }
+      .job-meta { display: block; }
       .btn-resume { display: inline-block; }
       .progress-bar { height: 8px; }
     }
@@ -845,7 +894,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       display: inline-flex; align-items: center; justify-content: center;
     }
     .jog-pad button:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
-    .jog-pad button:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Same neutral-outline treatment as .controls button:disabled above —
+       the jog pad is disabled wholesale on any printer that isn't idle, so a
+       whole pad of pale solid buttons reads as noise. */
+    .jog-pad button:disabled,
+    .jog-pad .jog-z-plus:disabled, .jog-pad .jog-z-minus:disabled {
+      background: #f4f5f7; border-color: var(--border-subtle);
+      color: var(--text-subtle); cursor: not-allowed;
+    }
     .jog-pad .jog-spacer { visibility: hidden; }
     .jog-x-minus { grid-column: 1; grid-row: 1 / span 2; }
     .jog-y-plus { grid-column: 2; grid-row: 1; }
@@ -861,7 +917,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       display: inline-flex; align-items: center; justify-content: center; gap: 6px;
     }
     .btn-home-all:hover:not(:disabled) { background: #e9ebee; border-color: #d0d0d6; }
-    .btn-home-all:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-home-all:disabled { color: var(--text-subtle); cursor: not-allowed; }
 
     /* Collapsible move section — <details> / <summary> styling */
     .move-section-collapsible { }
@@ -921,6 +977,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       border-radius: 4px; padding: 4px 2px; min-height: 44px;
     }
     .ams-tray.active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,.2); }
+    /* Empty slots carry no information beyond "nothing here", so they recede
+       relative to loaded ones — the eye lands on the spools that exist. */
+    .ams-tray.empty { opacity: 0.5; }
     .ams-tray.external { border-style: dashed; }
     .ams-color { width: 16px; height: 16px; border-radius: 3px; border: 1px solid rgba(0,0,0,.1); flex-shrink: 0; }
     .ams-color.empty { background: repeating-conic-gradient(45deg, #ccc, #ccc 4px, #e5e5ea 4px, #e5e5ea 8px); }
@@ -1027,9 +1086,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           <span class="temp-values"><label class="toggle"><input type="checkbox"><span class="slider"><span class="thumb">off</span></span></label></span>
         </span>
       </div>
-      <div class="filename">&nbsp;</div>
-      <div class="layer-info">&nbsp;</div>
-      <div class="error-banner" style="display:none;"></div>
+      <div class="job-meta">&nbsp;</div>
+      <div class="notices"><div class="notices-scroll"><div class="error-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
       <div class="bottom-sections">
         <div class="ams-section" style="display:none;"></div>
         <details class="move-section-collapsible">
@@ -1234,14 +1292,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         }
       }
 
-      // 6. File name — row is always present (see renderCard); only swap the
-      // text so a job starting/finishing never changes the card's height.
-      const fileEl = card.querySelector('.filename');
-      if (fileEl) fileEl.textContent = p.current_file ? escapeHtml(p.current_file) : '—';
-
-      // 7. Layer info — same always-present pattern as file name.
-      const layerEl = card.querySelector('.layer-info');
-      if (layerEl) layerEl.textContent = (p.total_layers > 0) ? ('Layer ' + p.current_layer + ' / ' + p.total_layers) : '—';
+      // 6+7. Job meta (filename + layer) — the container is always present
+      // (see renderCard), and the whole line is rebuilt from the shared
+      // jobMetaHtml() helper so a job starting/finishing never changes the
+      // card's height and the two render paths can't drift. jobMetaHtml()
+      // escapes internally; don't wrap it again here.
+      const jobMetaEl = card.querySelector('.job-meta');
+      if (jobMetaEl) jobMetaEl.innerHTML = jobMetaInnerHtml(p);
 
       // 8. Error banner — always present in the DOM (see renderCard); entering
       // or leaving error state is real new information, so unlike filename/
@@ -1250,7 +1307,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // bannerHtml() (see K-053 for the documented history of these two
       // paths drifting apart — don't repeat that here).
       const errorEl = card.querySelector('.error-banner');
-      toggleBanner(errorEl, st === 'error' && !!p.error_msg, p.error_msg);
+      toggleBanner(errorEl, showErrorBanner(p), p.error_msg);
 
       // 8b. HMS rows — one row per (already server-filtered)
       // hms_errors/hms_warnings entry (dismissible) plus one per advisory
@@ -1263,6 +1320,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // just replace its innerHTML wholesale rather than diffing rows.
       const hmsListEl = card.querySelector('.hms-list');
       if (hmsListEl) hmsListEl.innerHTML = hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []);
+      // Re-measure the stack now that the banner and rows are settled: it may
+      // have gone from empty to non-empty (or vice versa), and it may now
+      // overflow the cap and need its scroll affordance showing.
+      refreshNotices(card);
 
       // 8c. AMS section — one shared amsHtml() helper builds the full
       // markup (same precedent as hmsRowsHtml() above); replace
@@ -1389,6 +1450,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             window._printerCache[p.id] = p;
           });
           container.innerHTML = list.map(renderCard).join('');
+          // renderCard() can only decide .has-notices from data; .is-
+          // overflowing needs real measured layout, so it's applied here.
+          container.querySelectorAll('.card').forEach(function(c) { refreshNotices(c); });
           // Populate each card's skipped-object badge from the server —
           // renderCard() itself has no skipped-count data to draw from, so
           // this is a follow-up fetch per printer once the card exists.
@@ -1634,8 +1698,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           if (isActive) cls += ' active';
 
           if (!tray || (!tray.loaded && !tray.type)) {
-            // Empty slot
-            html += '<div class="' + cls + '">' +
+            // Empty slot — .empty dims it so loaded spools read first
+            html += '<div class="' + cls + ' empty">' +
               '<div class="ams-color empty"></div>' +
               '<div class="ams-tray-info"><div class="ams-tray-type">Empty</div></div>' +
               '</div>';
@@ -1693,39 +1757,29 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         ? '<span class="card-online yes">' + svgStatusDot(true) + '</span>'
         : '<span class="card-online">' + svgStatusDot(false) + 'Offline</span>';
 
-      // File name (desktop only). Always rendered — with a "—" placeholder
-      // when no file is printing — so the row's height is reserved from
-      // first paint and a later WS update can't shift the card's height.
-      const fileHtml = '<div class="filename">' + (p.current_file ? escapeHtml(p.current_file) : '—') + '</div>';
+      // Job meta (desktop only): filename + layer on one always-rendered line.
+      const jobMeta = jobMetaHtml(p);
 
-      // Layer info (desktop only). Same always-rendered/placeholder pattern.
-      const layerHtml = '<div class="layer-info">' + (p.total_layers > 0 ? ('Layer ' + p.current_layer + ' / ' + p.total_layers) : '—') + '</div>';
-
-      // Error banner — shown when state is "error" and error_msg is non-empty.
-      // Unlike .filename/.layer-info, this reflects genuinely new information
-      // (an actual error), so it's fine for it to change card height when it
+      // Notices stack — the plain error banner plus one dismissible HMS row per
+      // (already server-filtered) hms_errors/hms_warnings entry, inside one
+      // scrollable container so several entries at once can't grow the card
+      // without bound.
+      //
+      // The banner is shown when state is "error" and error_msg is non-empty,
+      // and suppressed when it would only restate an HMS row (see
+      // showErrorBanner()). Unlike .filename/.layer-info it reflects genuinely
+      // new information, so it's fine for it to change card height when it
       // appears/disappears — that's a real state transition, not a loading
-      // artifact. The element is still always present in the DOM (hidden via
-      // display:none rather than omitted) so renderCard() and updateCard()
-      // agree on shape, and a later WS error update can find and show it
-      // without a full card rebuild.
-      const errorHtml = bannerHtml('error-banner', st === 'error' && !!p.error_msg, p.error_msg);
-
-      // HMS rows — one row per (already server-filtered) hms_errors/
-      // hms_warnings entry (dismissible) plus one per advisory (not
-      // dismissible — the printer re-asserts it), regardless of error state.
-      // The
-      // container is always rendered (empty when there are no entries) so
-      // renderCard() and updateCard() agree on shape and a later WS update
-      // can find and refresh it without a full card rebuild — same
-      // always-in-DOM precedent as errorHtml. Built via the shared
-      // hmsRowsHtml() helper so this can't drift from updateCard()'s copy
-      // (see K-053 for the documented history of exactly this class of
-      // drift, and bannerHtml()/toggleBanner() above for the existing
-      // guard on the plain error banner). Errors continue to use
-      // error-banner/error_msg unchanged; this is a separate, non-blocking
-      // channel.
-      const hmsHtml = '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || [], p.advisories || []) + '</div>';
+      // artifact. Both it and .hms-list are still always present in the DOM
+      // (hidden rather than omitted) so renderCard() and updateCard() agree on
+      // shape and a later WS update can find and refresh them without a full
+      // card rebuild. Built via the shared noticesHtml()/hmsRowsHtml() helpers
+      // so this can't drift from updateCard()'s copy (see K-053 for the
+      // documented history of exactly this class of drift, and
+      // bannerHtml()/toggleBanner() above for the existing guard on the plain
+      // error banner). Errors continue to use error-banner/error_msg unchanged;
+      // HMS is a separate, non-blocking, per-entry-dismissible channel.
+      const noticesSectionHtml = noticesHtml(p);
 
       return '<div class="card" id="printer-' + p.id + '">' +
         '<div class="card-header">' +
@@ -1838,10 +1892,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
             '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014') + '</span></span></label></span>' +
           '</span>' +
         '</div>' +
-        fileHtml +
-        layerHtml +
-        errorHtml +
-        hmsHtml +
+        jobMeta +
+        noticesSectionHtml +
         // AMS section — always in DOM (empty string when no AMS units) so
         // renderCard()/updateCard() agree on shape. The data-ams marker
         // lets updateCard() find/replace it directly.
@@ -2025,16 +2077,109 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }
     }
 
-    // Builds one HMS entry's row markup: severity styling, message-or-code
-    // text, and a Dismiss button carrying enough data (printer id + HMS
-    // code) for a click handler to call POST /api/printers/{id}/hms/dismiss.
-    // Message-or-code fallback mirrors the Go-side hmsEntrySummary() in
-    // bambu/parser.go (message when present, else the raw code) — same
-    // preference, independently implemented since it's a different language.
+    // The display text for one HMS entry: the human-readable message with the
+    // raw code appended in parens, or just the code when no message was found.
+    // Mirrors the Go-side hmsEntrySummary() in bambu/parser.go exactly (same
+    // preference, same format) — that function is what builds ErrorMsg when
+    // HMS is the only thing tripping the error state, so keeping this byte-
+    // identical is what makes hmsErrorSummary() a reliable dedupe test.
+    function hmsEntryText(entry) {
+      return entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+    }
+
+    // Rebuilds the exact ErrorMsg the Bambu backend composes when HMS errors
+    // are the only thing in the error state (see client.go's handleReport:
+    // it joins each hms_errors entry's hmsEntrySummary with "; "). Used by
+    // showErrorBanner() to detect that the plain error banner would merely
+    // restate the dismissible HMS rows below it.
+    function hmsErrorSummary(errors) {
+      return (errors || []).map(hmsEntryText).join('; ');
+    }
+
+    // Whether the plain error banner has anything unique to say.
+    //
+    // The banner and the HMS rows are two independent channels that often
+    // carry the same text: when HMS is the only thing tripping state=error,
+    // the backend sets ErrorMsg to the joined HMS error summaries, so the
+    // banner rendered the first fatal entry a second time — an undismissable
+    // duplicate of the dismissible row right below it. Suppress the banner in
+    // exactly that case and let the HMS rows carry it. Every other error
+    // source (print_error=…, MQTT connect/disconnect, Snapmaker poll
+    // failures) has no matching HMS row, so it keeps the banner as before.
+    function showErrorBanner(p) {
+      if ((p.state || 'unknown') !== 'error' || !p.error_msg) return false;
+      const errors = p.hms_errors || [];
+      if (errors.length && hmsErrorSummary(errors) === p.error_msg) return false;
+      return true;
+    }
+
+    // Whether a printer has any notice to show at all — drives .has-notices,
+    // which keeps the wrapper out of the card's flex layout when empty so an
+    // idle printer doesn't pay a gap for a zero-height container.
+    function hasNotices(p) {
+      return showErrorBanner(p) ||
+        (p.hms_errors || []).length > 0 ||
+        (p.hms_warnings || []).length > 0;
+    }
+
+    // Builds the whole notices stack for one card: the (possibly hidden)
+    // error banner plus the HMS row list, inside the scrollable container.
+    // Shared by renderCard() and mirrored by refreshNotices() in updateCard()
+    // so the two paths agree on shape — same shared-helper precedent as
+    // bannerHtml()/hmsRowsHtml() (see K-053).
+    // The inner content of the job-meta line (filename · Layer n / m). Parts
+    // that have no data are omitted entirely rather than rendered as a
+    // placeholder, so a printer with neither shows one blank reserved line
+    // instead of two dashes or a lone leading separator. Split from the
+    // wrapper so updateCard() can refresh just the inside of the existing
+    // element. Shared by renderCard() and updateCard() so the two paths agree
+    // on shape — same shared-helper precedent as noticesHtml().
+    function jobMetaInnerHtml(p) {
+      const parts = [];
+      if (p.current_file) parts.push('<span class="filename">' + escapeHtml(p.current_file) + '</span>');
+      if (p.total_layers > 0) parts.push('<span class="layer-info">Layer ' + p.current_layer + ' / ' + p.total_layers + '</span>');
+      return parts.length ? parts.join('<span class="meta-sep">\u00b7</span>') : '\u00a0';
+    }
+
+    function jobMetaHtml(p) {
+      return '<div class="job-meta">' + jobMetaInnerHtml(p) + '</div>';
+    }
+
+    function noticesHtml(p) {
+      return '<div class="notices' + (hasNotices(p) ? ' has-notices' : '') + '">' +
+        '<div class="notices-scroll">' +
+          bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
+          '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [], p.hms_warnings || []) + '</div>' +
+        '</div></div>';
+    }
+
+    // Re-measures an already-in-DOM notices stack and updates its two state
+    // classes. Must be called after anything that changes the stack's height:
+    // an updateCard() HMS replacement, or a Dismiss click removing a row.
+    // .is-overflowing is what makes the bottom fade (and so the fact that more
+    // notices are reachable) appear — it can only be known by measuring, since
+    // CSS has no "is currently scrolled" selector.
+    function refreshNotices(card) {
+      const wrap = card.querySelector('.notices');
+      if (!wrap) return;
+      const scroll = wrap.querySelector('.notices-scroll');
+      if (!scroll) return;
+      const banner = wrap.querySelector('.error-banner');
+      const bannerVisible = !!banner && banner.style.display !== 'none';
+      const has = bannerVisible || !!wrap.querySelector('.hms-row');
+      wrap.classList.toggle('has-notices', has);
+      wrap.classList.toggle('is-overflowing', has && scroll.scrollHeight - scroll.clientHeight > 2);
+    }
+
+    // Builds one HMS entry's row markup: severity styling, the entry text
+    // (code rendered dimmer than the message via .hms-code), and a Dismiss
+    // button carrying enough data (printer id + HMS code) for a click handler
+    // to call POST /api/printers/{id}/hms/dismiss.
     function hmsRowHtml(printerId, entry, severityCls) {
-      const text = entry.message ? (entry.message + ' (' + entry.code + ')') : entry.code;
+      const code = '<span class="hms-code">(' + escapeHtml(entry.code) + ')</span>';
+      const text = entry.message ? (escapeHtml(entry.message) + ' ' + code) : code;
       return '<div class="hms-row ' + severityCls + '" data-hms-code="' + escapeHtml(entry.code) + '">' +
-        '<span class="hms-text">' + escapeHtml(text) + '</span>' +
+        '<span class="hms-text">' + text + '</span>' +
         '<button class="hms-dismiss" type="button" data-printer-id="' + escapeHtml(printerId) + '" data-hms-code="' + escapeHtml(entry.code) + '" onclick="dismissHms(\'' + escapeJsString(printerId) + '\',\'' + escapeJsString(entry.code) + '\')">Dismiss</button>' +
       '</div>';
     }
@@ -2094,7 +2239,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // proceed (e.g. send the pending jog command).
     function homeAll(id, callback) {
       window._jogBusy[id] = true;
-      var card = document.getElementById('card-' + id);
+      // Cards are rendered with id="printer-<id>" (see renderCard) — an
+      // earlier 'card-' prefix here meant this lookup always returned null, so
+      // the buttons silently never disabled while a home was in flight.
+      var card = document.getElementById('printer-' + id);
       if (card) {
         card.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
           btn.disabled = true;
@@ -2164,7 +2312,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // cache to homed=false and offer homing instead of a raw alert.
     function sendJog(id, body) {
       window._jogBusy[id] = true;
-      var card = document.getElementById('card-' + id);
+      var card = document.getElementById('printer-' + id);
       if (card) {
         card.querySelectorAll('.jog-pad button, .btn-home-all').forEach(function(btn) {
           btn.disabled = true;
@@ -2413,6 +2561,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           for (var i = 0; i < rows.length; i++) {
             if (rows[i].getAttribute('data-hms-code') === code) { rows[i].remove(); break; }
           }
+          // Removing a row can take the stack back under the scroll cap (or to
+          // empty), so re-measure to drop the fade / the wrapper itself.
+          if (card) refreshNotices(card);
         })
         .catch(function(e) { console.error('dismissHms network error:', e); });
     }
