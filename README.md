@@ -149,7 +149,19 @@ go test ./coverprofile=coverage.out
 go tool cover -html=coverage.out
 ```
 
-See [`PLAN.md`](PLAN.md) for the full architecture plan and testing standards.
+## Protocol reference
+
+Two documents describe printer behavior independent of this application:
+
+- **`docs/printer-protocol-reference.md`** — the spec sheet. Access paths, authentication flows, MQTT
+  transport, command payloads, telemetry semantics, command signing, HMS codes, camera protocols, and
+  AMS/filament behavior for Bambu Lab and Snapmaker U1 machines.
+- **`docs/printer-protocol-unverified.md`** — claims that are plausible but not established, each with
+  the experiment that would settle it. Check here before treating a gap in the reference as permission to
+  assume.
+- **`docs/printer-protocol-guide.html`** — an interactive version of the same material. Open it directly
+  in a browser; it has a printer selector at the top, live decoders for HMS codes, packed temperatures,
+  AMS tray ids and home flags, and a symptom finder.
 
 ## License
 
