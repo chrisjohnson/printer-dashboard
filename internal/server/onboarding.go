@@ -494,6 +494,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
          so the two control types always read as the same width even if one
          is tweaked later — see input.target / .toggle below. */
       --control-width: 5.5em;
+      /* Single source of truth for the gap between notifications. Used by both
+         .notice-popover-inner (banner -> first row) and .hms-list (row -> row),
+         so the rhythm through the list cannot drift between severities or
+         between the two container levels. */
+      --notice-gap: 10px;
       --danger: #dc2626;
       --danger-hover: #b91c1c;
       /* Heat-source icon tints (by type) — warm bed, sky nozzle, cool chamber */
@@ -627,12 +632,14 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        using the same --tag-error-*/--tag-warning-* variables as .tag.error/
        .tag.paused, so HMS severity coloring matches the rest of the card. */
     .hms-list {
-      /* Same gap as .notice-popover-inner above, so the spacing between two
-         adjacent HMS rows is exactly the spacing between the banner and the
-         first row — one even rhythm through the whole list. At 4px two rows
-         sharing one severity colour read as a single merged block, since the gap
-         is the only thing separating two otherwise identical backgrounds. */
-      display: flex; flex-direction: column; gap: 8px;
+      /* Uses the same --notice-gap as .notice-popover-inner so the spacing
+         between two adjacent HMS rows is provably identical to the spacing
+         between the error banner and the first row — one shared value rather
+         than two that happen to match. Even spacing regardless of severity is
+         the point: at 8px two rows sharing one severity colour read as a single
+         merged shape, because the gap is the only thing separating two otherwise
+         identical rounded backgrounds. */
+      display: flex; flex-direction: column; gap: var(--notice-gap);
     }
     .hms-row {
       display: flex; align-items: center; justify-content: space-between;
@@ -677,7 +684,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
     }
     .notice-popover.open { display: block; }
-    .notice-popover-inner { display: flex; flex-direction: column; gap: 8px; }
+    .notice-popover-inner { display: flex; flex-direction: column; gap: var(--notice-gap); }
     .notice-popover-inner > * { flex-shrink: 0; }
     .notice-popover-head {
       display: flex; align-items: center; justify-content: space-between;
@@ -1051,12 +1058,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       transform: rotate(90deg);
     }
     .move-section-collapsible > .move-section { display: flex; flex-direction: column; gap: 8px; }
-    /* AMS + collapsible movement section, grouped so they stay adjacent. No
-       margin-top:auto here: an auto margin would claim all of the slack grid
-       stretch creates before flex-grow gets any (auto margins take all positive
-       free space first), pushing AMS and movement to the very bottom and opening
-       a hole in the middle of every quiet card. */
-    .bottom-sections { display: flex; flex-direction: column; gap: 8px; }
+    /* AMS + collapsible movement section, grouped so they stay adjacent, and
+       pinned to the bottom of the cell. They are the optional/secondary
+       controls, so lining them up on a baseline across a row of printers is more
+       useful than letting them float directly under the temps of whichever card
+       happens to be shortest.
+       This auto margin is safe now that notices live in the bell popover: there
+       is no competing flex-grow region for it to steal slack from. (When the
+       notices were inline, .info-stack was the flexible region and an auto margin
+       here consumed all positive free space before flex-grow could run, opening
+       a hole mid-card.) */
+    .bottom-sections { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
 
     /* AMS (Automatic Material System) section */
     .ams-section { display: flex; flex-direction: column; gap: 6px; margin: 0; }
