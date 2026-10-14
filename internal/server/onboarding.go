@@ -841,23 +841,52 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .add-printer:hover { background: var(--accent-hover); }
 
-    /* Semantic-zoom switch — deliberately the same control as the chamber light
-       (see .toggle) rather than a button. It is a two-state view setting, and a
-       sliding switch reads as "which of these two am I on" at a glance in a way
-       a button that merely relabels itself does not. Wider than the light switch
-       only because the thumb carries a word instead of "on"/"off"; everything
-       else — pill track, white thumb, accent fill, slide — is inherited so the
-       two switches are unmistakably the same kind of control.
+    /* Semantic-zoom switch — a sliding switch, not a button, because it is a
+       two-state view setting and a switch shows which of the two you are on.
+       Putting the word inside the thumb (as an earlier revision did) turned the
+       thumb into a giant white lozenge that filled half the track and read as a
+       text input. So the label lives outside on the left, and the track holds a
+       round knob carrying the active icon with the inactive icon sitting faintly
+       on the side the knob is not on. The knob is opaque, so it covers the icon
+       it lands on and the JS swaps its glyph — one moving icon rather than two
+       competing ones.
        Checked means compact, so the default detailed view is the resting/off
-       state and "compact view" is what you are switching on. */
-    .zoom-toggle { width: 8.5em; height: 26px; }
-    .zoom-toggle .thumb { font-size: 0.8125rem; }
+       state and "compact view" is what you switch on. */
+    .zoom-switch { display: inline-flex; align-items: center; gap: 9px; }
+    .zoom-switch .zs-label {
+      font-size: 0.8125rem; font-weight: 600; color: var(--text-muted);
+      min-width: 4.6em; text-align: right;
+    }
+    .zoom-toggle { position: relative; display: inline-block; flex-shrink: 0;
+      width: 62px; height: 30px; }
+    .zoom-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .zoom-toggle .slider {
+      position: absolute; inset: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 0 8px; box-sizing: border-box;
+      background: #e3e4e8; border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill); cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+    }
+    .zoom-toggle .zs-ic { display: inline-flex; color: var(--text-subtle);
+      transition: color 0.2s; }
+    .zoom-toggle .zs-ic svg { width: 15px; height: 15px; }
+    .zoom-toggle .thumb {
+      position: absolute; top: 2px; left: 2px; width: 24px; height: 24px;
+      display: flex; align-items: center; justify-content: center;
+      background: #fff; border-radius: var(--radius-pill); color: var(--text-muted);
+      box-shadow: 0 1px 3px rgba(0,0,0,.22);
+      transition: transform 0.2s, color 0.2s; pointer-events: none;
+    }
+    .zoom-toggle .thumb svg { width: 15px; height: 15px; }
+    .zoom-toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+    .zoom-toggle input:checked + .slider .zs-ic { color: rgba(255,255,255,.8); }
+    .zoom-toggle input:checked + .slider .thumb { transform: translateX(32px); color: var(--accent); }
+    .zoom-toggle input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
     /* Phones: the header has the title, status, bell, zoom switch and Add Printer
-       all competing for one line, so the switch tightens rather than wrapping the
-       header onto a second row. */
+       all competing for one line, so the label drops and the switch keeps its
+       size — the knob icon alone says which level you are on. */
     @media (max-width: 767px) {
-      .zoom-toggle { width: 7em; height: 24px; }
-      .zoom-toggle .thumb { font-size: 0.75rem; }
+      .zoom-switch .zs-label { display: none; }
     }
 
     /* ─── Desktop (>=768px) ─── */
@@ -1156,7 +1185,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     Printer Dashboard
     <span class="count" id="printer-count"></span>
     <span class="header-actions">
-      <label class="toggle zoom-toggle" title="Compact view"><input type="checkbox" id="view-toggle" aria-label="Compact view" onchange="setViewMode(this.checked ? 'compact' : 'detailed')"><span class="slider"><span class="thumb" id="vt-label">detailed</span></span></label>
+      <span class="zoom-switch"><span class="zs-label" id="vt-label">Detailed</span><label class="zoom-toggle" title="Compact view"><input type="checkbox" id="view-toggle" aria-label="Compact view" onchange="setViewMode(this.checked ? 'compact' : 'detailed')"><span class="slider"><span class="zs-ic" id="vt-ic-detailed"></span><span class="zs-ic" id="vt-ic-compact"></span><span class="thumb" id="vt-thumb"></span></span></label></span>
       <a href="/onboarding" class="add-printer">+ Add Printer</a>
     </span>
   </h1>
@@ -1293,6 +1322,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return defaultViewMode();
     }
 
+    // Three lines for detailed, two for compact — the glyph that encodes the
+    // zoom level, used both on the knob and faintly in the track behind it.
+    function svgLines(n) {
+      var ys = n === 2 ? [8, 16] : [6, 12, 18];
+      var s = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round">';
+      for (var i = 0; i < ys.length; i++) {
+        s += '<line x1="4" y1="' + ys[i] + '" x2="20" y2="' + ys[i] + '"/>';
+      }
+      return s + '</svg>';
+    }
+
     function applyViewMode(mode) {
       var compact = mode === 'compact';
       document.body.classList.toggle('compact', compact);
@@ -1301,7 +1342,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       var btn = document.getElementById('view-toggle');
       if (btn) btn.checked = compact;
       var label = document.getElementById('vt-label');
-      if (label) label.textContent = compact ? 'compact' : 'detailed';
+      if (label) label.textContent = compact ? 'Compact' : 'Detailed';
+      // The track icons are fixed — three lines on the left, two on the right —
+      // and the knob carries whichever one it is currently covering, so the lit
+      // glyph always matches the side the knob is on.
+      var detailedIc = document.getElementById('vt-ic-detailed');
+      var compactIc = document.getElementById('vt-ic-compact');
+      var thumb = document.getElementById('vt-thumb');
+      if (detailedIc) detailedIc.innerHTML = svgLines(3);
+      if (compactIc) compactIc.innerHTML = svgLines(2);
+      if (thumb) thumb.innerHTML = svgLines(compact ? 2 : 3);
       // A display:none detail region measures 0, so an open popover's clamp and
       // the bell counts have to be recomputed once it is visible again.
       refreshAllOverlays();
