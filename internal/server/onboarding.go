@@ -569,6 +569,25 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     .card-online.yes { color: var(--tag-success-text); }
     .card-online svg { width: 13px; height: 13px; flex-shrink: 0; }
 
+    /* Notification chip — a bell plus an unread count in the card header,
+       YouTube-style. The header is the one region that survives the compact zoom
+       level, so without this "this printer has things you haven't read" is
+       invisible exactly in the mode used to scan a whole fleet: the status badge
+       says ERROR but says nothing about how many entries, and HMS warnings on an
+       otherwise-idle printer vanish entirely. Red when anything fatal is present,
+       amber when it is warnings only. Always rendered and toggled to
+       display:none when empty, so renderCard()/updateCard() agree on shape. */
+    .notice-chip {
+      display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+      border: none; border-radius: var(--radius-pill); cursor: pointer;
+      padding: 2px 8px 2px 6px; font: inherit; font-size: 0.6875rem;
+      font-weight: 700; line-height: 1.5; font-variant-numeric: tabular-nums;
+      background: var(--tag-warning-bg); color: var(--tag-warning-text);
+    }
+    .notice-chip.has-error { background: var(--tag-error-bg); color: var(--tag-error-text); }
+    .notice-chip svg { width: 13px; height: 13px; flex-shrink: 0; }
+    .notice-chip:hover { filter: saturate(1.3) brightness(0.96); }
+
     .error-banner {
       background: var(--tag-error-bg); color: var(--tag-error-text);
       padding: 8px 12px; border-radius: var(--radius-control);
@@ -584,7 +603,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        using the same --tag-error-*/--tag-warning-* variables as .tag.error/
        .tag.paused, so HMS severity coloring matches the rest of the card. */
     .hms-list {
-      display: flex; flex-direction: column; gap: 4px;
+      /* Same gap as .info-scroll above, so the spacing between two adjacent HMS
+         rows is exactly the spacing between the banner and the first row — one
+         even rhythm through the whole stack. At 4px two rows sharing one severity
+         colour read as a single merged block, since the gap is the only thing
+         separating two otherwise identical backgrounds. */
+      display: flex; flex-direction: column; gap: 8px;
     }
     .hms-row {
       display: flex; align-items: center; justify-content: space-between;
@@ -627,7 +651,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       flex: 1 1 auto; min-height: 0; max-height: 260px;
     }
     .info-scroll {
-      display: flex; flex-direction: column; gap: 4px;
+      display: flex; flex-direction: column; gap: 8px;
       flex: 1 1 auto; min-height: 0;
       overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
     }
@@ -1093,6 +1117,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       <div class="card-header">
         <h2>&nbsp;</h2>
         <span class="tag unknown">&nbsp;</span>
+        <button class="notice-chip" type="button" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notice-count"></span></button>
         <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
       <div class="progress-section">
@@ -1426,7 +1451,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // Re-measure the stack now that the banner and rows are settled: it may
       // have gone from empty to non-empty (or vice versa), and it may now
       // overflow the cap and need its scroll affordance showing.
-      refreshInfoStack(card);
+      refreshCardOverlays(card);
 
       // 8c. AMS section — one shared amsHtml() helper builds the full
       // markup (same precedent as hmsRowsHtml() above); replace
@@ -1709,6 +1734,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         ? _svgOpen.replace('fill="none"', 'fill="currentColor"') + '<circle cx="12" cy="12" r="6"/></svg>'
         : _svgOpen + '<circle cx="12" cy="12" r="6"/></svg>';
     }
+    // Bell icon for the header notification chip.
+    function svgBell() {
+      return _svgOpen +
+        '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>' +
+        '<path d="M13.73 21a2 2 0 0 1-3.46 0"/>' +
+        '</svg>';
+    }
     // Light bulb icon for the chamber light toggle.
     function svgLight() {
       return _svgOpen +
@@ -1883,6 +1915,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '<div class="card-header">' +
           '<h2>' + escapeHtml(p.name) + '</h2>' +
           '<span class="tag ' + stCls + '">' + st + '</span>' +
+          noticeChipHtml(p) +
           onlineDot +
         '</div>' +
         '<div class="progress-section">' +
@@ -2249,6 +2282,56 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '</div></div>';
     }
 
+    // How many notices a printer currently has: the error banner (only when it
+    // is actually being shown, i.e. not suppressed as an HMS restatement) plus
+    // every HMS row. This is the number shown on the header bell.
+    function noticeCount(p) {
+      return (showErrorBanner(p) ? 1 : 0) +
+        (p.hms_errors || []).length + (p.hms_warnings || []).length;
+    }
+
+    // The header bell. Always rendered and hidden when empty, so renderCard()
+    // and updateCard() agree on shape (same always-in-DOM precedent as
+    // .error-banner). It lives in .card-header because that is the one region
+    // compact zoom never hides — without it, "this printer has things you
+    // haven't read" is invisible in exactly the mode used to scan a whole fleet.
+    function noticeChipHtml(p) {
+      return '<button class="notice-chip" type="button" style="display:none;" ' +
+        'title="Notifications" onclick="focusNotices(\'' + escapeJsString(p.id) + '\')">' +
+        svgBell() + '<span class="notice-count"></span></button>';
+    }
+
+    // Recomputes the chip from what is actually in the card's DOM rather than
+    // from p, so a Dismiss click that removes a row directly (no re-render)
+    // still leaves the count correct.
+    function refreshNoticeChip(card) {
+      const chip = card.querySelector('.notice-chip');
+      if (!chip) return;
+      const banner = card.querySelector('.error-banner');
+      const bannerShown = !!banner && banner.style.display !== 'none';
+      const rows = card.querySelectorAll('.hms-row');
+      const count = (bannerShown ? 1 : 0) + rows.length;
+      const label = chip.querySelector('.notice-count');
+      if (label) label.textContent = count;
+      chip.style.display = count > 0 ? '' : 'none';
+      // Fatal beats warning: red only when something fatal is present.
+      chip.classList.toggle('has-error', bannerShown || !!card.querySelector('.hms-row.hms-error'));
+      chip.setAttribute('aria-label', count + (count === 1 ? ' notification' : ' notifications'));
+    }
+
+    // The bell's job is to get you to the notices. In compact zoom they are
+    // hidden, so drop into detailed view first, then bring this card's stack
+    // into view. Zoom is deliberately global rather than per-card: expanding one
+    // card would stretch every card in its grid row anyway, so a per-card
+    // override would cost the equal-height grid for no gain.
+    function focusNotices(printerId) {
+      if (document.body.classList.contains('compact')) setViewMode('detailed');
+      var card = document.getElementById('printer-' + printerId);
+      if (!card) return;
+      var stack = card.querySelector('.info-stack') || card;
+      stack.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
     // Re-measures an already-in-DOM info stack and toggles its bottom shadow.
     // Must run after anything that changes the stack's height or visibility: an
     // updateCard() replacement, a Dismiss click, a card resize, or a zoom-level
@@ -2264,8 +2347,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       stack.classList.toggle('is-overflowing', scroll.scrollHeight - scroll.clientHeight > 2);
     }
 
+    // Per-card derived state that can only be known by measuring/inspecting the
+    // live DOM rather than from the status payload: the info stack's overflow
+    // shadow and the header bell's count.
+    function refreshCardOverlays(card) {
+      refreshInfoStack(card);
+      refreshNoticeChip(card);
+    }
+
     function refreshAllInfoStacks() {
-      document.querySelectorAll('.card').forEach(refreshInfoStack);
+      document.querySelectorAll('.card').forEach(refreshCardOverlays);
     }
 
     // Builds one HMS entry's row markup: severity styling, the entry text
@@ -2660,7 +2751,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           // Removing a row can take the stack back under the scroll cap (or to
           // empty), so re-measure to drop the fade / the wrapper itself.
-          if (card) refreshInfoStack(card);
+          if (card) refreshCardOverlays(card);
         })
         .catch(function(e) { console.error('dismissHms network error:', e); });
     }
