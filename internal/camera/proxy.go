@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -226,21 +227,62 @@ func servePlaceholder(w http.ResponseWriter) {
 	w.Write(placeholderJPEG)
 }
 
-// lastGoodFrameCache holds the most recent successfully-fetched frame per
-// stream, keyed by RTSPStreamKey (rtsps://) or the raw camera URL (http/https).
-// It lets FrameHandler serve the last good frame on a transient fetch
-// failure instead of falling back to the gray placeholder, mirroring the
-// behavior FrameBuffer already gives Bambu cameras.
-type lastGoodFrameCache struct {
-	mu      sync.Mutex
-	buffers map[string]*FrameBuffer
+// frameRetryCooldown is how long the frame endpoint refuses to re-probe an
+// upstream camera that just failed, serving the cached frame instead.
+//
+// Without it, a camera that accepts TCP but never answers (the usual shape of
+// a printer that has gone down mid-network: requests hang until they time out
+// rather than being refused) gets re-probed on every client refresh — every
+// 2s per viewer — each one hanging and each one answered from the cache
+// anyway. One probe per cooldown is enough to notice recovery.
+const frameRetryCooldown = 5 * time.Second
+
+// frameFetchTimeout bounds a single upstream frame fetch. The MJPEG proxy
+// deliberately has no timeout (a stream may legitimately run for hours); a
+// single-frame fetch has no such excuse, and without a bound a black-holing
+// camera ties up a request for as long as the browser's own image timeout.
+const frameFetchTimeout = 10 * time.Second
+
+// FrameCacheKey derives the FrameCache key for a raw camera URL. Callers that
+// store and later look up the same stream (the frame endpoint writing, a
+// health check reading) must derive the key the same way, so it lives here
+// rather than being spelled out at each site.
+func FrameCacheKey(rawURL string) string {
+	if u, err := url.Parse(rawURL); err == nil && u.Scheme == "rtsps" {
+		return "rtsps:" + RTSPStreamKey(u)
+	}
+	return "http:" + rawURL
 }
 
-func newLastGoodFrameCache() *lastGoodFrameCache {
-	return &lastGoodFrameCache{buffers: make(map[string]*FrameBuffer)}
+// FrameCache holds the most recent successfully-fetched frame per stream,
+// keyed by FrameCacheKey. It lets the frame endpoint serve the last good
+// frame on a fetch failure instead of falling back to the gray placeholder,
+// mirroring the behavior FrameBuffer already gives Bambu cameras.
+//
+// It also tracks the last failure per stream, which is what lets the endpoint
+// both back off from a dead camera and tell a caller *why* the frame it is
+// being handed is stale.
+type FrameCache struct {
+	mu       sync.Mutex
+	buffers  map[string]*FrameBuffer
+	failures map[string]frameFailure
 }
 
-func (c *lastGoodFrameCache) get(key string) *FrameBuffer {
+type frameFailure struct {
+	at  time.Time
+	err error
+}
+
+// NewFrameCache returns an empty cache.
+func NewFrameCache() *FrameCache {
+	return &FrameCache{
+		buffers:  make(map[string]*FrameBuffer),
+		failures: make(map[string]frameFailure),
+	}
+}
+
+// Buffer returns the (lazily created) frame buffer for key.
+func (c *FrameCache) Buffer(key string) *FrameBuffer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	fb, ok := c.buffers[key]
@@ -249,6 +291,54 @@ func (c *lastGoodFrameCache) get(key string) *FrameBuffer {
 		c.buffers[key] = fb
 	}
 	return fb
+}
+
+// RecordFailure notes that a fetch for key just failed, arming the cooldown.
+func (c *FrameCache) RecordFailure(key string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.failures[key] = frameFailure{at: time.Now(), err: err}
+}
+
+// ClearFailure drops a recorded failure, so the next request probes the
+// upstream again immediately (this is what a user pressing "Refresh" means).
+func (c *FrameCache) ClearFailure(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.failures, key)
+}
+
+// InCooldown reports whether key failed within frameRetryCooldown and should
+// therefore be served from cache rather than re-probed.
+func (c *FrameCache) InCooldown(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	f, ok := c.failures[key]
+	return ok && time.Since(f.at) < frameRetryCooldown
+}
+
+// Age returns how long ago a good frame was last stored for key, and whether
+// there is a frame at all.
+func (c *FrameCache) Age(key string) (time.Duration, bool) {
+	c.mu.Lock()
+	fb := c.buffers[key]
+	c.mu.Unlock()
+	if fb == nil {
+		return 0, false
+	}
+	at := fb.UpdatedAt()
+	if at.IsZero() {
+		return 0, false
+	}
+	return time.Since(at), true
+}
+
+// LastFailure returns the error behind the most recent recorded failure for
+// key, or nil if the last thing that happened to this stream was a success.
+func (c *FrameCache) LastFailure(key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.failures[key].err
 }
 
 // serveLastGoodOrPlaceholder serves fb's most recent frame if one exists,
@@ -315,19 +405,24 @@ func readFirstJPEGFromMJPEG(r io.Reader) ([]byte, bool) {
 }
 
 // FrameHandler returns an http.HandlerFunc that serves a single JPEG frame
-// from the camera. For Bambu cameras it returns the latest buffered frame;
-// for HTTP cameras it makes a single proxied request. If no frame is available
-// it serves a placeholder JPEG to avoid browser flicker.
+// from the camera, backed by a private frame cache. See FrameHandlerWithCache
+// for the variant that shares a cache with its caller.
 //
 // Expected query parameter: url (the target camera URL, must be absolute).
 func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
+	return FrameHandlerWithCache(mgr, rtspMgr, NewFrameCache())
+}
+
+// FrameHandlerWithCache is FrameHandler with a caller-supplied frame cache, so
+// the server can share one cache between the endpoint that fills it and the
+// health check that reports on it (see Server.cameraFrames).
+func FrameHandlerWithCache(mgr *CameraManager, rtspMgr *Go2RTCManager, frameCache *FrameCache) http.HandlerFunc {
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout: ConnectTimeout,
 		}).DialContext,
 	}
 	client := &http.Client{Transport: transport}
-	frameCache := newLastGoodFrameCache()
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		rawURL := r.URL.Query().Get("url")
@@ -382,16 +477,26 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 				return
 			}
 			streamKey := RTSPStreamKey(parsedURL)
-			fb := frameCache.get("rtsps:" + streamKey)
-			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
+			cacheKey := FrameCacheKey(rawURL)
+			fb := frameCache.Buffer(cacheKey)
+			// fail is the single exit path for every rtsps fetch problem: note
+			// the reason on the go2rtc instance (for the health endpoint) and
+			// on the frame cache (for the backoff and for "why is this frame
+			// stale"), then hand back the last good frame.
+			fail := func(err error) {
 				setCameraError(rtspMgr, streamKey, err)
+				if !errors.Is(err, context.Canceled) {
+					frameCache.RecordFailure(cacheKey, err)
+				}
 				serveLastGoodOrPlaceholder(w, fb)
+			}
+			if _, err := rtspMgr.Start(r.Context(), streamKey, rawURL); err != nil {
+				fail(err)
 				return
 			}
 			frameURL, ok := rtspMgr.FrameURL(streamKey)
 			if !ok {
-				setCameraError(rtspMgr, streamKey, fmt.Errorf("rtsps: stream not started"))
-				serveLastGoodOrPlaceholder(w, fb)
+				fail(fmt.Errorf("rtsps: stream not started"))
 				return
 			}
 
@@ -410,31 +515,28 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 
 			req, err := http.NewRequestWithContext(timeoutCtx, http.MethodGet, frameURL, nil)
 			if err != nil {
-				setCameraError(rtspMgr, streamKey, fmt.Errorf("rtsps: create request: %w", err))
-				serveLastGoodOrPlaceholder(w, fb)
+				fail(fmt.Errorf("rtsps: create request: %w", err))
 				return
 			}
 			resp, err := client.Do(req)
 			if err != nil {
-				setCameraError(rtspMgr, streamKey, err)
-				serveLastGoodOrPlaceholder(w, fb)
+				fail(err)
 				return
 			}
 			if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusServiceUnavailable {
 				resp.Body.Close()
-				setCameraError(rtspMgr, streamKey, fmt.Errorf("rtsps: stream unavailable (status %d) — access code may be expired", resp.StatusCode))
-				serveLastGoodOrPlaceholder(w, fb)
+				fail(fmt.Errorf("rtsps: stream unavailable (status %d) — access code may be expired", resp.StatusCode))
 				return
 			}
 			defer resp.Body.Close()
 
 			body, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 			if err != nil {
-				setCameraError(rtspMgr, streamKey, err)
-				serveLastGoodOrPlaceholder(w, fb)
+				fail(err)
 				return
 			}
 
+			frameCache.ClearFailure(cacheKey)
 			fb.Update(body)
 			writeFrame(w, "image/jpeg", body)
 			return
@@ -445,12 +547,29 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			return
 		}
 
-		fb := frameCache.get("http:" + rawURL)
+		key := FrameCacheKey(rawURL)
+		fb := frameCache.Buffer(key)
+
+		// A camera that just failed is served from cache for a moment rather
+		// than re-probed on every refresh (see frameRetryCooldown). Only
+		// applies when there is something worth serving — with no cached
+		// frame there is nothing to lose by probing now.
+		if frameCache.InCooldown(key) && fb.Latest() != nil {
+			serveLastGoodOrPlaceholder(w, fb)
+			return
+		}
 
 		// HTTP camera: make a single GET request and serve the response body.
 		// For MJPEG streams (multipart/x-mixed-replace), read only the first
 		// JPEG frame instead of consuming the entire never-ending stream.
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, rawURL, nil)
+		//
+		// The timeout is layered on the request context rather than replacing
+		// it: the client hanging up still cancels the upstream fetch, but a
+		// camera that accepts the connection and then says nothing stops
+		// tying up this request for minutes.
+		ctx, cancel := context.WithTimeout(r.Context(), frameFetchTimeout)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 		if err != nil {
 			serveLastGoodOrPlaceholder(w, fb)
 			return
@@ -458,10 +577,21 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 
 		resp, err := client.Do(req)
 		if err != nil {
+			// A cancel from the client itself says nothing about the camera's
+			// health, so it must not arm the cooldown.
+			if !errors.Is(err, context.Canceled) {
+				frameCache.RecordFailure(key, err)
+			}
 			serveLastGoodOrPlaceholder(w, fb)
 			return
 		}
 		defer resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			frameCache.RecordFailure(key, fmt.Errorf("camera returned HTTP %d", resp.StatusCode))
+			serveLastGoodOrPlaceholder(w, fb)
+			return
+		}
 
 		var body []byte
 		contentType := resp.Header.Get("Content-Type")
@@ -471,6 +601,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			var ok bool
 			body, ok = readFirstJPEGFromMJPEG(resp.Body)
 			if !ok {
+				frameCache.RecordFailure(key, fmt.Errorf("camera stream ended before a complete frame arrived"))
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
@@ -479,6 +610,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			// Single-image response — read the body with a 10MB limit.
 			body, err = io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 			if err != nil {
+				frameCache.RecordFailure(key, err)
 				serveLastGoodOrPlaceholder(w, fb)
 				return
 			}
@@ -487,6 +619,7 @@ func FrameHandler(mgr *CameraManager, rtspMgr *Go2RTCManager) http.HandlerFunc {
 			contentType = "image/jpeg"
 		}
 
+		frameCache.ClearFailure(key)
 		fb.Update(body)
 		writeFrame(w, contentType, body)
 	}

@@ -708,3 +708,238 @@ test.describe('Dashboard', () => {
     });
   });
 });
+
+// Out of sync: when the dashboard loses the printer it keeps showing the last
+// state it actually received and says so, instead of wiping the card to a blank
+// error and tearing the camera feed down. The server owns that cache (see
+// PrinterStatus.Stale and camera.FrameCache); these tests drive the frontend
+// with the payloads it produces. Cards are synthetic for the same reason as
+// the tests above: the real test printers need cloud auth to render.
+test.describe('Out of sync', () => {
+  const lastUpdate = 1_760_000_000_000;
+
+  const livePrinter = {
+    id: 'zz-oos',
+    name: 'ZZ Out Of Sync',
+    type: 'snapmaker',
+    online: true,
+    state: 'printing',
+    progress: 0.42,
+    remaining_time: 0,
+    elapsed_time: 600,
+    current_file: 'cube.gcode',
+    current_layer: 10,
+    total_layers: 20,
+    bed_temp: 60,
+    bed_target_temp: 60,
+    nozzle_temp: 210,
+    nozzle_target_temp: 220,
+    chamber_temp: null,
+    chamber_target_temp: null,
+    has_chamber: false,
+    // Four toolheads: the regression the user reported was these vanishing.
+    nozzle_temps: [
+      { index: 0, actual: 210, target: 220 },
+      { index: 1, actual: 31, target: 0 },
+      { index: 2, actual: 30, target: 0 },
+      { index: 3, actual: 29, target: 0 },
+    ],
+    camera_streams: [
+      {
+        url: '/api/camera/proxy?url=http%3A%2F%2F192.168.1.10%2Fwebcam%2Fstream.mjpg',
+        type: 'internal',
+        label: 'Camera',
+      },
+    ],
+    hms_errors: [],
+    hms_warnings: [],
+  };
+
+  // The status the server serves once the printer has been unreachable long
+  // enough to count as a hard outage: same readings, plus the stale flags.
+  const stalePrinter = {
+    ...livePrinter,
+    online: false,
+    stale: true,
+    stale_reason:
+      'status poll failed: http request: Get "http://192.168.1.10/api/printer": context deadline exceeded',
+    last_update: lastUpdate,
+  };
+
+  const mountCard = async (page: Page, status: Record<string, unknown>) => {
+    await page.route('**/ws', (route) => route.abort());
+    await page.goto('/');
+    await page.evaluate((printer) => {
+      const w = window as any;
+      w._printerCache[printer.id] = printer;
+      document
+        .getElementById('printer-list')!
+        .insertAdjacentHTML('beforeend', w.renderCard(printer));
+    }, status);
+  };
+
+  test('a stale status renders with its readings intact and an out-of-sync dot', async ({
+    page,
+  }) => {
+    await mountCard(page, stalePrinter);
+
+    const card = page.locator('#printer-zz-oos');
+    // No second badge in the header: the connection dot is the one place that
+    // says whether the dashboard can see the printer.
+    await expect(card.locator('.tag.stale')).toHaveCount(0);
+    // The last known state survives and keeps its own colour — a printer that
+    // went unreachable mid-print is still shown printing, because it is.
+    await expect(card.locator('.tag')).toHaveText('printing');
+
+    // The dot goes amber and stays unlabeled; the explanation is its tooltip.
+    const dot = card.locator('.card-online');
+    await expect(dot).toHaveClass(/stale/);
+    await expect(dot).toHaveText('');
+    await expect(dot).toHaveAttribute('title', /Out of sync \u2014 last seen/);
+    await expect(dot).toHaveAttribute('title', /context deadline exceeded/);
+
+    // The written-out notice lives behind the header bell, like every other
+    // notice: the chip appears and counts it, and it is not fatal, so the chip
+    // is the quiet amber rather than the red shaking one.
+    const chip = card.locator('.notice-chip');
+    await expect(chip).toBeVisible();
+    await expect(chip.locator('.notice-count')).toHaveText('1');
+    await expect(chip).not.toHaveClass(/has-error/);
+
+    await chip.click();
+    const banner = card.locator('.stale-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('Out of sync');
+    // The driver's reason carries a quoted URL; it must not arrive
+    // double-escaped as &quot; (the bug the old banner had).
+    await expect(banner).toContainText('context deadline exceeded');
+    await expect(banner).not.toContainText('&quot;');
+
+    // Bed + 4 nozzles, none lost.
+    await expect(card.locator('.temp-row')).toHaveCount(5);
+    await expect(card.locator('.temp-row').nth(4)).toContainText('Nozzle 4');
+    await expect(card.locator('.filename')).toHaveText('cube.gcode');
+    await expect(card.locator('.layer-info')).toHaveText('Layer 10 / 20');
+    await expect(card.locator('.progress-text span').first()).toHaveText(
+      '42.0%',
+    );
+
+    // Commands are guesses while blind — the backend rejects them anyway.
+    await expect(card.locator('button[onclick*="pause"]')).toBeDisabled();
+    await expect(card.locator('button[onclick*="cancel"]')).toBeDisabled();
+    await expect(card.locator('[data-light] input')).toBeDisabled();
+  });
+
+  test('a live card transitions to out of sync without losing anything', async ({
+    page,
+  }) => {
+    await mountCard(page, livePrinter);
+    const card = page.locator('#printer-zz-oos');
+    await expect(card.locator('.card-online')).toHaveClass(/yes/);
+    await expect(card.locator('.card-online')).toHaveAttribute('title', 'Online');
+    await expect(card.locator('button[onclick*="pause"]')).toBeEnabled();
+
+    // This is exactly what a WS printer_update delivers when the driver
+    // declares the outage: the merged status, stale flags added.
+    await page.evaluate((printer) => {
+      const w = window as any;
+      w.updateCard(w.mergeWithCache(printer));
+    }, stalePrinter);
+
+    await expect(card.locator('.card-online')).toHaveClass(/stale/);
+    await expect(card.locator('.card-online')).toHaveAttribute(
+      'title',
+      /Out of sync/,
+    );
+    await expect(card.locator('.tag')).toHaveText('printing');
+    // The bell has to appear on the update, not just on the first render: the
+    // notice is unreachable while the chip is hidden at zero.
+    await expect(card.locator('.notice-chip')).toBeVisible();
+    await expect(card.locator('.notice-count')).toHaveText('1');
+    await expect(card.locator('.temp-row')).toHaveCount(5);
+    await expect(card.locator('.temp-row').nth(1)).toContainText('210.0');
+    await expect(card.locator('.filename')).toHaveText('cube.gcode');
+    await expect(card.locator('button[onclick*="pause"]')).toBeDisabled();
+  });
+
+  test('recovery clears the out-of-sync dot', async ({ page }) => {
+    await mountCard(page, stalePrinter);
+    const card = page.locator('#printer-zz-oos');
+    await expect(card.locator('.card-online')).toHaveClass(/stale/);
+
+    await page.evaluate((printer) => {
+      const w = window as any;
+      w.updateCard(w.mergeWithCache(printer));
+    }, livePrinter);
+
+    await expect(card.locator('.card-online')).toHaveClass(/yes/);
+    await expect(card.locator('.card-online')).toHaveAttribute('title', 'Online');
+    // Recovery has to take the notice away too, or the bell keeps counting an
+    // outage that ended.
+    await expect(card.locator('.notice-chip')).toBeHidden();
+    await expect(card.locator('.card-online.yes')).toHaveCount(1);
+    await expect(card.locator('button[onclick*="pause"]')).toBeEnabled();
+  });
+
+  test('the camera keeps its last frame when the stream is only out of sync', async ({
+    page,
+  }) => {
+    await page.route(
+      '**/api/printers/zz-oos/camera-status',
+      (route) =>
+        void route.fulfill({
+          json: {
+            ok: false,
+            error: 'camera stream unreachable',
+            stale: true,
+            has_frame: true,
+            frame_age_seconds: 12,
+          },
+        }),
+    );
+    await mountCard(page, stalePrinter);
+
+    await page.evaluate(() => {
+      const w = window as any;
+      const slot = document.getElementById('cam-zz-oos-0')!;
+      w.checkCameraStatus('zz-oos', slot);
+    });
+
+    const notice = page.locator('#cam-zz-oos-0 .cam-error');
+    await expect(notice).toBeVisible();
+    await expect(notice).toHaveClass(/stale/);
+    await expect(notice.locator('.cam-error-msg')).toContainText(
+      'last frame 12s ago',
+    );
+    // The whole point of the server-side frame cache: the picture stays up.
+    await expect(page.locator('#cam-zz-oos-0 img')).toBeVisible();
+    await expect(page.locator('.cam-refresh-btn')).toBeVisible();
+  });
+
+  test('a camera with nothing cached still shows the hard error', async ({
+    page,
+  }) => {
+    await page.route('**/api/printers/zz-oos/camera-status', (route) =>
+      void route.fulfill({
+        json: { ok: false, error: 'camera stream unreachable' },
+      }),
+    );
+    await mountCard(page, stalePrinter);
+
+    await page.evaluate(() => {
+      const w = window as any;
+      w.checkCameraStatus(
+        'zz-oos',
+        document.getElementById('cam-zz-oos-0')!,
+      );
+    });
+
+    const notice = page.locator('#cam-zz-oos-0 .cam-error');
+    await expect(notice).toBeVisible();
+    await expect(notice).not.toHaveClass(/stale/);
+    await expect(notice.locator('.cam-error-msg')).toHaveText(
+      'camera stream unreachable',
+    );
+    await expect(page.locator('#cam-zz-oos-0 img')).toBeHidden();
+  });
+});

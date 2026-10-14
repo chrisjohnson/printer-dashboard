@@ -438,11 +438,7 @@ func (c *Client) connectWithRetry(ctx context.Context, broker string) error {
 			return nil
 		}
 
-		s := c.Status()
-		s.Online = false
-		s.State = "error"
-		s.ErrorMsg = fmt.Sprintf("MQTT connect failed: %v", connectErr)
-		c.setStatus(s)
+		c.markTransportLost(fmt.Sprintf("MQTT connect failed: %v", connectErr))
 
 		log.Printf("bambu %s: cloud MQTT initial connect attempt %d failed: %v (retry in %v)",
 			c.cfg.ID, attempt, connectErr, backoff)
@@ -585,14 +581,36 @@ func (c *Client) requestPushAll(client mqtt.Client) {
 	}
 }
 
+// markTransportLost records that the dashboard lost its transport to the
+// printer (cloud MQTT down, or the initial connect never succeeding).
+//
+// Losing the link is not a printer fault, so it must not be rendered as one.
+// When the printer has reported at least once, its last real state is kept
+// and flagged Stale — a print does not stop because the dashboard went blind,
+// and replacing the status with State="error" throws away the temperatures,
+// progress and layer count the user is watching. Only a printer that has
+// never reported anything (nothing to preserve) falls back to a plain error.
+func (c *Client) markTransportLost(reason string) {
+	c.mu.RLock()
+	haveData := !c.lastStatusReport.IsZero()
+	c.mu.RUnlock()
+
+	s := c.Status()
+	s.Online = false
+	if haveData {
+		s.Stale = true
+		s.StaleReason = reason
+	} else {
+		s.State = "error"
+		s.ErrorMsg = reason
+	}
+	c.setStatus(s)
+}
+
 // onConnectionLost is called when the MQTT connection is lost.
 func (c *Client) onConnectionLost(client mqtt.Client, err error) {
 	log.Printf("bambu %s: cloud MQTT connection lost: %v", c.cfg.ID, err)
-	s := c.Status()
-	s.Online = false
-	s.State = "error"
-	s.ErrorMsg = fmt.Sprintf("MQTT disconnected: %v", err)
-	c.setStatus(s)
+	c.markTransportLost(fmt.Sprintf("MQTT disconnected: %v", err))
 }
 
 // onReconnecting is called when the client begins reconnecting.
@@ -664,12 +682,18 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// Real status: record it for the staleness refresh in keepStatusFresh.
 	// Bare "{}" heartbeats never reach here (no print section), so they don't
 	// count as fresh status.
+	reportAt := time.Now()
 	c.mu.Lock()
-	c.lastStatusReport = time.Now()
+	c.lastStatusReport = reportAt
 	c.mu.Unlock()
 
 	s := c.Status()
 	s.Online = true
+	// Live data has arrived, so the card is current again: drop any "out of
+	// sync" flag left behind by a transport loss (see markTransportLost).
+	s.Stale = false
+	s.StaleReason = ""
+	s.LastUpdate = reportAt.UnixMilli()
 	hadHMSErrors := len(s.HMSErrors) > 0
 
 	// Light state — parse from print.lights_report (the actual wire format

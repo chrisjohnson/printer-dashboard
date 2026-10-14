@@ -43,6 +43,19 @@ const (
 // non-printing state is latched.
 const completeIdleStreakThreshold = 2
 
+// outageFailureThreshold is how many consecutive failed status polls it takes
+// to declare a hard outage and mark the cached status Stale.
+//
+// One failed poll is not an outage: the U1 drops a request routinely (flaky
+// Wi-Fi, Moonraker busy mid-move, a request that hits the 10s client timeout
+// while the printer is otherwise fine). Reacting to a single miss makes the
+// dashboard flicker between live and degraded for no reason, so the first
+// couple of misses are absorbed silently and the card keeps showing whatever
+// it last had. By the third consecutive failure the printer is properly
+// unreachable and the user is told so — as "out of sync" over the last good
+// reading, not as a wiped card.
+const outageFailureThreshold = 3
+
 // boolPtr returns a pointer to the given bool value.
 func boolPtr(v bool) *bool { return &v }
 
@@ -68,6 +81,12 @@ type Printer struct {
 	// single stale/transient report flipping State away from "complete" too
 	// eagerly. Guarded by mu, same as status.
 	completeIdleStreak int
+
+	// pollFailures counts consecutive failed status polls, reset by any
+	// successful report. Used by markUnreachable to distinguish a dropped
+	// request from a hard outage (see outageFailureThreshold). Guarded by mu,
+	// same as status.
+	pollFailures int
 
 	// httpClient is used for all REST API calls to the printer.
 	httpClient *http.Client
@@ -193,15 +212,11 @@ func (p *Printer) Connect(ctx context.Context) error {
 			// REST polling tick — fetch status via HTTP.
 			status, err := p.fetchStatus(ctx)
 			if err != nil {
-				// Printer may be unreachable — mark offline.
-				p.setStatus(printers.PrinterStatus{
-					ID:       p.cfg.ID,
-					Name:     p.cfg.Name,
-					Type:     "snapmaker",
-					Online:   false,
-					State:    "error",
-					ErrorMsg: fmt.Sprintf("status poll failed: %v", err),
-				})
+				// Printer may be unreachable. Keep whatever we already know
+				// about it and let markUnreachable decide whether this is a
+				// blip or a real outage — never overwrite the cached status
+				// with a blank one here.
+				p.markUnreachable(fmt.Sprintf("status poll failed: %v", err))
 				continue
 			}
 			p.handleStatusReport(status)
@@ -415,6 +430,18 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 	current := p.Status()
 	current.Online = true
 
+	// A successful report is proof the printer is reachable again: end any
+	// outage/blip streak and drop the stale flags so the card stops saying
+	// "out of sync". LastUpdate is stamped here and only here — it is the
+	// "last time the primary status source answered" timestamp that the
+	// outage path uses to tell "lost sight of it" from "never had it".
+	p.mu.Lock()
+	p.pollFailures = 0
+	p.mu.Unlock()
+	current.Stale = false
+	current.StaleReason = ""
+	current.LastUpdate = time.Now().UnixMilli()
+
 	// Light state — Moonraker/Klipper cannot report real LED state for this
 	// fixture (the led object query always returns null), so populate from
 	// the last state we successfully commanded via SetLight instead.
@@ -444,6 +471,14 @@ func (p *Printer) handleStatusReport(s *apiPrinterResponse) {
 			current.State = newState
 			p.completeIdleStreak = 0
 		}
+	}
+
+	// A healthy state clears any error the initial-connect failure path left
+	// behind: ErrorMsg only describes why State is "error" (see the field
+	// doc), so leaving it set once reports are flowing again would pin a
+	// stale "initial status: …" banner onto a printer that is now fine.
+	if current.State != "error" {
+		current.ErrorMsg = ""
 	}
 
 	// Temperatures — dynamically handle any number of toolheads
@@ -545,13 +580,64 @@ func (p *Printer) setStatus(s printers.PrinterStatus) {
 	p.status = s
 	p.mu.Unlock()
 
-	if p.StatusCh != nil {
-		select {
-		case p.StatusCh <- s:
-		default:
-			// Channel full, drop update (reader is slow)
-		}
+	p.broadcast(s)
+}
+
+// broadcast sends s on StatusCh if one is configured. The send is
+// non-blocking: a slow consumer (a WS forwarder that has fallen behind) drops
+// the update rather than stalling the poll loop.
+func (p *Printer) broadcast(s printers.PrinterStatus) {
+	if p.StatusCh == nil {
+		return
 	}
+	select {
+	case p.StatusCh <- s:
+	default:
+		// Channel full, drop update (reader is slow)
+	}
+}
+
+// markUnreachable records that a status poll could not reach the printer.
+//
+// It never replaces the cached status. A printer that goes quiet mid-print is
+// almost certainly still printing, and the temperatures, layer count, progress
+// and file name the dashboard already has are the most useful thing it can
+// show while the link is down — so those stay, and the status is flagged
+// Stale so the UI can say "out of sync" instead of rendering a blank card.
+//
+// Two cases are deliberately not announced:
+//
+//   - A blip. Fewer than outageFailureThreshold consecutive polls have
+//     failed, so nothing changes at all.
+//   - A printer that has never been reachable (LastUpdate is zero). There is
+//     no last-known-good to preserve; the initial-connect failure path
+//     already reported a plain error, which is the honest thing to show.
+func (p *Printer) markUnreachable(reason string) {
+	p.mu.Lock()
+	p.pollFailures++
+	if p.pollFailures < outageFailureThreshold {
+		p.mu.Unlock()
+		return
+	}
+	if p.status.LastUpdate == 0 {
+		p.mu.Unlock()
+		return
+	}
+	alreadyStale := p.status.Stale
+	s := p.status
+	s.Online = false
+	s.Stale = true
+	s.StaleReason = reason
+	p.status = s
+	p.mu.Unlock()
+
+	if alreadyStale {
+		// Already announced at the threshold; re-broadcasting the same
+		// degraded state on every failed poll would only churn the clients.
+		return
+	}
+	log.Printf("printer %s: unreachable, serving last known state (%s)", p.cfg.ID, reason)
+	p.broadcast(s)
 }
 
 // baseURL returns the HTTP base URL for the printer's REST API.

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/chrisjohnson/printer-dashboard/internal/camera"
 	"github.com/chrisjohnson/printer-dashboard/internal/config"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers"
 	"github.com/chrisjohnson/printer-dashboard/internal/printers/snapmaker"
@@ -152,6 +153,7 @@ func newTestServer(printersMap map[string]printers.Printer) *Server {
 		wsHub:             wsHub,
 		skipTracker:       NewSkipTracker(),
 		hmsDismissTracker: NewHMSDismissTracker(),
+		cameraFrames:      camera.NewFrameCache(),
 		lastPrintState:    make(map[string]string),
 	}
 	s.registerRoutes()
@@ -2662,7 +2664,7 @@ func TestHandleGetPrinter_FiltersDismissedHMS(t *testing.T) {
 	var body map[string]any
 	decodeBody(t, resp, &body)
 
- 	if hmsErrors, ok := body["hms_errors"]; ok {
+	if hmsErrors, ok := body["hms_errors"]; ok {
 		t.Errorf("expected hms_errors to be filtered out entirely (omitempty), got %v", hmsErrors)
 	}
 }
@@ -2744,6 +2746,79 @@ func TestCameraStatus_SkipsExternalAndTouchscreen(t *testing.T) {
 	decodeBody(t, resp, &body)
 	if body["ok"] != true {
 		t.Errorf("expected ok=true (external/touchscreen skipped), got %v", body["ok"])
+	}
+}
+
+func TestCameraStatus_ReportsStaleWhenFrameCached(t *testing.T) {
+	// The stream is unreachable, but the frame endpoint still has a frame for
+	// it. The client needs to be able to tell "keep showing the picture, it is
+	// just old" apart from "there is nothing to show".
+	const camURL = "http://camera.local/stream"
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: camURL, Type: "internal", Label: "Camera"},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	// Prime the shared cache exactly as a successful /api/camera/frame would.
+	s.cameraFrames.Buffer(camera.FrameCacheKey(camURL)).Update([]byte{0xff, 0xd8, 0xff, 0xd9})
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1/camera-status")
+	defer resp.Body.Close()
+
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["ok"] != false {
+		t.Errorf("ok = %v; want false (the stream itself is unreachable)", body["ok"])
+	}
+	if body["stale"] != true {
+		t.Errorf("stale = %v; want true (a cached frame is available)", body["stale"])
+	}
+	if body["has_frame"] != true {
+		t.Errorf("has_frame = %v; want true", body["has_frame"])
+	}
+	age, ok := body["frame_age_seconds"].(float64)
+	if !ok {
+		t.Fatalf("frame_age_seconds = %v; want a number", body["frame_age_seconds"])
+	}
+	if age < 0 || age > 5 {
+		t.Errorf("frame_age_seconds = %v; want a small non-negative number", age)
+	}
+	if body["error"] == "" || body["error"] == nil {
+		t.Error("error is empty; want the reason the stream is down alongside the stale info")
+	}
+}
+
+func TestCameraStatus_NoCachedFrameOmitsStale(t *testing.T) {
+	// Nothing cached (camera never worked): no stale/has_frame to report, the
+	// client falls back to the hard error UI.
+	p := &mockPrinterWithCameras{
+		MockPrinter: MockPrinter{id: "p1", name: "Test"},
+		cameras: []printers.CameraStream{
+			{URL: "http://camera.local/stream", Type: "internal", Label: "Camera"},
+		},
+	}
+	s := newTestServer(map[string]printers.Printer{"p1": p})
+	ts := httptest.NewServer(s.mux)
+	t.Cleanup(ts.Close)
+
+	resp := mustGet(t, ts.URL, "/api/printers/p1/camera-status")
+	defer resp.Body.Close()
+
+	var body map[string]any
+	decodeBody(t, resp, &body)
+	if body["ok"] != false {
+		t.Errorf("ok = %v; want false", body["ok"])
+	}
+	if _, present := body["stale"]; present {
+		t.Errorf("stale = %v; want the key absent with no cached frame", body["stale"])
+	}
+	if _, present := body["has_frame"]; present {
+		t.Errorf("has_frame = %v; want the key absent with no cached frame", body["has_frame"])
 	}
 }
 

@@ -3579,3 +3579,127 @@ func TestConnect_RetryLoopRespectsContextCancellation(t *testing.T) {
 		t.Fatal("Connect did not return promptly after context cancellation during backoff sleep (retry loop is not respecting ctx.Done())")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Transport loss: losing MQTT is not a printer fault. The last real report
+// stays on screen, flagged Stale, instead of being replaced by an error.
+// ---------------------------------------------------------------------------
+
+// markReported stamps lastStatusReport so the client looks like a printer the
+// dashboard has successfully heard from at least once.
+func markReported(c *Client) {
+	c.mu.Lock()
+	c.lastStatusReport = time.Now()
+	c.mu.Unlock()
+}
+
+func TestOnConnectionLost_WithCachedTelemetry_MarksStale(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	c.setStatus(printers.PrinterStatus{
+		ID:          "test-id",
+		Name:        "Test Printer",
+		Type:        "bambu",
+		Online:      true,
+		State:       "printing",
+		Progress:    0.5,
+		NozzleTemp:  float64Ptr(210),
+		CurrentFile: "cube.gcode",
+	})
+	markReported(c)
+
+	c.onConnectionLost(nil, errors.New("read tcp 10.0.0.1:8883: connection reset by peer"))
+
+	s := c.Status()
+	if s.Online {
+		t.Error("Online = true; want false after the connection is lost")
+	}
+	if !s.Stale {
+		t.Error("Stale = false; want true — the dashboard is now blind to a printer it had data for")
+	}
+	if !strings.Contains(s.StaleReason, "MQTT disconnected") {
+		t.Errorf("StaleReason = %q; want it to mention the MQTT disconnect", s.StaleReason)
+	}
+	// The readings the user was watching survive untouched.
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q (last known, unchanged)", s.State, "printing")
+	}
+	if s.Progress != 0.5 {
+		t.Errorf("Progress = %v; want 0.5 (preserved)", s.Progress)
+	}
+	if s.NozzleTemp == nil || *s.NozzleTemp != 210 {
+		t.Errorf("NozzleTemp = %v; want 210 (preserved)", s.NozzleTemp)
+	}
+	if s.CurrentFile != "cube.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (preserved)", s.CurrentFile, "cube.gcode")
+	}
+	// An outage is not a printer error: ErrorMsg stays empty so the card does
+	// not render a red fault banner for a network problem.
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty (transport loss is reported via Stale)", s.ErrorMsg)
+	}
+}
+
+func TestOnConnectionLost_NeverReported_KeepsPlainError(t *testing.T) {
+	// Nothing was ever received, so there is no last-known-good to keep. A
+	// plain error is the honest thing to show.
+	c := newTestPrinterClient(nil)
+
+	c.onConnectionLost(nil, errors.New("no route to host"))
+
+	s := c.Status()
+	if s.Stale {
+		t.Error("Stale = true; want false when the printer never reported anything")
+	}
+	if s.State != "error" {
+		t.Errorf("State = %q; want %q", s.State, "error")
+	}
+	if !strings.Contains(s.ErrorMsg, "MQTT disconnected") {
+		t.Errorf("ErrorMsg = %q; want it to mention the MQTT disconnect", s.ErrorMsg)
+	}
+}
+
+func TestMarkTransportLost_KeepsExistingErrorState(t *testing.T) {
+	// A printer that was already in a real fault and then goes unreachable
+	// keeps the fault visible — losing the link does not retroactively fix it.
+	c := newTestPrinterClient(nil)
+	c.setStatus(printers.PrinterStatus{
+		ID: "test-id", Name: "Test Printer", Type: "bambu",
+		Online: true, State: "error", ErrorMsg: "No filament",
+	})
+	markReported(c)
+
+	c.markTransportLost("MQTT disconnected: eof")
+
+	s := c.Status()
+	if s.State != "error" || s.ErrorMsg != "No filament" {
+		t.Errorf("State/ErrorMsg = %q/%q; want error/\"No filament\" unchanged", s.State, s.ErrorMsg)
+	}
+	if !s.Stale {
+		t.Error("Stale = false; want true — the fault is real but the reading is no longer live")
+	}
+}
+
+func TestHandleReport_ClearsStaleOnLiveReport(t *testing.T) {
+	c := newTestPrinterClient(nil)
+	c.setStatus(printers.PrinterStatus{
+		ID: "test-id", Name: "Test Printer", Type: "bambu",
+		Online: false, State: "printing", Stale: true,
+		StaleReason: "MQTT disconnected: eof",
+	})
+
+	c.handleReport(nil, newMockMessage([]byte(`{"print": {"gcode_state": "RUNNING"}}`)))
+
+	s := c.Status()
+	if s.Stale {
+		t.Error("Stale = true; want false once a live report arrives")
+	}
+	if s.StaleReason != "" {
+		t.Errorf("StaleReason = %q; want empty after a live report", s.StaleReason)
+	}
+	if !s.Online {
+		t.Error("Online = false; want true after a live report")
+	}
+	if s.LastUpdate == 0 {
+		t.Error("LastUpdate = 0; want the report timestamp stamped on the status")
+	}
+}

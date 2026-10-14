@@ -2,12 +2,14 @@ package camera
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -622,5 +624,193 @@ func TestFrameHandler_Bambus_WithMgr(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
 		t.Errorf("Content-Type = %q; want image/jpeg", ct)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FrameCache: age + failure backoff, the two things that let the dashboard say
+// "here is the last frame, N seconds old" instead of dropping the feed.
+// ---------------------------------------------------------------------------
+
+func TestFrameCache_AgeTracksLastUpdate(t *testing.T) {
+	c := NewFrameCache()
+	key := FrameCacheKey("http://cam.local/stream.mjpg")
+
+	if _, ok := c.Age(key); ok {
+		t.Error("Age reported a frame for a key that has never been updated")
+	}
+
+	fb := c.Buffer(key)
+	if !fb.UpdatedAt().IsZero() {
+		t.Error("UpdatedAt on a fresh buffer = non-zero; want zero time")
+	}
+
+	fb.Update([]byte{0xff, 0xd8, 0xff, 0xd9})
+	age, ok := c.Age(key)
+	if !ok {
+		t.Fatal("Age ok = false; want true after Update")
+	}
+	if age < 0 || age > 5*time.Second {
+		t.Errorf("Age = %v; want a small non-negative duration", age)
+	}
+	if fb.UpdatedAt().IsZero() {
+		t.Error("UpdatedAt after Update = zero; want the update time")
+	}
+}
+
+func TestFrameCache_CooldownArmsOnFailureAndClears(t *testing.T) {
+	c := NewFrameCache()
+	key := FrameCacheKey("http://cam.local/stream.mjpg")
+
+	if c.InCooldown(key) {
+		t.Error("InCooldown = true before any failure")
+	}
+
+	c.RecordFailure(key, errors.New("context deadline exceeded"))
+	if !c.InCooldown(key) {
+		t.Error("InCooldown = false right after RecordFailure; want true")
+	}
+	if err := c.LastFailure(key); err == nil || err.Error() != "context deadline exceeded" {
+		t.Errorf("LastFailure = %v; want the recorded error", err)
+	}
+
+	c.ClearFailure(key)
+	if c.InCooldown(key) {
+		t.Error("InCooldown = true after ClearFailure; want false")
+	}
+	if err := c.LastFailure(key); err != nil {
+		t.Errorf("LastFailure = %v after ClearFailure; want nil", err)
+	}
+}
+
+func TestFrameCacheKey_DistinguishesSchemes(t *testing.T) {
+	httpKey := FrameCacheKey("http://cam.local/stream.mjpg")
+	if !strings.HasPrefix(httpKey, "http:") {
+		t.Errorf("FrameCacheKey(http url) = %q; want it prefixed http:", httpKey)
+	}
+	rtspKey := FrameCacheKey("rtsps://cam.local:8554/stream1")
+	if !strings.HasPrefix(rtspKey, "rtsps:") {
+		t.Errorf("FrameCacheKey(rtsps url) = %q; want it prefixed rtsps:", rtspKey)
+	}
+	if httpKey == rtspKey {
+		t.Error("http and rtsps keys collided")
+	}
+}
+
+// A camera that just failed must be served from cache without touching the
+// upstream at all — otherwise every 2s refresh from every viewer pays the full
+// connect/timeout cost of a camera that is down.
+func TestFrameHandler_HTTP_CooldownSkipsUpstream(t *testing.T) {
+	frameJPEG := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9}
+	var hits int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(frameJPEG)
+	}))
+	defer upstream.Close()
+
+	cache := NewFrameCache()
+	handler := FrameHandlerWithCache(nil, nil, cache)
+	proxyURL := "/api/camera/frame?url=" + url.QueryEscape(upstream.URL)
+
+	// Prime the cache with one good frame.
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	w.Result().Body.Close()
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Fatalf("upstream hits after priming = %d; want 1", got)
+	}
+
+	// Arm the backoff the way a real failure would, then request again while
+	// the upstream is still perfectly healthy.
+	cache.RecordFailure(FrameCacheKey(upstream.URL), errors.New("simulated outage"))
+
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	resp2 := w2.Result()
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+
+	if got := atomic.LoadInt32(&hits); got != 1 {
+		t.Errorf("upstream hits while in cooldown = %d; want 1 (the cached frame should be served without probing)", got)
+	}
+	if string(body) != string(frameJPEG) {
+		t.Errorf("body = %x; want the cached frame", body)
+	}
+}
+
+// Recovery: once the cooldown lapses (or is cleared, as a Refresh does) the
+// endpoint probes again and picks up the new frame.
+func TestFrameHandler_HTTP_RecoversAfterCooldownCleared(t *testing.T) {
+	frameA := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x41, 0x41, 0xff, 0xd9}
+	frameB := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x42, 0x42, 0xff, 0xd9}
+	var current []byte = frameA
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(current)
+	}))
+	defer upstream.Close()
+
+	cache := NewFrameCache()
+	handler := FrameHandlerWithCache(nil, nil, cache)
+	proxyURL := "/api/camera/frame?url=" + url.QueryEscape(upstream.URL)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	w.Result().Body.Close()
+
+	cache.RecordFailure(FrameCacheKey(upstream.URL), errors.New("simulated outage"))
+	current = frameB
+	// This is what POST /camera-reconnect does for the user's Refresh button.
+	cache.ClearFailure(FrameCacheKey(upstream.URL))
+
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	resp2 := w2.Result()
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+
+	if string(body) != string(frameB) {
+		t.Errorf("body = %x; want the new frame %x once the backoff is cleared", body, frameB)
+	}
+	if cache.InCooldown(FrameCacheKey(upstream.URL)) {
+		t.Error("InCooldown = true after a successful fetch; want the failure cleared")
+	}
+}
+
+func TestFrameHandler_HTTP_NonOKStatusServesLastGood(t *testing.T) {
+	frameJPEG := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xff, 0xd9}
+	status := http.StatusOK
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status != http.StatusOK {
+			http.Error(w, "gone", status)
+			return
+		}
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Write(frameJPEG)
+	}))
+	defer upstream.Close()
+
+	handler := FrameHandler(nil, nil)
+	proxyURL := "/api/camera/frame?url=" + url.QueryEscape(upstream.URL)
+
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	w.Result().Body.Close()
+
+	status = http.StatusNotFound
+
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, proxyURL, nil))
+	resp2 := w2.Result()
+	defer resp2.Body.Close()
+	body, _ := io.ReadAll(resp2.Body)
+
+	if string(body) != string(frameJPEG) {
+		t.Errorf("body = %x; want the cached frame, not the error body", body)
+	}
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("status = %d; want 200 serving the cached frame", resp2.StatusCode)
 	}
 }
