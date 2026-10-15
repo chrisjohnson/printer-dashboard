@@ -1551,3 +1551,240 @@ func TestConnect_WebSocketPartialUpdate(t *testing.T) {
 		t.Errorf("Connect() returned %v; want %v", err, context.Canceled)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Outage handling: a printer that goes unreachable keeps its last known state
+// and is flagged Stale, rather than having the card wiped to a blank error.
+// ---------------------------------------------------------------------------
+
+// seedLiveStatus puts the printer into the state it would be in after a normal
+// run of successful polls: online, printing, with real telemetry and a
+// non-zero LastUpdate (the "we have actually seen this printer" marker).
+func seedLiveStatus(p *Printer) {
+	p.setStatus(printers.PrinterStatus{
+		ID:               "test",
+		Name:             "Test",
+		Type:             "snapmaker",
+		Online:           true,
+		State:            "printing",
+		Progress:         0.42,
+		CurrentFile:      "cube.gcode",
+		CurrentLayer:     10,
+		TotalLayers:      20,
+		BedTemp:          float64Ptr(60.0),
+		BedTargetTemp:    float64Ptr(60.0),
+		NozzleTemp:       float64Ptr(210.0),
+		NozzleTargetTemp: float64Ptr(220.0),
+		NozzleTemps: []printers.NozzleTempEntry{
+			{Index: 0, Actual: float64Ptr(210.0), Target: float64Ptr(220.0)},
+			{Index: 1, Actual: float64Ptr(31.0), Target: float64Ptr(0.0)},
+		},
+		LastUpdate: time.Now().UnixMilli(),
+	})
+}
+
+func TestMarkUnreachable_BelowThreshold_LeavesStatusUntouched(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	seedLiveStatus(p)
+	before := p.Status()
+
+	ch := make(chan printers.PrinterStatus, 8)
+	p.StatusCh = ch
+
+	for i := 0; i < outageFailureThreshold-1; i++ {
+		p.markUnreachable("status poll failed: context deadline exceeded")
+	}
+
+	s := p.Status()
+	if s.Stale {
+		t.Error("Stale = true; want false below outageFailureThreshold")
+	}
+	if !s.Online {
+		t.Error("Online = false; want true below outageFailureThreshold")
+	}
+	if s.State != before.State || s.Progress != before.Progress {
+		t.Errorf("State/Progress = %q/%v; want %q/%v unchanged", s.State, s.Progress, before.State, before.Progress)
+	}
+	select {
+	case got := <-ch:
+		t.Errorf("StatusCh received an update (State=%q) below threshold; want none", got.State)
+	default:
+	}
+}
+
+func TestMarkUnreachable_Threshold_PreservesTelemetryAndMarksStale(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	seedLiveStatus(p)
+
+	ch := make(chan printers.PrinterStatus, 8)
+	p.StatusCh = ch
+
+	reason := "status poll failed: http request: context deadline exceeded"
+	for i := 0; i < outageFailureThreshold; i++ {
+		p.markUnreachable(reason)
+	}
+
+	s := p.Status()
+	if !s.Stale {
+		t.Error("Stale = false; want true once outageFailureThreshold is reached")
+	}
+	if s.StaleReason != reason {
+		t.Errorf("StaleReason = %q; want %q", s.StaleReason, reason)
+	}
+	if s.Online {
+		t.Error("Online = true; want false during an established outage")
+	}
+	// The whole point: the last real reading survives, unmodified.
+	if s.State != "printing" {
+		t.Errorf("State = %q; want %q (last known, unchanged)", s.State, "printing")
+	}
+	if s.Progress != 0.42 {
+		t.Errorf("Progress = %v; want 0.42 (preserved)", s.Progress)
+	}
+	if s.CurrentFile != "cube.gcode" {
+		t.Errorf("CurrentFile = %q; want %q (preserved)", s.CurrentFile, "cube.gcode")
+	}
+	if s.CurrentLayer != 10 || s.TotalLayers != 20 {
+		t.Errorf("layers = %d/%d; want 10/20 (preserved)", s.CurrentLayer, s.TotalLayers)
+	}
+	if s.BedTemp == nil || *s.BedTemp != 60.0 {
+		t.Errorf("BedTemp = %v; want 60.0 (preserved)", s.BedTemp)
+	}
+	if len(s.NozzleTemps) != 2 {
+		t.Errorf("len(NozzleTemps) = %d; want 2 (preserved)", len(s.NozzleTemps))
+	}
+	if s.LastUpdate == 0 {
+		t.Error("LastUpdate = 0; want the last successful report time preserved")
+	}
+	// ErrorMsg is for printer faults; an outage is not one.
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty (an outage is reported via Stale, not ErrorMsg)", s.ErrorMsg)
+	}
+
+	// The threshold crossing is broadcast so live clients learn about it.
+	select {
+	case got := <-ch:
+		if !got.Stale {
+			t.Errorf("broadcast Stale = false; want true")
+		}
+	default:
+		t.Error("StatusCh received no update; want the outage announced at the threshold")
+	}
+}
+
+func TestMarkUnreachable_BroadcastsOnceNotEveryFailedPoll(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	seedLiveStatus(p)
+
+	ch := make(chan printers.PrinterStatus, 16)
+	p.StatusCh = ch
+
+	// Well past the threshold: the outage is announced once, not per poll tick.
+	for i := 0; i < outageFailureThreshold+5; i++ {
+		p.markUnreachable("status poll failed")
+	}
+
+	var count int
+	for {
+		select {
+		case <-ch:
+			count++
+		default:
+			goto done
+		}
+	}
+done:
+	if count != 1 {
+		t.Errorf("StatusCh received %d updates; want exactly 1 (announced once at the threshold)", count)
+	}
+}
+
+func TestMarkUnreachable_NeverReported_DoesNotMarkStale(t *testing.T) {
+	// A printer that has never answered has no last-known-good to serve. The
+	// initial-connect path already reports a plain error; markUnreachable must
+	// not dress that up as "out of sync".
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	for i := 0; i < outageFailureThreshold+2; i++ {
+		p.markUnreachable("status poll failed")
+	}
+
+	s := p.Status()
+	if s.Stale {
+		t.Error("Stale = true; want false when no data was ever received")
+	}
+	if s.LastUpdate != 0 {
+		t.Errorf("LastUpdate = %d; want 0 (never reported)", s.LastUpdate)
+	}
+}
+
+func TestHandleStatusReport_StampsLastUpdate(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+
+	before := time.Now().Add(-time.Second).UnixMilli()
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Printing", Flags: &stateFlags{Printing: true}},
+	})
+	s := p.Status()
+
+	if s.LastUpdate == 0 {
+		t.Fatal("LastUpdate = 0; want a timestamp after a successful report")
+	}
+	if s.LastUpdate < before {
+		t.Errorf("LastUpdate = %d; want >= %d", s.LastUpdate, before)
+	}
+}
+
+func TestHandleStatusReport_Recovery_ClearsStale(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	seedLiveStatus(p)
+	for i := 0; i < outageFailureThreshold; i++ {
+		p.markUnreachable("status poll failed")
+	}
+	if !p.Status().Stale {
+		t.Fatal("setup: expected the printer to be Stale before testing recovery")
+	}
+
+	// An empty report is enough: it is a successful fetch, which is what
+	// ends the outage — no state fields need to be present.
+	p.handleStatusReport(&apiPrinterResponse{})
+
+	s := p.Status()
+	if s.Stale {
+		t.Error("Stale = true; want false after a successful report")
+	}
+	if s.StaleReason != "" {
+		t.Errorf("StaleReason = %q; want empty after recovery", s.StaleReason)
+	}
+	if !s.Online {
+		t.Error("Online = false; want true after recovery")
+	}
+	// The outage streak resets, so a single later failure is a blip again.
+	p.markUnreachable("one dropped poll")
+	if p.Status().Stale {
+		t.Error("Stale = true; want false — the failure streak must reset on recovery")
+	}
+}
+
+func TestHandleStatusReport_HealthyReportClearsStaleInitialError(t *testing.T) {
+	// The initial-connect path leaves State="error"/ErrorMsg set. Once reports
+	// flow, a healthy state must clear it, or the card shows a stale
+	// "initial status: …" banner on a printer that is now fine.
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker",
+		State: "error", ErrorMsg: "initial status: connection refused",
+	})
+
+	p.handleStatusReport(&apiPrinterResponse{
+		State: &stateReport{Text: "Operational", Flags: &stateFlags{Operational: true}},
+	})
+
+	s := p.Status()
+	if s.State != "idle" {
+		t.Errorf("State = %q; want %q", s.State, "idle")
+	}
+	if s.ErrorMsg != "" {
+		t.Errorf("ErrorMsg = %q; want empty once a healthy state is reported", s.ErrorMsg)
+	}
+}

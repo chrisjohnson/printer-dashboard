@@ -22,6 +22,10 @@ type FrameBuffer struct {
 	seq    uint64
 	notify chan struct{} // closed + replaced on each Update to wake waiters
 	closed bool         // set by Close(), prevents re-notification loop
+	// updatedAt is when Update last stored a frame; zero until then. It is
+	// what lets a consumer say "this is the last frame, and it is N seconds
+	// old" instead of showing a blank box the moment the camera stops.
+	updatedAt time.Time
 }
 
 // errBufferClosed is returned by WaitForFrame when the buffer is closed.
@@ -54,9 +58,18 @@ func (fb *FrameBuffer) Update(frame []byte) {
 	fb.frame = make([]byte, len(frame))
 	copy(fb.frame, frame)
 	fb.seq++
+	fb.updatedAt = time.Now()
 	close(fb.notify)
 	fb.notify = make(chan struct{})
 	fb.mu.Unlock()
+}
+
+// UpdatedAt returns when Update last stored a frame, or the zero time if it
+// has never stored one.
+func (fb *FrameBuffer) UpdatedAt() time.Time {
+	fb.mu.RLock()
+	defer fb.mu.RUnlock()
+	return fb.updatedAt
 }
 
 // WaitForFrame blocks until a frame newer than lastSeq is available,

@@ -37,6 +37,12 @@ type Server struct {
 	printersCtx       context.CancelFunc      // cancel for printer connection goroutines
 	cameraMgr         *camera.CameraManager   // persistent Bambu camera connections
 	rtspMgr           *camera.Go2RTCManager   // go2rtc subprocess manager for RTSPS cameras
+	// cameraFrames is the shared last-good-frame cache behind
+	// /api/camera/frame. Sharing it is the point: the endpoint fills it, and
+	// the camera health check reads it to tell a client "the stream is down
+	// but here is the frame we still have, N seconds old" instead of
+	// declaring the camera gone.
+	cameraFrames      *camera.FrameCache
 	skipTracker       *SkipTracker            // per-printer skipped-object history for the current print
 	hmsDismissTracker *HMSDismissTracker      // per-printer dismissed HMS codes
 
@@ -69,6 +75,7 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 		configPath:        configPath,
 		skipTracker:       NewSkipTracker(),
 		hmsDismissTracker: NewHMSDismissTracker(),
+		cameraFrames:      camera.NewFrameCache(),
 		lastPrintState:    make(map[string]string),
 		http: &http.Server{
 			Addr:    cfg.Listen,
@@ -526,7 +533,7 @@ func (s *Server) registerRoutes() {
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
 	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr, s.rtspMgr))
-	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandler(s.cameraMgr, s.rtspMgr))
+	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandlerWithCache(s.cameraMgr, s.rtspMgr, s.cameraFrames))
 
 	// Camera status & reconnect (for surfacing auth/stream errors with refresh)
 	s.mux.HandleFunc("GET /api/printers/{id}/camera-status", s.handleCameraStatus)
@@ -1137,6 +1144,13 @@ func (s *Server) handleDismissHMS(w http.ResponseWriter, r *http.Request) {
 // If the stream is OK, returns {"ok": true}. If there's an auth/stream
 // error, returns {"ok": false, "error": "..."} so the frontend can
 // show a clickable refresh action.
+//
+// When the stream is down but the frame cache still holds a frame, the
+// response also carries "stale": true, "has_frame": true and
+// "frame_age_seconds": N. That is the difference between two very different
+// messages to the user: "your camera feed is gone" versus "this is the last
+// frame we got, N seconds ago, and we cannot get a newer one". The frontend
+// keeps showing the picture in the second case.
 func (s *Server) handleCameraStatus(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	p, ok := s.getPrinter(id)
@@ -1156,13 +1170,20 @@ func (s *Server) handleCameraStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		status, errMsg := s.cameraStreamStatus(cs.URL)
-		if !status {
-			writeJSON(w, 200, map[string]any{
-				"ok":    false,
-				"error": errMsg,
-			})
-			return
+		if status {
+			continue
 		}
+		resp := map[string]any{
+			"ok":    false,
+			"error": errMsg,
+		}
+		if age, hasFrame := s.cameraFrames.Age(camera.FrameCacheKey(cs.URL)); hasFrame {
+			resp["stale"] = true
+			resp["has_frame"] = true
+			resp["frame_age_seconds"] = int(age.Seconds())
+		}
+		writeJSON(w, 200, resp)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -1283,6 +1304,10 @@ func (s *Server) reconnectCameraStream(rawURL string) bool {
 	if err != nil {
 		return false
 	}
+	// A manual refresh means "try the camera right now", so drop the backoff
+	// the frame endpoint put on it after the last failure. Without this the
+	// Refresh button would appear to do nothing for a few seconds.
+	s.cameraFrames.ClearFailure(camera.FrameCacheKey(rawURL))
 	if parsedURL.Scheme != "rtsps" {
 		return true
 	}

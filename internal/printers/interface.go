@@ -46,6 +46,31 @@ type PrinterStatus struct {
 	// State == "error" — a non-empty ErrorMsg alongside a healthy State means
 	// the driver failed to clear it, not that something is wrong.
 	ErrorMsg string `json:"error_msg,omitempty"`
+	// Stale reports that the readings in this status are last-known-good
+	// rather than live: the dashboard can no longer reach the printer, but it
+	// kept what the printer said the last time it could, and it is serving
+	// that instead of wiping it.
+	//
+	// This is deliberately NOT the same thing as State == "error". "error"
+	// means the printer reported a fault; Stale means the dashboard lost sight
+	// of the printer and is showing a frozen picture of it. A printer that was
+	// mid-print when the network dropped keeps State == "printing" with
+	// Stale == true — the print is almost certainly still running, and
+	// claiming otherwise (or blanking the card) throws away the one thing the
+	// dashboard is for.
+	//
+	// Drivers set this only once a hard outage is actually established (see
+	// each driver's threshold), never on a single dropped request, so a
+	// transient blip leaves the UI untouched.
+	Stale bool `json:"stale"`
+	// StaleReason is the driver's transport error behind Stale, human-readable
+	// and shown next to it. Empty unless Stale is true.
+	StaleReason string `json:"stale_reason,omitempty"`
+	// LastUpdate is the Unix time in milliseconds of the last successful data
+	// refresh from the printer. Zero means the driver has never read anything
+	// successfully — that is how a consumer tells "stale but we know
+	// something" apart from "no data yet".
+	LastUpdate int64 `json:"last_update,omitempty"`
 	// Advisories holds printer-reported faults that arrive on a channel
 	// outside the printer's own state machine, so they are deliberately NOT
 	// errors: the printer keeps printing (and finishes successfully) while

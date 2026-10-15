@@ -624,6 +624,22 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       word-break: break-word;
     }
 
+    /* Out-of-sync styling: the dashboard lost the printer and is showing the
+       last state it actually received, not a live one. Amber, not red — the
+       printer is not reporting a fault, we have simply gone blind to it, and
+       every reading still on the card is the real thing from the last time we
+       could see it. The connection dot carries it (amber, filled, no label —
+       hover it for the detail), the notice popover spells it out, and a camera
+       serving its cached last frame uses the same language (see
+       .cam-error.stale). */
+    .card-online.stale { color: var(--tag-warning-text); }
+    .stale-banner {
+      background: var(--tag-warning-bg); color: var(--tag-warning-text);
+      padding: 8px 12px; border-radius: var(--radius-control);
+      font-size: 0.8125rem; line-height: 1.4;
+      word-break: break-word;
+    }
+
     /* HMS (Health Management System) rows — one per hms_errors/hms_warnings
        entry, replacing the old single-string warning-banner (see K-075).
        .hms-list is the always-in-DOM container (mirrors .error-banner's
@@ -969,6 +985,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       background: #f1f3f5; border-radius: var(--radius-card);
       color: var(--tag-error-text); font-size: 0.8125rem;
     }
+    /* Out-of-sync camera: the stream is down but the server still has a frame
+       to serve, so the image stays up and the notice becomes a thin strip
+       under it instead of a box replacing the whole feed. Amber, matching the
+       card's out-of-sync language. */
+    .cam-error.stale {
+      width: auto; aspect-ratio: auto; margin: 4px 8px 0 8px;
+      justify-content: space-between;
+      background: var(--tag-warning-bg); color: var(--tag-warning-text);
+    }
+    .cam-error.stale .cam-refresh-btn {
+      background: var(--tag-warning-text); color: var(--tag-warning-bg);
+    }
     /* ─── Wide desktop (>=1200px) ─── */
     @media (min-width: 1200px) {
       .printers { grid-template-columns: repeat(auto-fill, minmax(600px, 1fr)); }
@@ -1198,7 +1226,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="notice-chip" type="button" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notice-count"></span></button>
         <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
-      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
+      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="stale-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
       <div class="progress-section">
         <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
         <div class="progress-text"><span>&nbsp;</span><span>&nbsp;</span></div>
@@ -1435,7 +1463,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
       // ── Normal update: only update non-camera parts of the card ──
       const st = p.state || 'unknown';
-      const stCls = p.online ? st : 'offline';
+      // Mirrors renderCard: a stale status keeps its own state colour and gets
+      // the separate amber "out of sync" tag; only a printer with nothing
+      // cached goes gray. Keep the two in sync (see K-053's drift warning).
+      const stCls = (p.online || p.stale) ? st : 'offline';
+      const cmdDisabled = !!p.stale;
       const progress = (p.progress * 100).toFixed(1);
       const timeStr = timeSummary(p);
 
@@ -1463,12 +1495,28 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         window._printerCache[p.id].homed = null;
       }
 
-      // 2. Online indicator
+      // 2. Online indicator: dot only, no label. The tooltip carries the
+      // explanation, and must be rewritten on every branch — a card that
+      // recovers has to stop advertising the outage it just came back from.
       const onlineEl = card.querySelector('.card-online');
       if (onlineEl) {
-        if (p.online) { onlineEl.className = 'card-online yes'; onlineEl.innerHTML = svgStatusDot(true); }
-        else { onlineEl.className = 'card-online'; onlineEl.innerHTML = svgStatusDot(false) + 'Offline'; }
+        if (p.online) {
+          onlineEl.className = 'card-online yes'; onlineEl.innerHTML = svgStatusDot(true); onlineEl.title = 'Online';
+        } else if (p.stale) {
+          onlineEl.className = 'card-online stale'; onlineEl.innerHTML = svgStatusDot(true); onlineEl.title = staleText(p);
+        } else {
+          onlineEl.className = 'card-online'; onlineEl.innerHTML = svgStatusDot(false) + 'Offline'; onlineEl.title = 'Offline';
+        }
       }
+
+      // 2b. Out-of-sync notice, inside the notice popover (see
+      // noticePopoverHtml). Always in the DOM, so this is a toggle, never a
+      // rebuild — and the text is rebuilt each update so "last seen" keeps
+      // advancing rather than freezing at the moment the card first noticed.
+      // refreshCardOverlays() below re-counts the bell, which is what makes the
+      // notice reachable at all: the chip is hidden at zero.
+      const staleEl = card.querySelector('.stale-banner');
+      toggleBanner(staleEl, !!p.stale, p.stale ? staleText(p) : '');
 
       // 3. Progress bar fill
       const fill = card.querySelector('.progress-bar .fill');
@@ -1577,10 +1625,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const resumeBtn = card.querySelector('button[onclick*="resume"]');
       const cancelBtn = card.querySelector('button[onclick*="cancel"]');
       const skipBtn = card.querySelector('.btn-skip');
-      if (pauseBtn) pauseBtn.disabled = st !== 'printing';
-      if (resumeBtn) resumeBtn.disabled = st !== 'paused';
-      if (cancelBtn) cancelBtn.disabled = st !== 'printing' && st !== 'paused';
-      if (skipBtn) skipBtn.disabled = st !== 'printing';
+      if (pauseBtn) pauseBtn.disabled = st !== 'printing' || cmdDisabled;
+      if (resumeBtn) resumeBtn.disabled = st !== 'paused' || cmdDisabled;
+      if (cancelBtn) cancelBtn.disabled = (st !== 'printing' && st !== 'paused') || cmdDisabled;
+      if (skipBtn) skipBtn.disabled = st !== 'printing' || cmdDisabled;
 
       // 9b. Movement-pad buttons (jog X/Y/Z + Home All) — enabled only when
       // online and in a movement-safe state, same condition
@@ -1602,7 +1650,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const lightRow = card.querySelector('[data-light]');
       if (lightRow) {
         const toggle = lightRow.querySelector('.toggle input');
-        if (toggle) toggle.checked = p.light_on === true;
+        if (toggle) { toggle.checked = p.light_on === true; toggle.disabled = cmdDisabled; }
         const thumb = lightRow.querySelector('.toggle .thumb');
         if (thumb) thumb.textContent = p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014';
       }
@@ -1735,13 +1783,23 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         .then(data => {
           if (data.ok) {
             errorDiv.style.display = 'none';
+            errorDiv.className = 'cam-error';
             errorDiv.querySelector('.cam-error-msg').textContent = '';
             errorDiv.querySelector('.cam-refresh-btn').style.display = 'none';
             if (img) img.style.display = 'block';
           } else {
+            // Two very different failures. If the server still has a frame to
+            // serve, the feed is out of sync, not gone: keep the picture on
+            // screen and say how old it is. Only with nothing cached does the
+            // notice replace the image as a hard error.
+            var cached = !!data.stale && !!data.has_frame;
             var msgEl = errorDiv.querySelector('.cam-error-msg');
             var btnEl = errorDiv.querySelector('.cam-refresh-btn');
-            if (msgEl) msgEl.textContent = data.error || 'Camera stream unavailable';
+            if (msgEl) {
+              msgEl.textContent = cached
+                ? ('Camera out of sync \u2014 last frame ' + frameAgeText(data.frame_age_seconds))
+                : (data.error || 'Camera stream unavailable');
+            }
             if (btnEl) {
               btnEl.style.display = 'inline-block';
               btnEl.onclick = function() {
@@ -1761,10 +1819,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
                   });
               };
             }
+            errorDiv.className = 'cam-error' + (cached ? ' stale' : '');
             errorDiv.style.display = 'flex';
             errorDiv.style.alignItems = 'center';
             errorDiv.style.justifyContent = 'space-between';
-            if (img) img.style.display = 'none';
+            // The last good frame stays visible while out of sync — that is
+            // the entire point of the server caching it.
+            if (img) img.style.display = cached ? 'block' : 'none';
           }
         })
         .catch(() => {
@@ -1976,9 +2037,28 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return html;
     }
 
+    // The "out of sync" line: when the dashboard last actually heard from the
+    // printer, plus the transport error that ended it. Rendered whenever the
+    // server flags a status stale — the readings on the card are real, they
+    // are just not current, and saying when they were current is the whole
+    // point of showing them.
+    function staleText(p) {
+      var when = p.last_update ? ('last seen ' + new Date(p.last_update).toLocaleTimeString()) : 'never reached';
+      return 'Out of sync \u2014 ' + when + (p.stale_reason ? (' \u00b7 ' + p.stale_reason) : '');
+    }
+
     function renderCard(p) {
       const st = p.state || 'unknown';
-      const stCls = p.online ? st : 'offline';
+      // A stale status keeps its own state colour (a printer that went
+      // unreachable mid-print is still shown as printing, because it almost
+      // certainly is) and gets the separate amber "out of sync" tag. Only a
+      // genuinely offline printer with nothing cached goes gray.
+      const stCls = (p.online || p.stale) ? st : 'offline';
+      // While out of sync every command is a guess: the state on screen is a
+      // snapshot, and the backend rejects commands to an offline printer
+      // anyway (see requireMovementSafe). Better to grey them out than to let
+      // the user press Cancel on a printer the dashboard cannot see.
+      const cmdDisabled = !!p.stale;
       const progress = (p.progress * 100).toFixed(1);
       const timeStr = timeSummary(p);
 
@@ -1990,10 +2070,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const chamberVal = p.chamber_temp !== null ? p.chamber_temp.toFixed(1) : '\u2014';
       const chamberT = p.chamber_target_temp != null ? p.chamber_target_temp.toFixed(1) : '--';
 
-      // Online indicator
+      // Online indicator: a dot, no label. Amber means "out of sync" — the
+      // printer may well be running fine, it is the dashboard that cannot see
+      // it — and the detail lives in the tooltip instead of taking a slot in
+      // the header. Filled, like the online dot: unlike a plain offline card,
+      // there is real data behind this one.
       const onlineDot = p.online
-        ? '<span class="card-online yes">' + svgStatusDot(true) + '</span>'
-        : '<span class="card-online">' + svgStatusDot(false) + 'Offline</span>';
+        ? '<span class="card-online yes" title="Online">' + svgStatusDot(true) + '</span>'
+        : (p.stale
+            ? '<span class="card-online stale" title="' + escapeHtml(staleText(p)) + '">' + svgStatusDot(true) + '</span>'
+            : '<span class="card-online" title="Offline">' + svgStatusDot(false) + 'Offline</span>');
 
       // Notice popover — the plain error banner plus one dismissible HMS row per
       // (already server-filtered) hms_errors/hms_warnings entry, behind the
@@ -2085,10 +2171,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         })() +
         // Control buttons — moved below camera for better layout
         '<div class="controls">' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
-          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + (st !== 'printing' && st !== 'paused' ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
-          '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'pause\')" ' + (st !== 'printing' || cmdDisabled ? 'disabled' : '') + '>' + svgPause() + 'Pause</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'resume\')" class="btn-resume" ' + (st !== 'paused' || cmdDisabled ? 'disabled' : '') + '>' + svgResume() + 'Resume</button>' +
+          '<button onclick="cmd(\'' + escapeJsString(p.id) + '\',\'cancel\')" class="danger" ' + ((st !== 'printing' && st !== 'paused') || cmdDisabled ? 'disabled' : '') + '>' + svgCancel() + 'Cancel</button>' +
+          '<button onclick="openSkipModal(\'' + escapeJsString(p.id) + '\')" class="btn-skip" ' + (st !== 'printing' || cmdDisabled ? 'disabled' : '') + '>' + svgSkip() + 'Skip Object</button>' +
         '</div>' +
         // Everything below the always-visible summary lives in one wrapper, so
         // the compact zoom level is a single display:none rather than a list of
@@ -2130,7 +2216,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           // The data-light marker lets updateCard() find it directly.
           '<span class="light-row" data-light>' +
             '<span class="label"><span class="temp-icon">' + svgLight() + '</span>Light</span>' +
-            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014') + '</span></span></label></span>' +
+            '<span class="temp-values"><label class="toggle"><input type="checkbox" onchange="toggleLight(\'' + escapeJsString(p.id) + '\')" ' + (p.light_on === true ? 'checked' : '') + (cmdDisabled ? ' disabled' : '') + '><span class="slider"><span class="thumb">' + (p.light_on === true ? 'on' : p.light_on === false ? 'off' : '\u2014') + '</span></span></label></span>' +
           '</span>' +
         '</div>' +
         jobMetaHtml(p) +
@@ -2252,6 +2338,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       return h + 'h ' + m + 'm';
     }
 
+    // How long ago the server last got a camera frame, in the coarse units a
+    // "last frame …" label wants. Unknown age reads as unknown rather than as
+    // "0s ago", which would falsely imply a fresh frame.
+    function frameAgeText(secs) {
+      if (secs === null || secs === undefined || secs < 0) return 'unknown age';
+      if (secs < 60) return secs + 's ago';
+      if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+      return Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm ago';
+    }
+
     // Build the time text shown beside the percentage, as "remaining / total".
     //
     // No printer reports a total print time, so it is derived from whatever the
@@ -2308,10 +2404,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     // Shows/hides an already-in-DOM banner element and sets its text. Used
     // by the error-banner toggle logic in updateCard().
+    //
+    // The text goes through textContent, not innerHTML, so it must NOT be
+    // escaped first — escaping it would render a literal "&quot;" wherever a
+    // driver's message contains a quoted URL, which is exactly what a Go
+    // http error looks like ("Get \"http://host/api\": context deadline
+    // exceeded"). bannerHtml() escapes because it builds a markup string;
+    // this path builds none.
     function toggleBanner(el, visible, text) {
       if (!el) return;
       if (visible) {
-        el.textContent = escapeHtml(text);
+        el.textContent = text || '';
         el.style.display = '';
       } else {
         el.style.display = 'none';
@@ -2372,13 +2475,20 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
 
     // Builds the notice popover for one card: the (possibly hidden) error
-    // banner and the HMS row list, behind the header bell. Notices no longer
+    // banner, the (possibly hidden) out-of-sync banner, and the HMS row list,
+    // behind the header bell. Notices no longer
     // sit inline — the card body keeps its stable shape and the entries are read
     // from here at either zoom level. Always rendered (hidden until opened) so
     // renderCard() and updateCard() agree on shape, and so updateCard() can
     // refresh its contents while it is closed. Shared-helper precedent as
     // bannerHtml()/hmsRowsHtml() (see K-053).
     //
+    // The out-of-sync notice sits here rather than inline in the card body for
+    // the same reason the error banner does: compact zoom hides the body, and an
+    // outage is exactly the kind of thing you need to see when scanning a whole
+    // fleet at arm's length. The header dot goes amber too, and the bell counts
+    // this as one of its notifications (see refreshNoticeChip).
+
     // Advisories are passed through to hmsRowsHtml() alongside errors and
     // warnings: they render as non-dismissible .hms-row entries, so the bell's
     // DOM-derived count picks them up without any extra bookkeeping here.
@@ -2389,6 +2499,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\', false)">\u00d7</button></div>' +
         '<div class="notice-popover-inner">' +
           bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
+          bannerHtml('stale-banner', !!p.stale, p.stale ? staleText(p) : '') +
           '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [],
             p.hms_warnings || [], p.advisories || []) + '</div>' +
         '</div></div>';
@@ -2414,8 +2525,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (!chip) return;
       const banner = card.querySelector('.error-banner');
       const bannerShown = !!banner && banner.style.display !== 'none';
+      // An outage is a notice but not a fault: it counts toward the bell, and
+      // deliberately does NOT count toward the fatal test below, so the chip stays
+      // quiet amber rather than going red and shaking over a Wi-Fi dropout.
+      const staleEl = card.querySelector('.stale-banner');
+      const staleShown = !!staleEl && staleEl.style.display !== 'none';
       const rows = card.querySelectorAll('.hms-row');
-      const count = (bannerShown ? 1 : 0) + rows.length;
+      const count = (bannerShown ? 1 : 0) + (staleShown ? 1 : 0) + rows.length;
       const label = chip.querySelector('.notice-count');
       if (label) label.textContent = count;
       chip.style.display = count > 0 ? '' : 'none';
