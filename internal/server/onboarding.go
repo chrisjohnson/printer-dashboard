@@ -1292,6 +1292,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     Printer Dashboard
     <span class="count" id="printer-count"></span>
     <span class="header-actions">
+      <span class="zoom-switch"><span class="zs-label" id="cam-label">Cameras on</span><label class="zoom-toggle" title="Camera streaming"><input type="checkbox" id="cam-toggle" aria-label="Camera streaming" onchange="setCameras(this.checked)"><span class="slider"><span class="zs-ic" id="cam-ic-off"></span><span class="zs-ic" id="cam-ic-on"></span><span class="thumb" id="cam-thumb"></span></span></label></span>
       <span class="zoom-switch"><span class="zs-label" id="vt-label">Detailed</span><label class="zoom-toggle" title="Compact view"><input type="checkbox" id="view-toggle" aria-label="Compact view" onchange="setViewMode(this.checked ? 'compact' : 'detailed')"><span class="slider"><span class="zs-ic" id="vt-ic-detailed"></span><span class="zs-ic" id="vt-ic-compact"></span><span class="thumb" id="vt-thumb"></span></span></label></span>
       <a href="/onboarding" class="add-printer">+ Add Printer</a>
     </span>
@@ -1394,7 +1395,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // then render no camera block at all rather than the "add LAN IP and
     // access code" placeholder, which would blame the operator for a choice
     // this process made deliberately.
-    window._camerasDisabled = {{if .CamerasDisabled}}true{{else}}false{{end}};
+    window._camerasEnabled = {{if .CamerasEnabled}}true{{else}}false{{end}};
     window._skippedCounts = {};
     window._jogBusy = {};
     window._wsReconnectDelay = 1000;
@@ -1474,7 +1475,88 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       applyViewMode(mode);
     }
 
+    // ── Camera streaming toggle ───────────────────────────────────────────
+    // Server-side state, not localStorage: the camera is a printer resource, so
+    // "on" has to mean this process actually holds the session, and two tabs
+    // must agree rather than each keeping a private opinion. The value arrives
+    // with every /api/printers poll, so a flip in one tab lands in the other.
+    //
+    // Nothing is persisted across a restart on purpose. DISABLE_CAMERAS chooses
+    // the starting value only; a dev instance that enabled cameras for a look
+    // must not come back tomorrow still holding a single-session camera port.
+    function svgCamera(on) {
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M23 7l-7 5 7 5V7z"/>' +
+        '<rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>' +
+        (on ? '' : '<line x1="2" y1="2" x2="22" y2="22"/>') + '</svg>';
+    }
+
+    // Three separate values, because conflating them is what made the first
+    // version fail to redraw:
+    //   _camerasShown    — what the knob displays (follows the click at once)
+    //   _camerasServer   — the last value the server confirmed
+    //   _camerasRendered — what the cards were actually built for
+    // Cards must be built from _camerasServer, not _camerasShown: only the
+    // server can serve a frame, so drawing a camera block for a request that has
+    // not landed yet produces exactly the empty box this is meant to avoid.
+    function paintCameraSwitch(on) {
+      window._camerasShown = on;
+      const btn = document.getElementById('cam-toggle');
+      if (btn) btn.checked = on;
+      const label = document.getElementById('cam-label');
+      if (label) label.textContent = on ? 'Cameras on' : 'Cameras off';
+      const onIc = document.getElementById('cam-ic-on');
+      const offIc = document.getElementById('cam-ic-off');
+      const thumb = document.getElementById('cam-thumb');
+      if (onIc) onIc.innerHTML = svgCamera(true);
+      if (offIc) offIc.innerHTML = svgCamera(false);
+      if (thumb) thumb.innerHTML = svgCamera(on);
+    }
+
+    // applyCamerasState records a confirmed server value and rebuilds the cards
+    // if that means they are now showing the wrong thing. A card only builds a
+    // camera block when cameras were on at render time, and updateCard()
+    // refreshes an existing block rather than creating one, so a mid-session
+    // flip has to rebuild outright or enabling cameras advertises streams into
+    // cards with nowhere to put them.
+    function applyCamerasState(on) {
+      window._camerasServer = !!on;
+      paintCameraSwitch(!!on);
+      if (window._camerasServer !== window._camerasRendered) loadPrinters();
+    }
+
+    let _camerasBusy = false;
+    function setCameras(on) {
+      // Guard against a re-entrant flip: the switch is driven from the poll as
+      // well as from the click, and a slow response must not let the loop stamp
+      // the knob back while the user is mid-toggle.
+      if (_camerasBusy) return;
+      _camerasBusy = true;
+      paintCameraSwitch(on); // knob moves immediately; cards wait for the truth
+
+      fetch('/api/cameras', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: on }),
+      })
+        .then(function(r) { return r.json().then(function(b) { return { ok: r.ok, b: b }; }); })
+        .then(function(res) {
+          if (!res.ok) throw new Error((res.b && res.b.error) || ('HTTP ' + res.ok));
+          // Trust the server's answer over the click: enabling can partially
+          // fail, and the session count is the honest confirmation.
+          applyCamerasState(res.b.enabled);
+        })
+        .catch(function(err) {
+          paintCameraSwitch(!on); // revert the knob to reality
+          alert('Could not change camera streaming: ' + err.message);
+        })
+        .finally(function() { _camerasBusy = false; });
+    }
+
     applyViewMode(readViewMode());
+    window._camerasServer = window._camerasEnabled !== false;
+    paintCameraSwitch(window._camerasServer);
 
     function mergeWithCache(p) {
       const cached = window._printerCache[p.id] || {};
@@ -1834,6 +1916,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           const container = document.getElementById('printer-list');
           const count = document.getElementById('printer-count');
           const list = data.printers || [];
+          // Keep the header switch honest about server state. Skipped while a
+          // toggle request is in flight so a slow response cannot stamp the knob
+          // back mid-click; the response handler applies the authoritative value.
+          if (typeof data.cameras_enabled === 'boolean' && !_camerasBusy) {
+            applyCamerasState(data.cameras_enabled, true);
+          }
           count.textContent = list.length + ' printer' + (list.length !== 1 ? 's' : '');
           if (list.length === 0) {
             container.innerHTML = '<p class="empty-message">No printers configured. <a href="/onboarding">Add one</a>.</p>';
@@ -1843,6 +1931,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           list.forEach(function(p) {
             window._printerCache[p.id] = p;
           });
+          // What the rendered cards were built to show, so a camera-state change
+          // can tell "already drawn this way" from "needs a rebuild".
+          window._camerasRendered = !!window._camerasServer;
           container.innerHTML = list.map(renderCard).join('');
           // renderCard() can only decide .has-notices from data; .is-
           // overflowing needs real measured layout, so it's applied here.
@@ -1867,7 +1958,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           // Periodic camera health check: if the camera stream is failing
           // (e.g. auth token expired), surface the error with a refresh button.
-          if (!window._camHealthInterval && !window._camerasDisabled) {
+          if (!window._camHealthInterval && window._camerasServer) {
             window._camHealthInterval = setInterval(function() {
               document.querySelectorAll('.camera-slot[data-type="internal"]').forEach(function(slot) {
                 const printerId = slot.id.replace(/^cam-/, '').replace(/-\d+$/, '');
@@ -2355,7 +2446,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '</div>' +
         // Camera section — above temps, with placeholder when no streams
         (function() {
-          if (window._camerasDisabled) return '';
+          if (!window._camerasServer) return '';
           const streams = p.camera_streams || [];
           if (streams.length === 0) {
             // Placeholder with reason based on printer type

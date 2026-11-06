@@ -178,6 +178,13 @@ It is an environment variable rather than a `config.yaml` key because
 `config.yaml` is shared machine-wide (it describes the printers, not a
 checkout), so a config key could only disable cameras for everything at once.
 
+The env var only sets the **starting** state. There is a Cameras on/off switch in
+the dashboard header, next to the detailed/compact toggle, which starts and stops
+streaming at runtime — turning it off closes the sockets and releases the printer's
+camera for another instance. The runtime choice is never persisted, so an instance
+that enabled cameras for a look comes back after a restart with them off again.
+Programmatically: `GET /api/cameras` and `POST /api/cameras {"enabled": true}`.
+
 Note also that the P1S's local MQTT broker caps at roughly **four concurrent
 client sessions**, so keep the number of concurrent instances low even with
 cameras disabled.

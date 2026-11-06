@@ -53,8 +53,18 @@ func (fb *FrameBuffer) Latest() []byte {
 
 // Update stores a new frame and broadcasts to all waiters by closing
 // the current notify channel and creating a new one.
+//
+// Dropping the frame on a closed buffer is not optional. Releasing a camera
+// cancels the connection's context, but the reader can still hand back one
+// final frame before it notices — so Update and Close genuinely race, and
+// closing an already-closed notify channel panics the whole process. This was
+// reached in practice by toggling camera streaming off in the dashboard.
 func (fb *FrameBuffer) Update(frame []byte) {
 	fb.mu.Lock()
+	if fb.closed {
+		fb.mu.Unlock()
+		return
+	}
 	fb.frame = make([]byte, len(frame))
 	copy(fb.frame, frame)
 	fb.seq++
@@ -108,9 +118,12 @@ func (fb *FrameBuffer) WaitForFrame(ctx context.Context, lastSeq uint64) ([]byte
 // from blocking. After Close, WaitForFrame returns errBufferClosed.
 func (fb *FrameBuffer) Close() {
 	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	if fb.closed {
+		return // idempotent: shutdown and per-camera release can both reach here
+	}
 	fb.closed = true
 	close(fb.notify)
-	fb.mu.Unlock()
 }
 
 // tutkEntry holds the state for a TUTK P2P camera connection.
@@ -136,6 +149,15 @@ type CameraManager struct {
 type cameraEntry struct {
 	buffer *FrameBuffer
 	cancel context.CancelFunc
+
+	// readerMu guards the currently open connection so ReleaseAll can close the
+	// socket outright. Cancelling the context is not enough: the read loop is
+	// usually blocked inside ReadFrame on a socket with no deadline, so it never
+	// observes the cancellation and the TCP session stays open. The printer
+	// counts that as its one allowed camera client, which is precisely the
+	// starvation this whole feature exists to prevent.
+	readerMu sync.Mutex
+	reader   *BambuStreamReader
 }
 
 // NewCameraManager creates a new CameraManager. The provided context
@@ -173,14 +195,15 @@ func (m *CameraManager) GetBuffer(host string, port int, accessCode string) *Fra
 	m.cameras[key] = entry
 
 	// Start background connection loop.
-	go m.connectionLoop(ctx, host, port, accessCode, buffer)
+	go m.connectionLoop(ctx, host, port, accessCode, entry)
 
 	return buffer
 }
 
 // connectionLoop maintains a persistent connection to the camera.
 // It reconnects with exponential backoff on failure.
-func (m *CameraManager) connectionLoop(ctx context.Context, host string, port int, accessCode string, buffer *FrameBuffer) {
+func (m *CameraManager) connectionLoop(ctx context.Context, host string, port int, accessCode string, entry *cameraEntry) {
+	buffer := entry.buffer
 	backoff := 1 * time.Second
 	maxBackoff := 30 * time.Second
 
@@ -207,6 +230,10 @@ func (m *CameraManager) connectionLoop(ctx context.Context, host string, port in
 			continue
 		}
 
+		entry.readerMu.Lock()
+		entry.reader = reader
+		entry.readerMu.Unlock()
+
 		log.Printf("bambu camera: connected to %s:%d", host, port)
 		backoff = 1 * time.Second // reset on successful connection
 
@@ -214,12 +241,14 @@ func (m *CameraManager) connectionLoop(ctx context.Context, host string, port in
 		for {
 			frame, err := reader.ReadFrame()
 			if err != nil {
+				reader.Close()
+				entry.readerMu.Lock()
+				entry.reader = nil
+				entry.readerMu.Unlock()
 				if ctx.Err() != nil {
-					reader.Close()
 					return
 				}
 				log.Printf("bambu camera: read error for %s:%d: %v", host, port, err)
-				reader.Close()
 				break // exit inner loop to reconnect
 			}
 
@@ -229,6 +258,50 @@ func (m *CameraManager) connectionLoop(ctx context.Context, host string, port in
 }
 
 // Stop terminates all background connections.
+// ReleaseAll closes every local camera connection and forgets the buffers,
+// leaving the manager fully usable: a later GetBuffer starts fresh connections.
+//
+// This is what makes a runtime camera toggle mean something. Stop() also kills
+// the manager's parent context, so it is only correct at shutdown — toggling
+// cameras off has to actually hand the printer's single-session camera port
+// back, otherwise "disabled" would still be holding the resource that starves
+// every other instance, which is the exact failure the toggle exists to avoid.
+func (m *CameraManager) ReleaseAll() {
+	m.mu.Lock()
+	entries := make([]*cameraEntry, 0, len(m.cameras))
+	for key, entry := range m.cameras {
+		entries = append(entries, entry)
+		delete(m.cameras, key)
+	}
+	m.mu.Unlock()
+
+	for _, entry := range entries {
+		entry.cancel()
+		// Close the socket directly rather than hoping the read loop notices the
+		// cancelled context — it is blocked in ReadFrame and will not.
+		entry.readerMu.Lock()
+		if entry.reader != nil {
+			entry.reader.Close()
+			entry.reader = nil
+		}
+		entry.readerMu.Unlock()
+		entry.buffer.Close()
+	}
+
+	if len(entries) > 0 {
+		log.Printf("bambu camera: released %d camera connection(s)", len(entries))
+	}
+}
+
+// ActiveCameras reports how many local camera connections are currently held.
+// Surfaced so the UI can show that turning cameras off really did release the
+// printer, rather than just hiding the picture.
+func (m *CameraManager) ActiveCameras() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.cameras)
+}
+
 func (m *CameraManager) Stop() {
 	m.mu.Lock()
 	for _, entry := range m.cameras {

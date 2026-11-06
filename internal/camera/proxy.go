@@ -293,6 +293,20 @@ func (c *FrameCache) Buffer(key string) *FrameBuffer {
 	return fb
 }
 
+// ClearAll drops every cached frame and failure record. Called when camera
+// streaming is switched off at runtime: without it the dashboard would keep
+// serving the last frame it cached, so the picture would stay up and look
+// exactly like cameras still working while nothing is actually connected.
+func (c *FrameCache) ClearAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, fb := range c.buffers {
+		fb.Close()
+		delete(c.buffers, key)
+	}
+	clear(c.failures)
+}
+
 // RecordFailure notes that a fetch for key just failed, arming the cooldown.
 func (c *FrameCache) RecordFailure(key string, err error) {
 	c.mu.Lock()

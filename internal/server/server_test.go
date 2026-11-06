@@ -147,6 +147,11 @@ func newTestServer(printersMap map[string]printers.Printer) *Server {
 	go wsHub.Run()
 
 	s := &Server{
+		// camerasEnabled defaults to true here so the many camera tests written
+		// against the old always-on behaviour keep meaning what they say. The
+		// zero value of the field would otherwise be "cameras off", which is the
+		// opposite of what a bare test server should behave like.
+		camerasEnabled:    true,
 		cfg:               &config.Config{Listen: ":0"},
 		mux:               http.NewServeMux(),
 		printers:          printersMap,
@@ -735,6 +740,7 @@ func TestEnrichStatusWithCameras_DriverOnly(t *testing.T) {
 		Listen: ":0",
 	}
 	s := &Server{
+		camerasEnabled: true, // a bare test server behaves like a cameras-on instance
 		cfg:      cfg,
 		printers: make(map[string]printers.Printer),
 		mux:      http.NewServeMux(),
@@ -770,6 +776,7 @@ func TestEnrichStatusWithCameras_ConfigOnly(t *testing.T) {
 		},
 	}
 	s := &Server{
+		camerasEnabled: true, // a bare test server behaves like a cameras-on instance
 		cfg:      cfg,
 		printers: make(map[string]printers.Printer),
 		mux:      http.NewServeMux(),
@@ -803,6 +810,7 @@ func TestEnrichStatusWithCameras_Merged(t *testing.T) {
 		},
 	}
 	s := &Server{
+		camerasEnabled: true, // a bare test server behaves like a cameras-on instance
 		cfg:      cfg,
 		printers: make(map[string]printers.Printer),
 		mux:      http.NewServeMux(),
@@ -839,6 +847,7 @@ func TestEnrichStatusWithCameras_Merged(t *testing.T) {
 func TestEnrichStatusWithCameras_PrinterNotFound(t *testing.T) {
 	cfg := &config.Config{Listen: ":0"}
 	s := &Server{
+		camerasEnabled: true, // a bare test server behaves like a cameras-on instance
 		cfg:      cfg,
 		printers: make(map[string]printers.Printer),
 		mux:      http.NewServeMux(),
