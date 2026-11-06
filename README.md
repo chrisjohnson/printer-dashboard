@@ -8,7 +8,7 @@ A self-hosted web dashboard for monitoring and controlling multiple 3D printers 
 - **Bambu Lab H2S** — LAN MQTT protocol (Bambu Connect firmware)
 - **Snapmaker U1** — Paxx custom firmware (REST + WebSocket)
 
-## Features (planned)
+## Features
 
 - Real-time printer status (progress, temperatures, layers)
 - Pause / Resume / Cancel / Skip Object
@@ -16,6 +16,26 @@ A self-hosted web dashboard for monitoring and controlling multiple 3D printers 
 - Job completion and error notifications
 - Authentication for remote access
 - Docker deployment
+
+### Bambu transport selection
+
+Bambu printers are reached over **local MQTT first** (the printer's own broker on
+`:8883`, authenticated with the device access code), falling back to **Bambu
+cloud MQTT** when local access is unavailable. Selection is per printer and is
+decided by probing, not by a firmware or model table — the vendor names its
+local-mode toggle differently across firmware generations, and an open local port
+does not mean the broker will accept third-party clients, so the handshake itself
+is the only reliable signal. A fleet mixing pre- and post-Bambu-Connect firmware,
+with different toggles enabled per unit, therefore needs no configuration.
+
+Why it matters: cloud depends on an account token that expires silently. When that
+happened on this fleet, two printers that were perfectly reachable locally sat
+blind for eight days. With a dead token the printers now stay live over LAN and
+report a blue "sign-in expired, remote access unavailable" notice instead.
+
+Pin the path per printer with `mqtt_transport: lan | cloud` (default `auto`).
+See [docs/transport-selection-spec.md](docs/transport-selection-spec.md) for the
+design and the alternatives considered.
 
 ## Getting Started
 

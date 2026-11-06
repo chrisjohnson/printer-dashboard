@@ -53,15 +53,25 @@ bambu_account:
   region: "global"  # "global" or "china"
 
 printers:
-  # Bambu printers use cloud MQTT — no host/port needed.
-  # host + access_code are optional and used only for local camera access.
+  # Bambu printers reach the printer's own local MQTT broker first (preferred:
+  # lower latency, keeps working when the internet or Bambu's cloud is down, and
+  # independent of an account token that can expire), falling back to Bambu cloud
+  # MQTT when local access is not available.
+  #
+  # host + access_code are what make local access possible — they are the
+  # credentials for the printer's MQTT broker on :8883 as well as for the camera.
+  # Omit them and the printer is cloud-only.
+  #
+  # mqtt_transport: auto (default) | lan | cloud — pin it per printer to skip
+  # probing, e.g. "cloud" for a printer you only ever reach remotely.
   - id: p1s
     name: "Bambu P1S"
     type: bambu
     # model: P1S            # optional — when set, enables model-specific camera support
     serial: "SERIAL000000000001"    # dev_id from Bambu Cloud / printer label
-    host: 192.168.1.100             # LAN IP (for camera, optional)
-    access_code: "12345678"         # from printer screen (for camera, optional)
+    host: 192.168.1.100             # LAN IP (local MQTT + camera)
+    access_code: "12345678"         # from printer screen (local MQTT + camera)
+    # mqtt_transport: auto
 
   - id: h2s
     name: "Bambu H2S"
