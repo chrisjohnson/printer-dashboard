@@ -610,8 +610,21 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/printers/{id}/hms/dismiss", s.handleDismissHMS)
 
 	// Camera stream proxy (same-origin proxy to avoid mixed-content issues)
-	s.mux.HandleFunc("GET /api/camera/proxy", camera.Handler(s.cameraMgr, s.rtspMgr))
-	s.mux.HandleFunc("GET /api/camera/frame", camera.FrameHandlerWithCache(s.cameraMgr, s.rtspMgr, s.cameraFrames))
+	// The camera HTTP handlers are a second, independent route into the camera
+	// manager: both call GetBuffer directly, so a stale browser tab, a bookmark,
+	// or any scripted request for a camera URL would still dial the printer and
+	// win its single-session camera slot even from an instance configured never
+	// to touch cameras. Gating only the startup pre-connect and the status
+	// endpoint left that door open.
+	//
+	// The check runs per request rather than at registration time. Registering
+	// different handlers based on a field set during construction would work
+	// today, but it silently depends on ordering — set the flag after
+	// registerRoutes() and the gate evaporates with no error. A request-time
+	// check cannot be bypassed that way, and it is testable without rebuilding
+	// the server.
+	s.mux.HandleFunc("GET /api/camera/proxy", s.gateCameras(camera.Handler(s.cameraMgr, s.rtspMgr)))
+	s.mux.HandleFunc("GET /api/camera/frame", s.gateCameras(camera.FrameHandlerWithCache(s.cameraMgr, s.rtspMgr, s.cameraFrames)))
 
 	// Camera status & reconnect (for surfacing auth/stream errors with refresh)
 	s.mux.HandleFunc("GET /api/printers/{id}/camera-status", s.handleCameraStatus)
@@ -666,6 +679,21 @@ func (s *Server) enrichStatusWithCameras(printerID string, status printers.Print
 // enrichWithStreams is a helper that merges camera streams into a status.
 // It does not acquire any locks — the caller is responsible for ensuring
 // the config data is safe to read.
+// gateCameras wraps a camera handler so a DISABLE_CAMERAS instance refuses the
+// request instead of opening a connection to the printer.
+func (s *Server) gateCameras(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.camerasDisabled {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"ok": false, "disabled": true,
+				"error": "cameras are disabled in this instance (DISABLE_CAMERAS)",
+			})
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (s *Server) enrichWithStreams(driverStreams []printers.CameraStream, printerID string, status printers.PrinterStatus) printers.PrinterStatus {
 	if s.camerasDisabled {
 		// Nothing to advertise, so nothing to render and nothing to poll. This

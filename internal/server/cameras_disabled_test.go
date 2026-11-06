@@ -50,6 +50,33 @@ func TestEnrichWithStreams_DisabledInstanceAdvertisesNothing(t *testing.T) {
 	})
 }
 
+// TestCameraRoutesAreNotRegisteredWhenDisabled closes the hole the status gate
+// alone left: camera.Handler and FrameHandlerWithCache call GetBuffer directly,
+// so a stale browser tab, a bookmark, or any scripted request for a camera URL
+// would still dial the printer and steal its single-session camera slot even
+// from an instance configured never to touch cameras.
+func TestCameraRoutesAreNotRegisteredWhenDisabled(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
+	s.camerasDisabled = true
+
+	for _, path := range []string{"/api/camera/proxy", "/api/camera/frame"} {
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"?url=bambus%3A%2F%2F10.0.0.1%3A6000", nil))
+
+		if rec.Code == http.StatusOK {
+			t.Errorf("%s returned 200 on a disabled instance; the route is still live", path)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Errorf("%s: bad JSON %q", path, rec.Body.String())
+			continue
+		}
+		if body["disabled"] != true {
+			t.Errorf("%s: body = %v; want an explicit disabled verdict", path, body)
+		}
+	}
+}
+
 // TestHandleCameraStatus_DisabledIsNotReportedAsFailure: "disabled here" and
 // "the printer's camera is broken" are different facts. Conflating them is what
 // made the stale-container incident read as a printer fault.
