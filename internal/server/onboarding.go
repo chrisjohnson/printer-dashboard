@@ -1689,6 +1689,9 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // Suppressed when the auth banner is showing the same outage with a named
       // cause and a link — see noticePopoverHtml.
       toggleBanner(staleEl, !!p.stale && !p.auth_invalid, (p.stale && !p.auth_invalid) ? staleText(p) : '');
+      // Keep the sort tier honest: a print can fail (or a standing fault clear)
+      // without the card ever being re-rendered.
+      card.dataset.printFailed = p.print_failed ? '1' : '0';
       toggleAuthBanner(card.querySelector('.auth-banner'), p);
       toggleCloudBanner(card.querySelector('.cloud-banner'), p);
       const badgeEl = card.querySelector('.transport-badge');
@@ -1854,11 +1857,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // state 'error' but the fault is ours, not the printer's, and it is
       // permanent until someone signs in again, so it must not hold the top
       // slot above every print actually running. Matches printerSortPriority.
-      function sortPriority(s, lockedOut) {
-        if (lockedOut) return 2;
-        if (s === 'error') return 0;
+      function sortPriority(s, lockedOut, printFailed) {
+        if (lockedOut) return 3;
+        if (s === 'error') return printFailed ? 0 : 2;
         if (s === 'printing' || s === 'paused') return 1;
-        return 2;
+        return 3;
       }
 
       // Read from the DOM rather than a status object, the same way the state
@@ -1870,7 +1873,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
       const tag = card.querySelector('.tag');
       const state = tag ? tag.textContent.trim() : '';
-      const cardPriority = sortPriority(state, isLockedOut(card));
+      const cardPriority = sortPriority(state, isLockedOut(card), card.dataset.printFailed === '1');
       const cardName = (card.querySelector('h2') || {}).textContent || '';
 
       const siblings = Array.from(container.querySelectorAll('.card'));
@@ -1881,7 +1884,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (sib === card) continue;
         const sibTag = sib.querySelector('.tag');
         const sibState = sibTag ? sibTag.textContent.trim() : '';
-        const sibPriority = sortPriority(sibState, isLockedOut(sib));
+        const sibPriority = sortPriority(sibState, isLockedOut(sib), sib.dataset.printFailed === '1');
         const sibName = (sib.querySelector('h2') || {}).textContent || '';
 
         if (cardPriority < sibPriority) { insertBefore = sib; break; }
@@ -2326,7 +2329,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         const p = window._printerCache[id];
         if (!card || !p) return;
         if (p.auth_invalid) {
-          toggleAuthBanner(card.querySelector('.auth-banner'), p);
+          // Keep the sort tier honest: a print can fail (or a standing fault clear)
+      // without the card ever being re-rendered.
+      card.dataset.printFailed = p.print_failed ? '1' : '0';
+      toggleAuthBanner(card.querySelector('.auth-banner'), p);
       toggleCloudBanner(card.querySelector('.cloud-banner'), p);
       const badgeEl = card.querySelector('.transport-badge');
       if (badgeEl && p.transport) {
@@ -2432,7 +2438,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // non-blocking, per-entry-dismissible channel.
       const noticePopover = noticePopoverHtml(p);
 
-      return '<div class="card" id="printer-' + p.id + '">' +
+      // Sort tier needs to know whether an error is a dead job or a standing
+      // fault, and reorderCard reads the DOM rather than a status object (same
+      // reason it reads the state tag), so the distinction is stamped on the
+      // card itself.
+      return '<div class="card" id="printer-' + p.id + '" data-print-failed="' + (p.print_failed ? '1' : '0') + '">' +
         '<div class="card-header">' +
           '<h2>' + escapeHtml(p.name) + '</h2>' +
           '<span class="tag ' + stCls + '">' + st + '</span>' +
