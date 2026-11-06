@@ -1209,11 +1209,16 @@ test.describe('Transport badge', () => {
     expect(await page.locator('#printer-p .transport-badge').count()).toBe(0);
 
     // Transport can change at runtime when a session fails over, so an update
-    // arriving over the socket has to move the badge too.
-    await page.evaluate(() =>
-      // @ts-expect-error exercised by the app's own update path
-      window._applyPrinterUpdate({ id: 'p', name: 'P', state: 'printing', transport: 'lan' }),
-    );
+    // arriving over the socket has to move the badge too. This drives the same
+    // mergeWithCache -> updateCard path the websocket onmessage handler uses,
+    // rather than a test-only entry point that could drift from it.
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        mergeWithCache: (p: object) => object;
+        updateCard: (p: object) => void;
+      };
+      w.updateCard(w.mergeWithCache({ id: 'p', name: 'P', state: 'printing', transport: 'lan' }));
+    });
     await expect(page.locator('#printer-p .transport-badge')).toHaveText('lan');
   });
 });
