@@ -1152,3 +1152,68 @@ test.describe('List order', () => {
     expect(order).toEqual(['printer-run', 'printer-blind']);
   });
 });
+
+test.describe('Transport badge', () => {
+  test('sits with the status dot, not with the state tag', async ({ page }) => {
+    // The state tag answers "what is this printer doing". The badge answers
+    // "how is the dashboard reaching it" — a connectivity fact that belongs
+    // beside the status dot, not mixed into the print state.
+    await page.route('**/api/printers', async (route) =>
+      route.fulfill({
+        json: {
+          printers: [
+            { ...base, id: 'lan', name: 'On LAN', state: 'printing', transport: 'lan' },
+            { ...base, id: 'cloud', name: 'On Cloud', state: 'printing', transport: 'cloud' },
+            { ...base, id: 'none', name: 'No Transport', state: 'printing' },
+          ],
+        },
+      }),
+    );
+    await page.goto('/');
+
+    const layout = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map((c) => {
+        const group = c.querySelector('.card-status-group');
+        return {
+          id: c.id,
+          badgeInGroup: !!group?.querySelector('.transport-badge'),
+          dotInGroup: !!group?.querySelector('.card-online'),
+          badgeBeforeTag: !!(
+            c.querySelector('.tag') &&
+            c.querySelector('.transport-badge') &&
+            c.querySelector('.tag')!.compareDocumentPosition(c.querySelector('.transport-badge')!) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          ),
+        };
+      }),
+    );
+
+    const lan = layout.find((l) => l.id === 'printer-lan')!;
+    expect(lan.badgeInGroup).toBe(true);
+    expect(lan.dotInGroup).toBe(true);
+    // Left-to-right order stays: state tag first, badge later in the group.
+    expect(lan.badgeBeforeTag).toBe(true);
+
+    // A printer with a single transport (Snapmaker) shows no badge, and the
+    // group must still right-align the dot rather than collapse.
+    const none = layout.find((l) => l.id === 'printer-none')!;
+    expect(none.badgeInGroup).toBe(false);
+    expect(none.dotInGroup).toBe(true);
+  });
+
+  test('is refreshed by websocket updates, not only by the initial render', async ({ page }) => {
+    await page.route('**/api/printers', async (route) =>
+      route.fulfill({ json: { printers: [{ ...base, id: 'p', name: 'P', state: 'printing' }] } }),
+    );
+    await page.goto('/');
+    expect(await page.locator('#printer-p .transport-badge').count()).toBe(0);
+
+    // Transport can change at runtime when a session fails over, so an update
+    // arriving over the socket has to move the badge too.
+    await page.evaluate(() =>
+      // @ts-expect-error exercised by the app's own update path
+      window._applyPrinterUpdate({ id: 'p', name: 'P', state: 'printing', transport: 'lan' }),
+    );
+    await expect(page.locator('#printer-p .transport-badge')).toHaveText('lan');
+  });
+});

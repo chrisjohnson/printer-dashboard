@@ -4,10 +4,11 @@ A single-binary web dashboard for a fleet of 3D printers (Bambu Lab over MQTT,
 Snapmaker over Moonraker HTTP/WS). One container, no compose, no database.
 
 An earlier `AGENTS.md` was renamed to `AGENTS-bak.md` with no content change and
-no stated reason; its printer-dashboard-specific guidance (container naming,
-random host ports, shared token cache, single-container design) is folded in
-below and the file has been removed. What it predates: the `--user 0:0`
-requirement, the camera rule, and transport selection.
+no stated reason; its printer-dashboard-specific guidance (naming containers per
+checkout, the shared token cache and why, single-container design) is folded in
+below and the file has been removed. Its random-host-port advice is deliberately
+superseded — see "Port 8080 is the Caddy-visible default". What it also predates:
+the `--user 0:0` requirement, the camera rule, and transport selection.
 
 
 ## Run it with cameras disabled unless you specifically need video
@@ -33,41 +34,77 @@ was holding the P1S camera, and the liveview looked broken.
 
 Set it whenever you are **viewing, testing, or troubleshooting camera feeds** —
 and only then. Everything else (status, temperatures, AMS, HMS, controls,
-notifications) is unaffected by the flag. See the run block under "Container
-hygiene" for where it goes.
+notifications) is unaffected by the flag. See the run block under "Port 8080
+is the Caddy-visible default" for where it goes.
 
 When disabled, the instance opens no camera connection, advertises no camera
 streams, and cards render without a camera block at all.
 
 
-## Container hygiene: name per checkout, random host port, always clean up
+## Building and running: use podman, not docker
 
-This project gets built and run by more than one checkout at a time, so a fixed
-image name, container name and host port will eventually collide. Derive the name
-from the checkout and publish to a random port:
+This machine has no usable Docker for project work — you are not in the `docker`
+group, and rootless **Podman** owned by the `dsh` account is the sanctioned
+runtime. It is a different daemon and store: `sudo docker ps` will never list
+these containers. Export the socket once per session and it works even under a
+sandboxed session (plain `podman` without `-H` fails when `NoNewPrivs` is set):
 
 ```bash
-NAME="printer-dashboard${WORKTREE:+-$WORKTREE}"
-docker build -t "$NAME" .
+export CONTAINER_HOST=unix:///run/user/1002/podman/podman.sock
+podman ps        # your containers only
 
-docker rm -f "$NAME" || true      # never let a leftover from a prior run block you
-docker run -d --name "$NAME" \
-  --user 0:0 \
-  -e DISABLE_CAMERAS=1 \
-  -p 0:8080 \
-  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
-  -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
-  "$NAME"
-
-docker port "$NAME" 8080          # the assigned host port
+NAME="printer-dashboard-$(basename "$PWD")"
+podman build -t "$NAME" .
 ```
 
-The `docker rm -f` line is not just about port conflicts. **A stopped-but-not-removed
-container can keep holding printer resources**, and because the camera port is
-single-session and the P1S local MQTT broker caps at roughly four clients, a
-forgotten container degrades printers for every other instance — with errors that
-blame the printer. Remove containers when you are done with them; do not leave
-them stopped in the store.
+Base images must be fully qualified (`docker.io/library/golang:1.26-bookworm`,
+not `golang:1.26-bookworm`) — NixOS declares registries but never
+`unqualified-search-registries`, so short names cannot resolve at all.
+
+## Port 8080 is the Caddy-visible default — use it
+
+Caddy on this machine routes:
+
+```
+https://printer-dashboard.local-ai-machine.johnsonlab.dev  ->  127.0.0.1:8080
+```
+
+So **bind `127.0.0.1:8080` and your instance is immediately reachable through
+Caddy over HTTPS with no further setup** — that is the normal thing to do when
+developing printer-dashboard, because it means the operator can look at your
+work on their own device instead of you describing a screenshot to them.
+
+```bash
+NAME="printer-dashboard-$(basename "$PWD")"
+
+podman rm -f "$NAME" || true      # never let a leftover from a prior run block you
+podman run -d --name "$NAME" \
+  --user 0:0 \
+  -e DISABLE_CAMERAS=1 \
+  -p 127.0.0.1:8080:8080 \
+  -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
+  -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
+  localhost/"$NAME":latest
+```
+
+Only one process can hold `:8080`, so if a production instance or another
+worktree already has it, check first (`ss -ltn | grep 8080`) and either take
+over deliberately or publish a different loopback port — accepting that a
+non-8080 instance is **not** reachable through Caddy and is therefore yours to
+inspect via `localhost` only. Always bind loopback (`127.0.0.1:`); dev builds
+ship with auth disabled and Caddy is the only intended public surface.
+
+Publishing a *new* hostname is a deliberate human step (a Caddy route plus
+recreating the proxy) — don't route around it.
+
+Name the container after the checkout rather than using a fixed name, so
+concurrent worktrees can't clobber each other's containers mid-test. The
+`podman rm -f` line is not only about collisions: **a stopped-but-not-removed
+container keeps holding printer resources**, and because the camera port is
+single-session while the P1S local MQTT broker caps at roughly four clients, a
+forgotten container degrades printers for every other instance — with errors
+that blame the printer. Remove containers when you are done; do not leave them
+stopped in the store.
 
 This is a single-container workflow by design: no docker-compose, no sidecar
 services. go2rtc is embedded in the binary.

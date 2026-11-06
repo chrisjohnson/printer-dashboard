@@ -692,6 +692,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     }
     .transport-badge.lan { background: var(--tag-success-bg); color: var(--tag-success-text); }
 
+    /* The transport badge belongs with the status dot, not with the state tag:
+       the tag says what the printer is DOING (printing, idle, error) while the
+       dot and badge together say how the dashboard is REACHING it. Grouping
+       them keeps that distinction readable at a glance. The group carries the
+       auto margin so it works whether or not a transport is reported — a
+       Snapmaker has only one path and shows no badge. */
+    .card-status-group {
+      margin-left: auto; display: inline-flex;
+      align-items: center; gap: 8px;
+    }
+    .card-status-group .card-online { margin-left: 0; }
+
     /* Cloud credentials are dead but the printer is live over LAN. Blue, not
        red or amber: nothing is broken and nothing is frozen, one capability
        (reaching this printer from off-network) is gone until someone signs in.
@@ -2333,9 +2345,8 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '<div class="card-header">' +
           '<h2>' + escapeHtml(p.name) + '</h2>' +
           '<span class="tag ' + stCls + '">' + st + '</span>' +
-          transportBadgeHtml(p) +
           noticeChipHtml(p) +
-          onlineDot +
+          '<span class="card-status-group">' + transportBadgeHtml(p) + onlineDot + '</span>' +
         '</div>' +
         noticePopover +
         '<div class="progress-section">' +
