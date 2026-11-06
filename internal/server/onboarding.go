@@ -250,11 +250,12 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 	// Merge new printers with existing
 	allPrinters := append(existingPrinters, newPrinters...)
 
-	// Update config
+	// Update config — but commit nothing until the file write actually lands.
 	region := "global"
 	if s.cfg.BambuAccount != nil && s.cfg.BambuAccount.Region != "" {
 		region = s.cfg.BambuAccount.Region
 	}
+	prevAccount, prevPrinters := s.cfg.BambuAccount, s.cfg.Printers
 	s.cfg.BambuAccount = &config.BambuAccount{
 		Token:  token,
 		UserID: userID,
@@ -262,7 +263,30 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 	}
 	s.cfg.Printers = allPrinters
 
-	// Save token to disk for server restarts
+	// Write the config file before the token is persisted anywhere.
+	//
+	// The order used to be the reverse: the token went to disk and the in-memory
+	// config was replaced, and only then was the config file written. When that
+	// write failed — which it does whenever the bind-mounted config.yaml is not
+	// writable by the container's user — the running server was already holding
+	// the new credentials while the file on disk still held the dead ones, and
+	// the fresh token had gone to a path startup only consults when the config
+	// carries no token at all. The wizard showed a red error, the user
+	// restarted, and the dashboard was silently back on the expired sign-in it
+	// had just been told to repair, with no trace of the login that had worked.
+	// So: roll the in-memory change back on failure, and only mirror the token
+	// to disk once the config is genuinely committed.
+	if err := s.cfg.Save(); err != nil {
+		s.cfg.BambuAccount, s.cfg.Printers = prevAccount, prevPrinters
+		log.Printf("ERROR saving config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to save config: %v", err),
+		})
+		return
+	}
+
+	// Config is committed; now mirror the token to disk for restarts.
 	cloud := bambu.NewBambuCloudClient(region)
 	cloud.SetTokenFromLogin(token, userID, region)
 	tokenPath := bambu.DefaultTokenPath("") // generic path for token-based accounts
@@ -272,16 +296,6 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 	cloud.SetTokenFile(tokenPath)
 	if err := cloud.SaveToken(); err != nil {
 		log.Printf("WARNING: failed to save token to disk: %v", err)
-	}
-
-	// Save to config file
-	if err := s.cfg.Save(); err != nil {
-		log.Printf("ERROR saving config: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to save config: %v", err),
-		})
-		return
 	}
 
 	log.Printf("Config saved with %d new printer(s).", len(newPrinters))
@@ -369,9 +383,14 @@ func (s *Server) handleOnboardingSnapmakerSave(w http.ResponseWriter, r *http.Re
 		AccessCode: accessCode,
 	}
 
+	prevPrinters := s.cfg.Printers
 	s.cfg.Printers = append(existingPrinters, newPrinter)
 
 	if err := s.cfg.Save(); err != nil {
+		// Same rollback as the Bambu path: a failed write must not leave the
+		// running server holding a printer the config file never got, or the
+		// dashboard shows a printer that vanishes on the next restart.
+		s.cfg.Printers = prevPrinters
 		log.Printf("ERROR saving config: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,

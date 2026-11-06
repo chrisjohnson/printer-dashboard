@@ -1171,8 +1171,13 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// from scratch on those would make the row flicker on every heartbeat;
 	// an explicit print_error:0 IS present, and is the printer's own signal
 	// that the condition cleared.
+	//
+	// A print_error that is also the active fault is deliberately NOT listed
+	// here as well. It already owns the error banner below, so emitting it a
+	// second time produced two identical rows for one condition — the same
+	// dedupe showErrorBanner() already does in the opposite direction for HMS.
 	if p.PrintError != nil {
-		if *p.PrintError != 0 {
+		if *p.PrintError != 0 && !printErrorIsFault {
 			s.Advisories = []printers.Advisory{{
 				Source:  "print_error",
 				Code:    printErrorCodeString(*p.PrintError),

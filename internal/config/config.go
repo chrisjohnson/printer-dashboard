@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -90,6 +92,22 @@ func (c *Config) Save() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
+		// Worth special-casing, because the raw error ("open config.yaml:
+		// permission denied") reliably sends people to the wrong file. Under
+		// Docker or rootless Podman the config is a bind mount, so it keeps its
+		// *host* ownership through a uid mapping: the file can be perfectly
+		// writable for the human who owns it while the container's own user is
+		// not that uid and cannot touch it. Naming the file and both fixes beats
+		// a bare "permission denied", and saying nothing was saved matters
+		// because the caller has already mutated the in-memory config by now.
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf(
+				"permission denied writing %s — nothing was saved. If the dashboard "+
+					"runs in a container, the bind-mounted config file belongs to a host "+
+					"user the container's user cannot write as: run the container as a "+
+					"user that can write it (e.g. --user 0:0 under rootless podman) or "+
+					"make the file writable by it: %w", c.configPath, err)
+		}
 		return fmt.Errorf("writing config file: %w", err)
 	}
 	return nil
