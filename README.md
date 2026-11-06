@@ -148,6 +148,40 @@ read. If Bambu command signing (needed for H2S movement without Developer Mode) 
 working after you change how the container is run, delete those three `.pem` files from
 `~/.printer-dashboard/` and let the app re-fetch them.
 
+### Disabling cameras (`DISABLE_CAMERAS=1`)
+
+Bambu camera ports are **single-session**. The P1S accepts exactly one client on
+`:6000`, and while a session is held it silently drops further connection
+attempts — no SYN-ACK, no RST — so they surface as a timeout that looks identical
+to "liveview is disabled". Every dashboard instance pre-connects its cameras at
+startup, so the first instance to boot wins the camera and every other instance
+on the machine shows a camera error for a printer that is working fine.
+
+If you run more than one instance — production plus development or test
+instances — run the extras with cameras off:
+
+```bash
+docker run -d --name printer-dashboard \
+  --user 0:0 \
+  -e DISABLE_CAMERAS=1 \
+  -p 127.0.0.1:8080:8080 \
+  -v ~/.printer-dashboard:/home/app/.printer-dashboard:rw \
+  -v ~/.printer-dashboard/config.yaml:/app/config.yaml:rw \
+  printer-dashboard
+```
+
+A disabled instance opens no camera connection, advertises no camera streams,
+and renders cards without a camera block. Everything else — status,
+temperatures, AMS, HMS, controls, notifications — is unaffected.
+
+It is an environment variable rather than a `config.yaml` key because
+`config.yaml` is shared machine-wide (it describes the printers, not a
+checkout), so a config key could only disable cameras for everything at once.
+
+Note also that the P1S's local MQTT broker caps at roughly **four concurrent
+client sessions**, so keep the number of concurrent instances low even with
+cameras disabled.
+
 ### Running a published image on another machine
 
 Every push to `main` (and every `v*.*.*` tag) is built and published to GitHub
