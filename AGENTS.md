@@ -11,35 +11,39 @@ superseded — see "Port 8080 is the Caddy-visible default". What it also predat
 the `--user 0:0` requirement, the camera rule, and transport selection.
 
 
-## Run it with cameras disabled unless you specifically need video
+## Every instance on this machine is a dev instance — default to `DISABLE_CAMERAS=1`
 
-**Default every dev/test instance to `DISABLE_CAMERAS=1`.** Only the production
-instance should have cameras enabled.
+Production runs on a **separate machine**, pulling the published GHCR image
+(`ghcr.io/chrisjohnson/printer-dashboard:latest`, built on every push to `main`).
+Nothing on this box is production. So there is no local instance that needs an
+exception: **always pass `DISABLE_CAMERAS=1` here**, and drop it only for the
+session in which you are actually looking at video.
 
 This is not a performance preference. Bambu camera ports are **single-session**:
 the P1S accepts exactly one client on `:6000`, and while a session is held it
 **silently drops** further connection attempts — no SYN-ACK, no RST. The client
-sees an `i/o timeout`, which is indistinguishable from "liveview is disabled on
-the printer" or "the printer is off". Every dashboard instance eagerly
-pre-connects its cameras at startup, so:
+sees an `i/o timeout`, indistinguishable from "liveview is disabled" or "the
+printer is off". Every dashboard instance eagerly pre-connects its cameras at
+startup, so:
 
-- whichever instance boots first **wins the camera**;
+- whichever instance connects first **wins the camera**;
 - every other instance shows a permanent, misleading "camera stream not active —
   check printer power/LAN mode" for a printer that is fine;
-- the lock is only released when the holding process dies, so a stale container
-  from an abandoned worktree can take the camera down across a restart.
+- the lock is only released when the holding process dies, so a forgotten
+  container can take a camera down across restarts.
 
-This has bitten in production: a three-week-old container from a deleted worktree
-was holding the P1S camera, and the liveview looked broken.
+This has bitten twice: a three-week-old container from a deleted worktree was
+holding the P1S camera and the liveview looked broken, and the error message
+blamed the printer the entire time.
 
-Set it whenever you are **viewing, testing, or troubleshooting camera feeds** —
-and only then. Everything else (status, temperatures, AMS, HMS, controls,
-notifications) is unaffected by the flag. See the run block under "Port 8080
-is the Caddy-visible default" for where it goes.
+Note the cross-machine consequence: if the production host is on the same LAN as
+the printers, it now prefers local MQTT too (see transport selection below), so a
+dev instance here competes with **production** for the printer's single camera
+session and its small local MQTT budget. Leaving cameras on in a dev instance is
+not a self-contained choice.
 
 When disabled, the instance opens no camera connection, advertises no camera
-streams, and cards render without a camera block at all.
-
+streams, and renders cards without a camera block at all.
 
 ## Building and running: use podman, not docker
 
@@ -87,8 +91,8 @@ podman run -d --name "$NAME" \
   localhost/"$NAME":latest
 ```
 
-Only one process can hold `:8080`, so if a production instance or another
-worktree already has it, check first (`ss -ltn | grep 8080`) and either take
+Only one process can hold `:8080`, so if another worktree already has it,
+check first (`ss -ltn | grep 8080`) and either take
 over deliberately or publish a different loopback port — accepting that a
 non-8080 instance is **not** reachable through Caddy and is therefore yours to
 inspect via `localhost` only. Always bind loopback (`127.0.0.1:`); dev builds
@@ -127,11 +131,17 @@ Every worktree's container mounts the **same** `~/.printer-dashboard/` and the
 same `config.yaml`. That is deliberate — the config describes the physical
 printers, not a checkout — but it means:
 
-- **a dev instance mutating config or credentials mutates production.** Writing
-  config from a test instance rewrites the live printer list.
-- Bambu **tokens are single-use per login**: signing in on a dev instance can
-  revoke the token the production instance is using. If you need to test the
-  auth flow, copy the token store and point your mount at the copy.
+- **a dev instance writing config rewrites the live printer list for every other
+  instance on this machine**, because they all read the one file.
+- **Signing in here can log production out.** This is cross-machine and the
+  sharpest edge: production has its own `config.yaml` on its own host, so the
+  file is not shared — but the Bambu *account* is. Tokens are single-use per
+  login, so completing the sign-in wizard from a dev instance revokes the token
+  the production machine is authenticating with. If you need to exercise the
+  auth flow, copy the token store and point your mount at the copy. (Since the
+  transport work, a revoked token degrades production to cloud-only rather than
+  blinding it, and printers with local access keep streaming — but it still
+  breaks remote access and should not happen casually.)
 - Files the container creates in the token cache are owned by whichever uid it
   runs as. Switching between `--user 0:0` and the image default can strand the
   cached `bambu_app_*.pem` signing credentials; delete those three files to
