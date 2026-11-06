@@ -71,6 +71,24 @@ type PrinterStatus struct {
 	// successfully — that is how a consumer tells "stale but we know
 	// something" apart from "no data yet".
 	LastUpdate int64 `json:"last_update,omitempty"`
+	// AuthInvalid reports that the dashboard's *credentials* for this printer's
+	// cloud account were rejected by the provider, as opposed to the printer or
+	// the network being unreachable.
+	//
+	// The distinction is the whole point: every other transport failure is
+	// somebody else's problem (printer off, wifi down, broker hiccup) and
+	// resolves itself, whereas a rejected credential never resolves itself —
+	// the user has to sign in again. Collapsing the two into one "out of sync"
+	// banner is how a dead token ends up looking like a dead printer for days.
+	//
+	// When true, the driver also sets Stale (the card is showing a frozen
+	// picture) and a StaleReason that names the cause and the fix.
+	//
+	// No omitempty, for the same reason Stale has none: the browser merges each
+	// WebSocket push over the last cached status and only lets a field that is
+	// actually present override, so an omitted "false" would leave a card stuck
+	// on "sign in again" forever after the user had already done so.
+	AuthInvalid bool `json:"auth_invalid"`
 	// Advisories holds printer-reported faults that arrive on a channel
 	// outside the printer's own state machine, so they are deliberately NOT
 	// errors: the printer keeps printing (and finishes successfully) while

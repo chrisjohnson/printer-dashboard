@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,26 @@ const (
 	apiBaseGlobal = "https://api.bambulab.com"
 	apiBaseChina  = "https://api.bambulab.cn"
 )
+
+// ErrAuthRejected means the cloud API refused the current access token: it has
+// expired, been revoked, or been replaced by a sign-in elsewhere. Test with
+// errors.Is.
+//
+// This is the one transport failure a dashboard cannot wait out. A printer that
+// is off comes back; a rejected credential sits in a reconnect loop forever
+// while the UI keeps insisting the link merely dropped. Every caller that has
+// to decide "retry quietly" vs. "tell the human to sign in again" branches on
+// this sentinel.
+var ErrAuthRejected = errors.New("bambu cloud credentials rejected")
+
+// authRejectedBody reports whether a response body is Bambu's "you are not
+// signed in" payload. Bambu sometimes answers with HTTP 200 and the rejection
+// only in the body ({"code":4,"error":"Please login."}), so the status code
+// alone is not enough to classify it.
+func authRejectedBody(body []byte) bool {
+	s := string(body)
+	return strings.Contains(s, `"Please login."`) || strings.Contains(s, `"code":4`)
+}
 
 // DefaultTokenDir is the directory where tokens are stored (~/.printer-dashboard).
 var DefaultTokenDir = filepath.Join(os.Getenv("HOME"), ".printer-dashboard")
@@ -156,11 +177,30 @@ func DefaultTokenPath(email string) string {
 
 // tokenData is the format saved to disk.
 type tokenData struct {
-	Token     string `json:"token"`
-	UserID    string `json:"user_id"`
-	Region    string `json:"region"`
-	Email     string `json:"email,omitempty"`
-	ExpiresAt int64  `json:"expires_at,omitempty"` // Unix timestamp
+	Token  string `json:"token"`
+	UserID string `json:"user_id"`
+	Region string `json:"region"`
+	Email  string `json:"email,omitempty"`
+	// ExpiresAt is the Unix timestamp the token stops working, or 0/absent
+	// when the lifetime is unknown.
+	//
+	// It must never be written as time.Time{}.Unix(). That is not zero, it is
+	// -62135596800 (the Unix epoch of year 1), and LoadToken only accepts
+	// values > 0 — so an unknown expiry round-tripped as "unknown" forever,
+	// TokenValid() fell into its "assume valid" branch for all of it, and a
+	// token that had actually expired months earlier looked permanently
+	// healthy. Bambu hands out opaque (non-JWT) tokens for exactly this case,
+	// which is the common one, so the bug was live on every real deployment.
+	ExpiresAt int64 `json:"expires_at,omitempty"`
+}
+
+// tokenExpiryUnix renders tokenExpiry for the wire format: a real Unix
+// timestamp, or 0 for "unknown" rather than Go's zero-time epoch.
+func tokenExpiryUnix(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.Unix()
 }
 
 // SaveToken persists the current token to disk.
@@ -176,7 +216,7 @@ func (c *BambuCloudClient) SaveToken() error {
 		Token:     c.token,
 		UserID:    c.userID,
 		Region:    c.region,
-		ExpiresAt: c.tokenExpiry.Unix(),
+		ExpiresAt: tokenExpiryUnix(c.tokenExpiry),
 	}
 	encoded, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -212,6 +252,9 @@ func (c *BambuCloudClient) LoadToken() (bool, error) {
 	c.token = td.Token
 	c.userID = td.UserID
 	c.region = td.Region
+	// > 0, not != 0: also rejects the -62135596800 sentinel that older builds
+	// wrote for an unknown expiry (see tokenData). Those files stay on disk
+	// after the fix, so the read side has to be defensive too.
 	if td.ExpiresAt > 0 {
 		c.tokenExpiry = time.Unix(td.ExpiresAt, 0)
 	}
@@ -293,6 +336,33 @@ func (c *BambuCloudClient) TokenLifetimeLeft() time.Duration {
 		return 0
 	}
 	return time.Until(exp)
+}
+
+// VerifyToken asks the cloud API whether the current token still works.
+//
+// TokenValid cannot answer this on its own: it only compares a locally stored
+// expiry against the clock, and Bambu issues opaque tokens with no expiry at
+// all (and revokes them early when you sign in again elsewhere), so an unknown
+// expiry has to be assumed valid or every opaque token would look dead. This is
+// the authoritative check — a live round trip that the provider either accepts
+// or refuses.
+//
+// The three outcomes are kept distinct on purpose:
+//
+//	nil               — the token works
+//	ErrAuthRejected   — the provider refused it; only a re-login fixes this
+//	other error       — transport/API trouble; say nothing, retry later
+//
+// Collapsing the third case into the first two is how a wifi blip would
+// falsely tell the user to go through a 2FA sign-in.
+func (c *BambuCloudClient) VerifyToken() error {
+	if c.token == "" {
+		return fmt.Errorf("no token configured: %w", ErrAuthRejected)
+	}
+	if _, err := c.getUserID(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // --- Authentication ---
@@ -736,7 +806,14 @@ func (c *BambuCloudClient) doAuthJSON(method, path string, body any) ([]byte, er
 	}
 
 	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("API error %d: %s: %w", resp.StatusCode, string(data), ErrAuthRejected)
+		}
 		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(data))
+	}
+
+	if authRejectedBody(data) {
+		return nil, fmt.Errorf("API rejected credentials: %s: %w", string(data), ErrAuthRejected)
 	}
 
 	return data, nil

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -170,8 +171,17 @@ func (s *Server) initBambuCloud() {
 			log.Printf("Loaded saved Bambu token from %s", tokenPath)
 			if s.bambuCloud.TokenValid() {
 				if _, err := s.bambuCloud.GetDevices(); err != nil {
-					log.Printf("WARNING: Saved Bambu token expired or invalid: %v", err)
-					s.bambuCloud.DeleteToken()
+					// Only discard the credential if the cloud actually refused
+					// it. This used to delete on any error whatsoever, so a
+					// machine coming up before the network was ready destroyed a
+					// token that still worked and turned a two-second race into
+					// a forced re-login.
+					if errors.Is(err, bambu.ErrAuthRejected) {
+						log.Printf("WARNING: Saved Bambu token was rejected by the cloud, deleting it: %v", err)
+						s.bambuCloud.DeleteToken()
+					} else {
+						log.Printf("WARNING: could not verify saved Bambu token, keeping it: %v", err)
+					}
 				} else {
 					authenticated = true
 					log.Printf("Bambu cloud: saved token is valid, expires in %s",
@@ -197,7 +207,7 @@ func (s *Server) initBambuCloud() {
 
 	if !authenticated {
 		log.Printf("WARNING: No valid Bambu cloud authentication available.")
-		log.Printf("  Bambu printers will be skipped. Use the onboarding wizard to add printers.")
+		log.Printf("  Bambu printers will be shown as needing sign-in. Connect your Bambu account at /onboarding.")
 	}
 }
 
@@ -214,11 +224,17 @@ func (s *Server) initPrinters() {
 		var p printers.Printer
 		switch pdef.Type {
 		case "bambu":
-			if s.bambuCloud == nil || s.bambuCloud.Token() == "" {
-				log.Printf("WARNING: printer %q requires Bambu cloud auth, skipping", pdef.Name)
-				continue
-			}
+			// Registered even without usable credentials. Skipping the printer
+			// outright made the dashboard quietly show fewer printers than the
+			// config listed, with the reason only in a log line nobody reads —
+			// the worst possible failure for a monitoring page, because a
+			// missing printer looks exactly like a printer you are not looking
+			// at. Connect() short-circuits to an explicit "needs sign-in" state
+			// instead (see bambu.Client.MarkAuthUnavailable).
 			bp := bambu.New(pdef, s.bambuCloud)
+			if s.bambuCloud == nil || s.bambuCloud.Token() == "" {
+				log.Printf("WARNING: printer %q has no usable Bambu cloud credentials — registering it as needing sign-in", pdef.Name)
+			}
 			if pdef.Model != "" {
 				bp.SetModel(pdef.Model)
 			}
@@ -694,19 +710,36 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 
-// printerSortPriority returns a sort tier for the given printer state:
+// printerSortPriority returns a sort tier for a printer's status:
 //
-//	0 = error/needs attention (sorted first)
-//	1 = active (printing, paused, or any other non-idle, non-error state)
-//	2 = idle/inactive (sorted last)
-func printerSortPriority(state string) int {
-	switch state {
+//	0 = the printer itself is faulted (needs attention before anything else)
+//	1 = a job is in progress (printing, paused)
+//	2 = nothing running (idle, complete), nothing known, or we are locked out
+//
+// The tiers are an allowlist, not a default-to-active fallback. Letting an
+// unrecognised state fall through to "active" is what made a finished print
+// outrank a live one: "complete" landed in the active tier and then won the
+// A-Z tiebreak, so a P1S that ended hours ago sat above a U1 printing right
+// now. A print that has finished is not more urgent than one that is running.
+//
+// A rejected cloud credential is demoted to the last tier on purpose. It
+// surfaces as State="error" when the printer has never reported anything, but
+// that error is the dashboard being blind, not the printer being broken — and
+// an expired sign-in is permanent until a human fixes it, so leaving it in
+// tier 0 would pin two cards with nothing live on them above every print
+// actually running, forever. It gets a loud banner and a red bell instead of a
+// sort promotion.
+func printerSortPriority(s printers.PrinterStatus) int {
+	if s.AuthInvalid {
+		return 2
+	}
+	switch s.State {
 	case "error":
 		return 0
-	case "idle":
-		return 2
-	default:
+	case "printing", "paused":
 		return 1
+	default: // "idle", "complete", "unknown", ""
+		return 2
 	}
 }
 
@@ -719,13 +752,19 @@ func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.RUnlock()
 
-	// Three-tier sort: error (needs attention) → active (printing/paused/etc.) → idle.
-	// Within each tier, sort A-Z by name (case-insensitive).
+	// Three-tier sort: error (needs attention) → running → finished/idle.
+	// Within a tier, live data sorts above a frozen last-known snapshot (a
+	// printer that went blind mid-print keeps State="printing", but it cannot
+	// be the most urgent thing on screen while another one is reporting real
+	// progress), then A-Z by name (case-insensitive).
 	sort.Slice(printerList, func(i, j int) bool {
-		pi := printerSortPriority(printerList[i].State)
-		pj := printerSortPriority(printerList[j].State)
+		pi := printerSortPriority(printerList[i])
+		pj := printerSortPriority(printerList[j])
 		if pi != pj {
 			return pi < pj
+		}
+		if si, sj := printerList[i].Stale, printerList[j].Stale; si != sj {
+			return !si // stale loses: the fresh card is the one to look at
 		}
 		return strings.ToLower(printerList[i].Name) < strings.ToLower(printerList[j].Name)
 	})

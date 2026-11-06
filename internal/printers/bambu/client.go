@@ -55,6 +55,23 @@ const initialConnectBackoffMax = 30 * time.Second
 // condition as a actionable warning rather than silent failure.
 const reportSilenceTimeout = 60 * time.Second
 
+// defaultAuthCheckEvery is how often the client re-verifies its Bambu cloud
+// credentials against the cloud API while it is connected.
+//
+// The dashboard used to check the token exactly once, at startup, and then
+// trust that verdict forever. A token that died days later — which is the
+// normal case: they expire, and Bambu revokes them when you sign in again
+// elsewhere — left MQTT in a silent reconnect loop while the UI kept showing
+// the last picture it had, blamed "pingresp not received", and never mentioned
+// that the real cause was a credential only a human can renew. Five minutes is
+// cheap (one small GET per account) and bounds how long that lie can run.
+const defaultAuthCheckEvery = 5 * time.Minute
+
+// authCheckFirstDelay is the short delay before the first credential check
+// after connecting, so a client that comes up healthy does not spend a round
+// trip re-confirming what startup just proved.
+const authCheckFirstDelay = 20 * time.Second
+
 // validateTemp checks that a temperature value is within [min, max] and
 // returns a pointer to it if valid, or nil (with a log warning) if out
 // of range.  The current codebase uses two temperature ranges for chamber
@@ -188,6 +205,15 @@ type Client struct {
 	// exercise the refresh without waiting a real minute.
 	statusStaleTimeout time.Duration
 	freshCheckEvery    time.Duration
+
+	// authCheckEvery overrides defaultAuthCheckEvery for the credential
+	// watchdog in watchAuth. Test-only seam, same reasoning as ackTimeout.
+	authCheckEvery time.Duration
+
+	// authInvalid is the cached verdict of the credential watchdog: the cloud
+	// API has rejected our token and will keep doing so until a human signs in
+	// again. Mirrored onto PrinterStatus.AuthInvalid. Guarded by mu.
+	authInvalid bool
 }
 
 // commandACK is the firmware's reply to a command we published. Bambu echoes
@@ -354,6 +380,15 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 // the current status model has no "permanently failed" state to fall back to
 // anyway. Retries stop promptly if ctx is cancelled.
 func (c *Client) Connect(ctx context.Context) error {
+	if c.cloud == nil {
+		// Nothing to authenticate with, so there is no connection to retry and
+		// no point pretending otherwise. The server registers these printers
+		// anyway (see initPrinters) precisely so the card can say why it is
+		// blank instead of the printer quietly not existing.
+		c.MarkAuthUnavailable(noAccountReason)
+		return nil
+	}
+
 	broker := "ssl://" + MQTTBroker(c.cloud.region)
 	if c.brokerOverride != "" {
 		broker = c.brokerOverride
@@ -389,6 +424,12 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	log.Printf("bambu %s: connected to cloud MQTT at %s (user=%s)", c.cfg.ID, broker, c.cloud.MQTTUsername())
+
+	// Credentials outlive connections. A token that expires while this client
+	// is happily connected is invisible from MQTT's side — the broker just
+	// stops letting it back in after the next hiccup — so the health of the
+	// credential has to be checked independently of the health of the socket.
+	go c.watchAuth(ctx)
 
 	// Block until context is cancelled (keep goroutine alive)
 	<-ctx.Done()
@@ -438,7 +479,14 @@ func (c *Client) connectWithRetry(ctx context.Context, broker string) error {
 			return nil
 		}
 
-		c.markTransportLost(fmt.Sprintf("MQTT connect failed: %v", connectErr))
+		if isAuthRejection(connectErr) {
+			// The broker refused our credential. No amount of retrying fixes
+			// that, and the loop would otherwise churn here forever printing the
+			// same refusal — record the real cause and let the watchdog own it.
+			c.markAuthRejected()
+		} else {
+			c.markTransportLost(describeTransport(connectErr))
+		}
 
 		log.Printf("bambu %s: cloud MQTT initial connect attempt %d failed: %v (retry in %v)",
 			c.cfg.ID, attempt, connectErr, backoff)
@@ -581,6 +629,84 @@ func (c *Client) requestPushAll(client mqtt.Client) {
 	}
 }
 
+// authRejectedReason is what the card says when the cloud has refused our
+// credential. It is written to carry the three things a reader needs and the
+// old message carried none of: what stopped (live updates), whose fault it is
+// (the dashboard's sign-in, not the printer), and what to do about it (sign in
+// again). It deliberately does not mention MQTT, tokens or JWTs — the reader
+// cannot act on any of those.
+const authRejectedReason = "Bambu Lab sign-in has expired, so live updates have stopped. The printer itself is fine — reconnect your Bambu account to resume."
+
+// noAccountReason is the variant for a dashboard that has no Bambu account at
+// all, as opposed to one whose account stopped working. Same banner, different
+// instruction: there is nothing to reconnect when nothing was ever connected.
+const noAccountReason = "No Bambu Lab account is connected to this dashboard, so this printer cannot be reached. Add your Bambu account to start live updates."
+
+// MarkAuthUnavailable records that this printer cannot be reached because the
+// dashboard has no usable Bambu cloud credentials for it at all.
+//
+// Exported for the server's registration path: a Bambu printer configured
+// without working credentials used to be dropped on the floor with a line in
+// the log, so the dashboard simply had fewer printers than the config did and
+// nothing on screen explained the difference. Showing a card that names the
+// cause is strictly better than an empty grid.
+func (c *Client) MarkAuthUnavailable(reason string) {
+	c.mu.Lock()
+	c.authInvalid = true
+	c.mu.Unlock()
+	c.markTransportLost(reason)
+}
+
+// isAuthRejection reports whether an error means "the credential was refused"
+// as opposed to "the link failed".
+//
+// The string matching is not laziness: paho surfaces a CONNACK refusal as an
+// unexported-ish sentinel in a subpackage (packets.ErrorRefusedNotAuthorised,
+// "not Authorized") and wraps it opaquely, so the text is the stable contract.
+// Both spellings are checked because Bambu's broker and paho disagree on
+// Authorised/Authorized.
+func isAuthRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrAuthRejected) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not Authorized") ||
+		strings.Contains(msg, "Not Authorised") ||
+		strings.Contains(msg, "Username or Password in unknown format")
+}
+
+// describeTransport turns a raw transport error into a phrase that names what
+// actually happened.
+//
+// The raw paho strings are diagnostics, not explanations: "MQTT disconnected:
+// pingresp not received, disconnecting" was what a dead Bambu sign-in looked
+// like in the UI for eight straight days, and it told the reader nothing about
+// either the cause or the fix. Anything unrecognised is passed through verbatim
+// rather than swallowed — a weird error is still better than a vague one.
+func describeTransport(err error) string {
+	if err == nil {
+		return "the connection was closed"
+	}
+	msg := err.Error()
+	switch {
+	case isAuthRejection(err):
+		return authRejectedReason
+	case strings.Contains(msg, "pingresp not received"):
+		return "the printer stopped answering keep-alives — it is probably off or off the network"
+	case strings.Contains(msg, "timed out"), strings.Contains(msg, "timeout"):
+		return "the print server did not answer in time"
+	case strings.Contains(msg, "connection refused"):
+		return "the print server refused the connection — is the printer on and reachable?"
+	case strings.Contains(msg, "no such host"), strings.Contains(msg, "dial tcp"):
+		return "the print server could not be reached from this machine"
+	default:
+		return msg
+	}
+}
+
 // markTransportLost records that the dashboard lost its transport to the
 // printer (cloud MQTT down, or the initial connect never succeeding).
 //
@@ -591,12 +717,16 @@ func (c *Client) requestPushAll(client mqtt.Client) {
 // progress and layer count the user is watching. Only a printer that has
 // never reported anything (nothing to preserve) falls back to a plain error.
 func (c *Client) markTransportLost(reason string) {
-	c.mu.RLock()
+	c.mu.Lock()
 	haveData := !c.lastStatusReport.IsZero()
-	c.mu.RUnlock()
+	authInvalid := c.authInvalid
+	c.mu.Unlock()
 
 	s := c.Status()
 	s.Online = false
+	// Carried on every marking so a credential verdict set before this call
+	// cannot be silently dropped by a later transport hiccup.
+	s.AuthInvalid = authInvalid
 	if haveData {
 		s.Stale = true
 		s.StaleReason = reason
@@ -607,9 +737,96 @@ func (c *Client) markTransportLost(reason string) {
 	c.setStatus(s)
 }
 
+// watchAuth periodically re-verifies the cloud credential for as long as this
+// client lives. See defaultAuthCheckEvery for why MQTT health alone cannot
+// answer that question.
+func (c *Client) watchAuth(ctx context.Context) {
+	interval := c.authCheckEvery
+	if interval <= 0 {
+		interval = defaultAuthCheckEvery
+	}
+
+	timer := time.NewTimer(authCheckFirstDelay)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+		c.checkCloudAuth()
+		timer.Reset(interval)
+	}
+}
+
+// checkCloudAuth performs one credential verification and records the verdict.
+func (c *Client) checkCloudAuth() {
+	if c.cloud == nil {
+		return
+	}
+
+	err := c.cloud.VerifyToken()
+	switch {
+	case err == nil:
+		c.clearAuthInvalid()
+	case isAuthRejection(err):
+		c.markAuthRejected()
+	default:
+		// Inconclusive — the API was unreachable or unhappy, which says nothing
+		// about the credential. Keep the current verdict and stay quiet: telling
+		// someone to sign in again because a request timed out is worse than
+		// waiting for the next tick.
+		log.Printf("bambu %s: cloud credential check inconclusive, keeping current auth state: %v", c.cfg.ID, err)
+	}
+}
+
+// markAuthRejected records that the cloud has refused our credential and stops
+// presenting that as a transient link problem.
+func (c *Client) markAuthRejected() {
+	c.mu.Lock()
+	already := c.authInvalid
+	c.authInvalid = true
+	c.mu.Unlock()
+
+	if already {
+		return // already surfaced; don't re-log or re-broadcast every tick
+	}
+
+	log.Printf("bambu %s: Bambu cloud credentials REJECTED by the cloud API — live updates cannot resume until the account is signed in again", c.cfg.ID)
+	c.markTransportLost(authRejectedReason)
+}
+
+// clearAuthInvalid withdraws a previous rejection once the credential works
+// again, so a card that has been fixed stops advertising the outage it just
+// came back from.
+func (c *Client) clearAuthInvalid() {
+	c.mu.Lock()
+	was := c.authInvalid
+	c.authInvalid = false
+	c.mu.Unlock()
+
+	if !was {
+		return
+	}
+
+	log.Printf("bambu %s: Bambu cloud credentials accepted again", c.cfg.ID)
+	s := c.Status()
+	if s.AuthInvalid {
+		s.AuthInvalid = false
+		c.setStatus(s)
+	}
+}
+
 // onConnectionLost is called when the MQTT connection is lost.
 func (c *Client) onConnectionLost(client mqtt.Client, err error) {
 	log.Printf("bambu %s: cloud MQTT connection lost: %v", c.cfg.ID, err)
+	// A rejected credential can also show up here (the broker lets the session
+	// drop rather than refusing the CONNECT), so classify before recording —
+	// otherwise the auth cause is overwritten by keep-alive jargon.
+	if isAuthRejection(err) {
+		c.markAuthRejected()
+		return
+	}
 	c.markTransportLost(fmt.Sprintf("MQTT disconnected: %v", err))
 }
 
@@ -685,7 +902,15 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	reportAt := time.Now()
 	c.mu.Lock()
 	c.lastStatusReport = reportAt
+	// Data is flowing, so whatever the last verdict said, the credential is
+	// demonstrably working right now.
+	authWasRejected := c.authInvalid
+	c.authInvalid = false
 	c.mu.Unlock()
+
+	if authWasRejected {
+		log.Printf("bambu %s: live reports resumed, credential rejection cleared", c.cfg.ID)
+	}
 
 	s := c.Status()
 	s.Online = true
@@ -693,6 +918,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// sync" flag left behind by a transport loss (see markTransportLost).
 	s.Stale = false
 	s.StaleReason = ""
+	s.AuthInvalid = false
 	s.LastUpdate = reportAt.UnixMilli()
 	hadHMSErrors := len(s.HMSErrors) > 0
 

@@ -476,9 +476,14 @@ func TestHandleListPrinters(t *testing.T) {
 			t.Fatalf("expected 3 printers, got %d", len(list))
 		}
 
-		// "complete" is tier 1 (active), idle printers are tier 2.
-		// Active first (A-Z), then inactive (A-Z).
-		expected := []string{"bravo", "alpha", "charlie"}
+		// "complete" belongs with "idle": nothing is running on either printer,
+		// so the whole set is inactive and the order is plain A-Z.
+		//
+		// This assertion used to read {"bravo", "alpha", "charlie"} with the
+		// comment "'complete' is tier 1 (active)" — which was the bug, not a
+		// spec: a finished job was being ranked as a running one, so a printer
+		// that ended hours ago sat above one printing right now.
+		expected := []string{"alpha", "bravo", "charlie"}
 		for i, want := range expected {
 			got := list[i].(map[string]any)["name"].(string)
 			if got != want {
