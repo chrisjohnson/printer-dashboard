@@ -8,7 +8,7 @@ A self-hosted web dashboard for monitoring and controlling multiple 3D printers 
 - **Bambu Lab H2S** — LAN MQTT protocol (Bambu Connect firmware)
 - **Snapmaker U1** — Paxx custom firmware (REST + WebSocket)
 
-## Features (planned)
+## Features
 
 - Real-time printer status (progress, temperatures, layers)
 - Pause / Resume / Cancel / Skip Object
@@ -16,6 +16,26 @@ A self-hosted web dashboard for monitoring and controlling multiple 3D printers 
 - Job completion and error notifications
 - Authentication for remote access
 - Docker deployment
+
+### Bambu transport selection
+
+Bambu printers are reached over **local MQTT first** (the printer's own broker on
+`:8883`, authenticated with the device access code), falling back to **Bambu
+cloud MQTT** when local access is unavailable. Selection is per printer and is
+decided by probing, not by a firmware or model table — the vendor names its
+local-mode toggle differently across firmware generations, and an open local port
+does not mean the broker will accept third-party clients, so the handshake itself
+is the only reliable signal. A fleet mixing pre- and post-Bambu-Connect firmware,
+with different toggles enabled per unit, therefore needs no configuration.
+
+Why it matters: cloud depends on an account token that expires silently. When that
+happened on this fleet, two printers that were perfectly reachable locally sat
+blind for eight days. With a dead token the printers now stay live over LAN and
+report a blue "sign-in expired, remote access unavailable" notice instead.
+
+Pin the path per printer with `mqtt_transport: lan | cloud` (default `auto`).
+See [docs/transport-selection-spec.md](docs/transport-selection-spec.md) for the
+design and the alternatives considered.
 
 ## Getting Started
 
@@ -68,6 +88,7 @@ docker build -t "$NAME" .
 # Remove any leftover container from a previous run, then start a new one
 docker rm -f "$NAME" || true
 docker run -d --name "$NAME" \
+  --user 0:0 \
   -p 0:8080 \
   -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
   -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
@@ -91,8 +112,75 @@ Notes:
   it doesn't make sense to duplicate it per checkout — edit it once at
   `~/.printer-dashboard/config.yaml` and every worktree's container uses it.
 - `-v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:ro"` mounts the config
-  read-only; drop `:ro` if you rely on the app's config `Save()` behavior and want it
-  to persist back to disk.
+  read-only, which is fine if you edit it by hand — but then the onboarding wizard
+  cannot save, and printers have to be added by editing the file and restarting.
+  See the next section for what makes the writable mount actually work.
+
+### Why `--user 0:0` is required
+
+The image builds with `USER app` (uid 1000), but `config.yaml` on the host is owned by
+*you*, and a bind mount carries host ownership through the container's uid mapping
+unchanged. The process inside is therefore a different user from the one that owns the
+file it has mounted, and writes to it are refused — **even with `:rw` on the mount**,
+which governs the mount, not the file's own permissions. This is a common enough trap
+that the error message names both the file and the fix rather than just saying
+`permission denied`.
+
+It bites in exactly one place: the onboarding wizard's **Add Selected Printers** step,
+which persists your new Bambu credentials and printer list via `Config.Save()`. Without
+the flag that write fails, and the sign-in you just completed — 2FA and all — is gone on
+the next restart.
+
+`--user 0:0` fixes it by making the container's uid the one that owns those files:
+
+- **Rootless Podman** (the usual case on this machine): container uid 0 *is* your host
+  user, so this grants no extra privilege over running the binary directly — it simply
+  matches the ownership of everything you already own.
+- **Rootful Docker**: container uid 0 is real root, which can write the mount. If you
+  would rather not run as root, `chown` the mounted paths to the image's user instead
+  (`sudo chown -R 1000:1000 ~/.printer-dashboard`) and drop the flag.
+
+One consequence worth knowing: files the container creates in the mounted token cache —
+the Bambu token, and the cached `bambu_app_cert.pem` / `bambu_app_key.pem` /
+`bambu_app_crl.pem` signing credentials — end up owned by whichever uid the container
+runs as. Switching between the two approaches can leave files the other uid cannot
+read. If Bambu command signing (needed for H2S movement without Developer Mode) stops
+working after you change how the container is run, delete those three `.pem` files from
+`~/.printer-dashboard/` and let the app re-fetch them.
+
+### Disabling cameras (`DISABLE_CAMERAS=1`)
+
+Bambu camera ports are **single-session**. The P1S accepts exactly one client on
+`:6000`, and while a session is held it silently drops further connection
+attempts — no SYN-ACK, no RST — so they surface as a timeout that looks identical
+to "liveview is disabled". Every dashboard instance pre-connects its cameras at
+startup, so the first instance to boot wins the camera and every other instance
+on the machine shows a camera error for a printer that is working fine.
+
+If you run more than one instance — production plus development or test
+instances — run the extras with cameras off:
+
+```bash
+docker run -d --name printer-dashboard \
+  --user 0:0 \
+  -e DISABLE_CAMERAS=1 \
+  -p 127.0.0.1:8080:8080 \
+  -v ~/.printer-dashboard:/home/app/.printer-dashboard:rw \
+  -v ~/.printer-dashboard/config.yaml:/app/config.yaml:rw \
+  printer-dashboard
+```
+
+A disabled instance opens no camera connection, advertises no camera streams,
+and renders cards without a camera block. Everything else — status,
+temperatures, AMS, HMS, controls, notifications — is unaffected.
+
+It is an environment variable rather than a `config.yaml` key because
+`config.yaml` is shared machine-wide (it describes the printers, not a
+checkout), so a config key could only disable cameras for everything at once.
+
+Note also that the P1S's local MQTT broker caps at roughly **four concurrent
+client sessions**, so keep the number of concurrent instances low even with
+cameras disabled.
 
 ### Running a published image on another machine
 
@@ -124,6 +212,7 @@ vim ~/.printer-dashboard/config.yaml
 
 docker rm -f printer-dashboard || true
 docker run -d --name printer-dashboard \
+  --user 0:0 \
   -p 8080:8080 \
   -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
   -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \

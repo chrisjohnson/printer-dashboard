@@ -943,3 +943,282 @@ test.describe('Out of sync', () => {
     await expect(page.locator('#cam-zz-oos-0 img')).toBeHidden();
   });
 });
+
+// An expired cloud sign-in is the one transport failure that never resolves
+// itself, and the dashboard used to render it as a generic "Out of sync — last
+// seen 1:21:26 PM · MQTT disconnected: pingresp not received, disconnecting"
+// while the printer had actually been dark for eight days. These pin the three
+// things the card now has to get right: the cause is named, the age is honest,
+// and the fix is a click away.
+test.describe('Expired sign-in', () => {
+  const eightDaysAgo = Date.now() - 8 * 86_400_000;
+
+  const lockedOutPrinter = {
+    id: 'zz-auth',
+    name: 'ZZ Locked Out',
+    type: 'bambu',
+    online: false,
+    state: 'printing',
+    progress: 0.42,
+    remaining_time: 0,
+    elapsed_time: 600,
+    current_file: 'cube.gcode',
+    current_layer: 10,
+    total_layers: 20,
+    bed_temp: 60,
+    bed_target_temp: 60,
+    nozzle_temp: 210,
+    nozzle_target_temp: 220,
+    chamber_temp: null,
+    chamber_target_temp: null,
+    has_chamber: false,
+    stale: true,
+    stale_reason:
+      'Bambu Lab sign-in has expired, so live updates have stopped. The printer itself is fine — reconnect your Bambu account to resume.',
+    auth_invalid: true,
+    last_update: eightDaysAgo,
+    hms_errors: [],
+    hms_warnings: [],
+  };
+
+  const mount = async (page: Page, status: Record<string, unknown>) => {
+    await page.route('**/ws', (route) => route.abort());
+    await page.goto('/');
+    await page.evaluate((printer) => {
+      const w = window as any;
+      w._printerCache[printer.id] = printer;
+      document
+        .getElementById('printer-list')!
+        .insertAdjacentHTML('beforeend', w.renderCard(printer));
+    }, status);
+  };
+
+  test('names the cause, the age, and the fix', async ({ page }) => {
+    await mount(page, lockedOutPrinter);
+    const card = page.locator('#printer-zz-auth');
+
+    const chip = card.locator('.notice-chip');
+    await expect(chip).toBeVisible();
+    await chip.click();
+
+    const banner = card.locator('.auth-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('sign-in has expired');
+    // Eight days old must not read as "just now": the old label printed a bare
+    // clock time, which is how a week-old outage looked like a fresh blip.
+    await expect(banner).toContainText('last seen 8 days ago');
+    await expect(banner).not.toContainText('pingresp');
+    await expect(banner).not.toContainText('MQTT');
+    // The fix has to be reachable from where the problem is described.
+    await expect(banner.locator('a.auth-fix')).toHaveAttribute(
+      'href',
+      '/onboarding/bambu',
+    );
+
+    // The generic out-of-sync banner says the same thing with less to act on,
+    // so it stands down rather than stacking two notices for one outage.
+    await expect(card.locator('.stale-banner')).toBeHidden();
+  });
+
+  test('the bell counts it and treats it as fatal but not shaking', async ({
+    page,
+  }) => {
+    await mount(page, lockedOutPrinter);
+    const chip = page.locator('#printer-zz-auth .notice-chip');
+
+    // One outage, one notification — the suppressed stale banner must not also
+    // be counted.
+    await expect(chip.locator('.notice-count')).toHaveText('1');
+    // Red: nothing on this card works until someone signs in.
+    await expect(chip).toHaveClass(/has-error/);
+    // Not shaking: the shake is for something that just happened, and an
+    // expired sign-in is a standing condition that would wobble forever.
+    await expect(chip).not.toHaveClass(/shake/);
+  });
+
+  test('the header dot goes red, not amber', async ({ page }) => {
+    await mount(page, lockedOutPrinter);
+    const dot = page.locator('#printer-zz-auth .card-online');
+    await expect(dot).toHaveClass(/auth/);
+    await expect(dot).not.toHaveClass(/stale/);
+    await expect(dot).toHaveAttribute('title', /sign-in has expired/);
+  });
+
+  test('re-authenticating withdraws the notice', async ({ page }) => {
+    await mount(page, lockedOutPrinter);
+    const card = page.locator('#printer-zz-auth');
+    await expect(card.locator('.auth-banner')).toBeVisible();
+
+    await page.evaluate(() => {
+      const w = window as any;
+      w.updateCard(
+        w.mergeWithCache({
+          id: 'zz-auth',
+          online: true,
+          stale: false,
+          auth_invalid: false,
+          state: 'printing',
+        }),
+      );
+    });
+
+    await expect(card.locator('.auth-banner')).toBeHidden();
+    await expect(card.locator('.card-online')).toHaveClass(/yes/);
+    await expect(card.locator('.notice-chip')).toBeHidden();
+  });
+});
+
+// The list is ordered by what deserves attention, and a finished print is not
+// more urgent than a running one. The bug: printerSortPriority let "complete"
+// fall through to the active tier, so a P1S that ended hours ago beat a U1
+// printing right now purely on the A-Z tiebreak.
+test.describe('List order', () => {
+  const base = {
+    type: 'snapmaker',
+    online: true,
+    progress: 0.5,
+    remaining_time: 0,
+    elapsed_time: 0,
+    current_file: '',
+    current_layer: 0,
+    total_layers: 0,
+    bed_temp: 20,
+    bed_target_temp: null,
+    nozzle_temp: 20,
+    nozzle_target_temp: null,
+    chamber_temp: null,
+    chamber_target_temp: null,
+    has_chamber: false,
+    hms_errors: [],
+    hms_warnings: [],
+  };
+
+  test('a running print sorts above a completed one', async ({ page }) => {
+    await page.route('**/ws', (route) => route.abort());
+    await page.route('**/api/printers', (route) =>
+      void route.fulfill({
+        json: {
+          printers: [
+            // Deliberately served worst-first so any correct ordering has to
+            // be produced by the sort, not inherited from the response.
+            { ...base, id: 'done', name: 'AAA Done', state: 'complete' },
+            { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
+            { ...base, id: 'rest', name: 'MMM Idle', state: 'idle' },
+          ],
+        },
+      }),
+    );
+    await page.goto('/');
+
+    const order = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map(
+        (c) => c.id,
+      ),
+    );
+    expect(order).toEqual(['printer-run', 'printer-rest', 'printer-done']);
+  });
+
+  test('a printer we are locked out of does not take the top slot', async ({
+    page,
+  }) => {
+    await page.route('**/ws', (route) => route.abort());
+    await page.route('**/api/printers', (route) =>
+      void route.fulfill({
+        json: {
+          printers: [
+            {
+              ...base,
+              id: 'blind',
+              name: 'AAA Blind',
+              state: 'error',
+              online: false,
+              auth_invalid: true,
+              error_msg: 'Bambu Lab sign-in has expired',
+            },
+            { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
+          ],
+        },
+      }),
+    );
+    await page.goto('/');
+
+    const order = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map(
+        (c) => c.id,
+      ),
+    );
+    // The lockout is the dashboard's problem, not a printer fault, and it is
+    // permanent until a human fixes it — it must not bury the live print.
+    expect(order).toEqual(['printer-run', 'printer-blind']);
+  });
+});
+
+test.describe('Transport badge', () => {
+  test('sits with the status dot, not with the state tag', async ({ page }) => {
+    // The state tag answers "what is this printer doing". The badge answers
+    // "how is the dashboard reaching it" — a connectivity fact that belongs
+    // beside the status dot, not mixed into the print state.
+    await page.route('**/api/printers', async (route) =>
+      route.fulfill({
+        json: {
+          printers: [
+            { ...base, id: 'lan', name: 'On LAN', state: 'printing', transport: 'lan' },
+            { ...base, id: 'cloud', name: 'On Cloud', state: 'printing', transport: 'cloud' },
+            { ...base, id: 'none', name: 'No Transport', state: 'printing' },
+          ],
+        },
+      }),
+    );
+    await page.goto('/');
+
+    const layout = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map((c) => {
+        const group = c.querySelector('.card-status-group');
+        return {
+          id: c.id,
+          badgeInGroup: !!group?.querySelector('.transport-badge'),
+          dotInGroup: !!group?.querySelector('.card-online'),
+          badgeBeforeTag: !!(
+            c.querySelector('.tag') &&
+            c.querySelector('.transport-badge') &&
+            c.querySelector('.tag')!.compareDocumentPosition(c.querySelector('.transport-badge')!) &
+              Node.DOCUMENT_POSITION_FOLLOWING
+          ),
+        };
+      }),
+    );
+
+    const lan = layout.find((l) => l.id === 'printer-lan')!;
+    expect(lan.badgeInGroup).toBe(true);
+    expect(lan.dotInGroup).toBe(true);
+    // Left-to-right order stays: state tag first, badge later in the group.
+    expect(lan.badgeBeforeTag).toBe(true);
+
+    // A printer with a single transport (Snapmaker) shows no badge, and the
+    // group must still right-align the dot rather than collapse.
+    const none = layout.find((l) => l.id === 'printer-none')!;
+    expect(none.badgeInGroup).toBe(false);
+    expect(none.dotInGroup).toBe(true);
+  });
+
+  test('is refreshed by websocket updates, not only by the initial render', async ({ page }) => {
+    await page.route('**/api/printers', async (route) =>
+      route.fulfill({ json: { printers: [{ ...base, id: 'p', name: 'P', state: 'printing' }] } }),
+    );
+    await page.goto('/');
+    expect(await page.locator('#printer-p .transport-badge').count()).toBe(0);
+
+    // Transport can change at runtime when a session fails over, so an update
+    // arriving over the socket has to move the badge too. This drives the same
+    // mergeWithCache -> updateCard path the websocket onmessage handler uses,
+    // rather than a test-only entry point that could drift from it.
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        mergeWithCache: (p: object) => object;
+        updateCard: (p: object) => void;
+      };
+      w.updateCard(w.mergeWithCache({ id: 'p', name: 'P', state: 'printing', transport: 'lan' }));
+    });
+    await expect(page.locator('#printer-p .transport-badge')).toHaveText('lan');
+  });
+});

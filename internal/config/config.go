@@ -1,8 +1,11 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,16 +40,20 @@ type BambuAccount struct {
 
 // PrinterDef describes a printer to connect to.
 type PrinterDef struct {
-	ID         string `yaml:"id"`
-	Name       string `yaml:"name"`
-	Type       string `yaml:"type"` // "bambu" or "snapmaker"
-	// Bambu cloud printers don't need host/port — we connect via Bambu's cloud MQTT.
-	// For camera access, the printer's local IP + access_code is still needed.
-	Host       string `yaml:"host,omitempty"`       // Printer LAN IP (for camera, optional)
-	Port       int    `yaml:"port,omitempty"`       // Not used for cloud MQTT
-	AccessCode string `yaml:"access_code,omitempty"` // Bambu access code (for camera, optional without LAN mode)
-	Serial     string `yaml:"serial"`                // Bambu device serial number (dev_id)
-	Model      string `yaml:"model,omitempty"`       // e.g., "H2S", "P1S", "X1C" — used for camera URL format
+	ID     string `yaml:"id"`
+	Name   string `yaml:"name"`
+	Type   string `yaml:"type"` // "bambu" or "snapmaker"
+	// Host and AccessCode do double duty for Bambu printers: they are the
+	// credentials for the printer's own local MQTT broker (preferred when
+	// reachable) as well as for the local camera stream. Leaving them off
+	// falls the printer back to Bambu's cloud MQTT, which needs no local
+	// network access but does depend on an account token that can expire.
+	Host         string `yaml:"host,omitempty"`         // Printer LAN IP
+	Port         int    `yaml:"port,omitempty"`         // Not used for Bambu MQTT
+	AccessCode   string `yaml:"access_code,omitempty"`  // Bambu device access code
+	Serial       string `yaml:"serial"`                 // Bambu device serial number (dev_id)
+	Model        string `yaml:"model,omitempty"`        // e.g., "H2S", "P1S", "X1C" — used for camera URL format
+	MQTTTransport string `yaml:"mqtt_transport,omitempty"` // "auto" (default), "lan", or "cloud"
 }
 
 // CameraDef describes an external camera.
@@ -90,6 +97,22 @@ func (c *Config) Save() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 	if err := os.WriteFile(c.configPath, data, 0644); err != nil {
+		// Worth special-casing, because the raw error ("open config.yaml:
+		// permission denied") reliably sends people to the wrong file. Under
+		// Docker or rootless Podman the config is a bind mount, so it keeps its
+		// *host* ownership through a uid mapping: the file can be perfectly
+		// writable for the human who owns it while the container's own user is
+		// not that uid and cannot touch it. Naming the file and both fixes beats
+		// a bare "permission denied", and saying nothing was saved matters
+		// because the caller has already mutated the in-memory config by now.
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf(
+				"permission denied writing %s — nothing was saved. If the dashboard "+
+					"runs in a container, the bind-mounted config file belongs to a host "+
+					"user the container's user cannot write as: run the container as a "+
+					"user that can write it (e.g. --user 0:0 under rootless podman) or "+
+					"make the file writable by it: %w", c.configPath, err)
+		}
 		return fmt.Errorf("writing config file: %w", err)
 	}
 	return nil
@@ -124,4 +147,31 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// CamerasDisabledByEnv reports whether this process should run with camera
+// support switched off, via DISABLE_CAMERAS=1 (also accepts true/yes/on).
+//
+// This is deliberately an environment variable and not a config.yaml key. The
+// config file is shared machine-wide by design — every worktree's container
+// mounts the same one, because it describes the printers rather than the
+// process — so a config key could only ever turn cameras off for everything at
+// once, including production. The toggle has to be per-instance, and the
+// instance is what the environment describes.
+//
+// Why per-instance matters: Bambu camera ports are single-session. The P1S
+// accepts exactly one client on :6000 and silently drops further connection
+// attempts (no SYN-ACK, no RST), so they surface as an i/o timeout that looks
+// identical to "liveview is disabled". Every dashboard instance eagerly
+// pre-connects its cameras at startup, so whichever boots first wins the
+// camera and every other instance is left showing a misleading error about
+// the printer's power or LAN mode. Dev and test instances almost never need
+// video, so they should not be competing for it.
+func CamerasDisabledByEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DISABLE_CAMERAS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }

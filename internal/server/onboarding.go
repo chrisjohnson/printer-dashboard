@@ -250,11 +250,12 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 	// Merge new printers with existing
 	allPrinters := append(existingPrinters, newPrinters...)
 
-	// Update config
+	// Update config — but commit nothing until the file write actually lands.
 	region := "global"
 	if s.cfg.BambuAccount != nil && s.cfg.BambuAccount.Region != "" {
 		region = s.cfg.BambuAccount.Region
 	}
+	prevAccount, prevPrinters := s.cfg.BambuAccount, s.cfg.Printers
 	s.cfg.BambuAccount = &config.BambuAccount{
 		Token:  token,
 		UserID: userID,
@@ -262,7 +263,30 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 	}
 	s.cfg.Printers = allPrinters
 
-	// Save token to disk for server restarts
+	// Write the config file before the token is persisted anywhere.
+	//
+	// The order used to be the reverse: the token went to disk and the in-memory
+	// config was replaced, and only then was the config file written. When that
+	// write failed — which it does whenever the bind-mounted config.yaml is not
+	// writable by the container's user — the running server was already holding
+	// the new credentials while the file on disk still held the dead ones, and
+	// the fresh token had gone to a path startup only consults when the config
+	// carries no token at all. The wizard showed a red error, the user
+	// restarted, and the dashboard was silently back on the expired sign-in it
+	// had just been told to repair, with no trace of the login that had worked.
+	// So: roll the in-memory change back on failure, and only mirror the token
+	// to disk once the config is genuinely committed.
+	if err := s.cfg.Save(); err != nil {
+		s.cfg.BambuAccount, s.cfg.Printers = prevAccount, prevPrinters
+		log.Printf("ERROR saving config: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]any{
+			"success": false,
+			"error":   fmt.Sprintf("Failed to save config: %v", err),
+		})
+		return
+	}
+
+	// Config is committed; now mirror the token to disk for restarts.
 	cloud := bambu.NewBambuCloudClient(region)
 	cloud.SetTokenFromLogin(token, userID, region)
 	tokenPath := bambu.DefaultTokenPath("") // generic path for token-based accounts
@@ -272,16 +296,6 @@ func (s *Server) handleOnboardingBambuSave(w http.ResponseWriter, r *http.Reques
 	cloud.SetTokenFile(tokenPath)
 	if err := cloud.SaveToken(); err != nil {
 		log.Printf("WARNING: failed to save token to disk: %v", err)
-	}
-
-	// Save to config file
-	if err := s.cfg.Save(); err != nil {
-		log.Printf("ERROR saving config: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{
-			"success": false,
-			"error":   fmt.Sprintf("Failed to save config: %v", err),
-		})
-		return
 	}
 
 	log.Printf("Config saved with %d new printer(s).", len(newPrinters))
@@ -369,9 +383,14 @@ func (s *Server) handleOnboardingSnapmakerSave(w http.ResponseWriter, r *http.Re
 		AccessCode: accessCode,
 	}
 
+	prevPrinters := s.cfg.Printers
 	s.cfg.Printers = append(existingPrinters, newPrinter)
 
 	if err := s.cfg.Save(); err != nil {
+		// Same rollback as the Bambu path: a failed write must not leave the
+		// running server holding a printer the config file never got, or the
+		// dashboard shows a printer that vanishes on the next restart.
+		s.cfg.Printers = prevPrinters
 		log.Printf("ERROR saving config: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]any{
 			"success": false,
@@ -638,6 +657,66 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       padding: 8px 12px; border-radius: var(--radius-control);
       font-size: 0.8125rem; line-height: 1.4;
       word-break: break-word;
+    }
+
+    /* Expired cloud sign-in. Red, not amber, and deliberately not sharing the
+       .stale-banner box: an outage is somebody else's bad day and clears
+       itself, whereas this one sits broken until a human signs in again. Same
+       geometry as the banners above so the popover stays evenly spaced; the
+       palette and the link are the difference — the link is the fix, not
+       another description of the problem. */
+    .auth-banner {
+      background: var(--tag-error-bg); color: var(--tag-error-text);
+      padding: 8px 12px; border-radius: var(--radius-control);
+      font-size: 0.8125rem; line-height: 1.4;
+      word-break: break-word;
+    }
+    .auth-banner .auth-fix {
+      color: inherit; font-weight: 600; white-space: nowrap;
+      text-decoration: underline; text-underline-offset: 2px;
+    }
+    .auth-banner .auth-fix:hover { text-decoration: none; }
+    /* The header dot carries the same distinction at fleet scale: amber means
+       "we went blind", red means "we were locked out". */
+    .card-online.auth { color: var(--tag-error-text); }
+
+    /* Which transport is actually carrying this printer. On a mixed fleet —
+       some units local, some cloud, toggles changing under you — this is the
+       first thing you need, and without it "why is that one updating and this
+       one not" has no answer on screen. Deliberately quiet: it is context, not
+       an alert. */
+    .transport-badge {
+      font-size: 0.625rem; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius-pill);
+      background: var(--tag-neutral-bg); color: var(--tag-neutral-text-secondary);
+    }
+    .transport-badge.lan { background: var(--tag-success-bg); color: var(--tag-success-text); }
+
+    /* The transport badge belongs with the status dot, not with the state tag:
+       the tag says what the printer is DOING (printing, idle, error) while the
+       dot and badge together say how the dashboard is REACHING it. Grouping
+       them keeps that distinction readable at a glance. The group carries the
+       auto margin so it works whether or not a transport is reported — a
+       Snapmaker has only one path and shows no badge. */
+    .card-status-group {
+      margin-left: auto; display: inline-flex;
+      align-items: center; gap: 8px;
+    }
+    .card-status-group .card-online { margin-left: 0; }
+
+    /* Cloud credentials are dead but the printer is live over LAN. Blue, not
+       red or amber: nothing is broken and nothing is frozen, one capability
+       (reaching this printer from off-network) is gone until someone signs in.
+       Using it rather than escalating the outage banner is the whole point. */
+    .cloud-banner {
+      background: var(--tag-info-bg); color: var(--tag-info-text);
+      padding: 8px 12px; border-radius: var(--radius-control);
+      font-size: 0.8125rem; line-height: 1.4;
+      word-break: break-word;
+    }
+    .cloud-banner .auth-fix {
+      color: inherit; font-weight: 600; white-space: nowrap;
+      text-decoration: underline; text-underline-offset: 2px;
     }
 
     /* HMS (Health Management System) rows — one per hms_errors/hms_warnings
@@ -1226,7 +1305,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="notice-chip" type="button" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notice-count"></span></button>
         <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
-      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="stale-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
+      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="stale-banner" style="display:none;"></div><div class="auth-banner" style="display:none;"></div><div class="cloud-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
       <div class="progress-section">
         <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
         <div class="progress-text"><span>&nbsp;</span><span>&nbsp;</span></div>
@@ -1311,6 +1390,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
   </div>
   <script>
     window._printerCache = {};
+    // Set by the server when this instance runs with DISABLE_CAMERAS. Cards
+    // then render no camera block at all rather than the "add LAN IP and
+    // access code" placeholder, which would blame the operator for a choice
+    // this process made deliberately.
+    window._camerasDisabled = {{if .CamerasDisabled}}true{{else}}false{{end}};
     window._skippedCounts = {};
     window._jogBusy = {};
     window._wsReconnectDelay = 1000;
@@ -1502,6 +1586,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       if (onlineEl) {
         if (p.online) {
           onlineEl.className = 'card-online yes'; onlineEl.innerHTML = svgStatusDot(true); onlineEl.title = 'Online';
+        } else if (p.auth_invalid) {
+          // Red, not amber: a dropped link waits for the printer, a locked-out
+          // dashboard waits for you.
+          onlineEl.className = 'card-online auth'; onlineEl.innerHTML = svgStatusDot(true); onlineEl.title = authBannerText(p);
         } else if (p.stale) {
           onlineEl.className = 'card-online stale'; onlineEl.innerHTML = svgStatusDot(true); onlineEl.title = staleText(p);
         } else {
@@ -1516,7 +1604,16 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // refreshCardOverlays() below re-counts the bell, which is what makes the
       // notice reachable at all: the chip is hidden at zero.
       const staleEl = card.querySelector('.stale-banner');
-      toggleBanner(staleEl, !!p.stale, p.stale ? staleText(p) : '');
+      // Suppressed when the auth banner is showing the same outage with a named
+      // cause and a link — see noticePopoverHtml.
+      toggleBanner(staleEl, !!p.stale && !p.auth_invalid, (p.stale && !p.auth_invalid) ? staleText(p) : '');
+      toggleAuthBanner(card.querySelector('.auth-banner'), p);
+      toggleCloudBanner(card.querySelector('.cloud-banner'), p);
+      const badgeEl = card.querySelector('.transport-badge');
+      if (badgeEl && p.transport) {
+        badgeEl.textContent = p.transport;
+        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+      }
 
       // 3. Progress bar fill
       const fill = card.querySelector('.progress-bar .fill');
@@ -1664,27 +1761,45 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const card = document.getElementById('printer-' + printerId);
       if (!card) return;
 
-      // Three-tier priority matching server-side sort: error → active → idle.
-      function sortPriority(s) {
+      // Three-tier priority matching server-side sort: error → running →
+      // finished/idle. Keep in step with printerSortPriority in server.go.
+      //
+      // The old version let any unrecognised state fall through to "active",
+      // which is how a finished print outranked a running one: "complete" was
+      // treated as active and then won the A-Z tiebreak.
+      //
+      // lockedOut demotes a printer the dashboard is locked out of: it reads
+      // state 'error' but the fault is ours, not the printer's, and it is
+      // permanent until someone signs in again, so it must not hold the top
+      // slot above every print actually running. Matches printerSortPriority.
+      function sortPriority(s, lockedOut) {
+        if (lockedOut) return 2;
         if (s === 'error') return 0;
-        if (s === 'idle') return 2;
-        return 1;
+        if (s === 'printing' || s === 'paused') return 1;
+        return 2;
+      }
+
+      // Read from the DOM rather than a status object, the same way the state
+      // tag is, so a card updated by any path sorts consistently.
+      function isLockedOut(c) {
+        const el = c.querySelector('.auth-banner');
+        return !!el && el.style.display !== 'none';
       }
 
       const tag = card.querySelector('.tag');
       const state = tag ? tag.textContent.trim() : '';
-      const cardPriority = sortPriority(state);
+      const cardPriority = sortPriority(state, isLockedOut(card));
       const cardName = (card.querySelector('h2') || {}).textContent || '';
 
       const siblings = Array.from(container.querySelectorAll('.card'));
-      // Find the correct insertion point: error cards first, then active,
-      // then idle. Alphabetical within each tier.
+      // Find the correct insertion point: printer faults first, then running,
+      // then finished/idle/locked-out. Alphabetical within each tier.
       let insertBefore = null;
       for (const sib of siblings) {
         if (sib === card) continue;
         const sibTag = sib.querySelector('.tag');
         const sibState = sibTag ? sibTag.textContent.trim() : '';
-        const sibPriority = sortPriority(sibState);
+        const sibPriority = sortPriority(sibState, isLockedOut(sib));
         const sibName = (sib.querySelector('h2') || {}).textContent || '';
 
         if (cardPriority < sibPriority) { insertBefore = sib; break; }
@@ -1752,13 +1867,18 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           // Periodic camera health check: if the camera stream is failing
           // (e.g. auth token expired), surface the error with a refresh button.
-          if (!window._camHealthInterval) {
+          if (!window._camHealthInterval && !window._camerasDisabled) {
             window._camHealthInterval = setInterval(function() {
               document.querySelectorAll('.camera-slot[data-type="internal"]').forEach(function(slot) {
                 const printerId = slot.id.replace(/^cam-/, '').replace(/-\d+$/, '');
                 checkCameraStatus(printerId, slot);
               });
             }, 5000);
+          }
+          // Keep the "last seen …" wording honest while the tab sits open. Coarse
+          // units, so half a minute is plenty; see refreshNoticeAges.
+          if (!window._noticeAgeInterval) {
+            window._noticeAgeInterval = setInterval(refreshNoticeAges, 30000);
           }
           // Initial health check.
           list.forEach(function(p) {
@@ -2042,9 +2162,128 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // server flags a status stale — the readings on the card are real, they
     // are just not current, and saying when they were current is the whole
     // point of showing them.
+    //
+    // How long ago, in coarse units. This used to be toLocaleTimeString(),
+    // which prints a clock time: a printer that went dark eight days ago was
+    // labelled "last seen 1:21:26 PM", reading as though it happened minutes
+    // ago. Understating the age of frozen data is the one thing this label must
+    // not do, because the age is how you tell a blip from an outage.
+    function lastSeenText(ms) {
+      if (!ms) return 'never reached';
+      var secs = Math.round((Date.now() - ms) / 1000);
+      if (secs < 0) secs = 0; // server/browser clock skew must not read as "in the future"
+      if (secs < 60) return 'last seen ' + secs + 's ago';
+      if (secs < 3600) return 'last seen ' + Math.floor(secs / 60) + 'm ago';
+      if (secs < 86400) return 'last seen ' + Math.floor(secs / 3600) + 'h ' + Math.floor((secs % 3600) / 60) + 'm ago';
+      var days = Math.floor(secs / 86400);
+      return 'last seen ' + days + (days === 1 ? ' day ago' : ' days ago');
+    }
+
     function staleText(p) {
-      var when = p.last_update ? ('last seen ' + new Date(p.last_update).toLocaleTimeString()) : 'never reached';
-      return 'Out of sync \u2014 ' + when + (p.stale_reason ? (' \u00b7 ' + p.stale_reason) : '');
+      return 'Out of sync \u2014 ' + lastSeenText(p.last_update) + (p.stale_reason ? (' \u00b7 ' + p.stale_reason) : '');
+    }
+
+    // A dead cloud credential gets its own banner instead of reusing the
+    // out-of-sync one, and it is worth being precise about why, because the two
+    // look almost alike and behave nothing alike:
+    //
+    //   * An outage is somebody else's problem and resolves itself. An expired
+    //     sign-in never resolves itself — only a human signing in again does.
+    //     Saying "out of sync" for that is how a dead token sat unnoticed for
+    //     eight days on real hardware.
+    //   * It needs a link, and bannerHtml()/toggleBanner() are text-only by
+    //     design (one escapes into markup, the other assigns textContent), so
+    //     this has to own its own innerHTML.
+    //
+    // The stale banner is suppressed while this one shows: same fact, and two
+    // banners stacked in a popover is noise.
+    function authBannerText(p) {
+      return 'Bambu Lab sign-in has expired' +
+        (p.last_update ? (' \u2014 ' + lastSeenText(p.last_update)) : '') +
+        '. The printer is probably fine; the dashboard just cannot see it any more.';
+    }
+
+    function authBannerInner(p) {
+      return '<span>' + escapeHtml(authBannerText(p)) + '</span> ' +
+        '<a class="auth-fix" href="/onboarding/bambu">Reconnect Bambu account</a>';
+    }
+
+    function authBannerHtml(p) {
+      if (!p.auth_invalid) return '<div class="auth-banner" style="display:none;"></div>';
+      return '<div class="auth-banner">' + authBannerInner(p) + '</div>';
+    }
+
+    function toggleAuthBanner(el, p) {
+      if (!el) return;
+      if (p.auth_invalid) {
+        el.innerHTML = authBannerInner(p);
+        el.style.display = '';
+      } else {
+        el.innerHTML = '';
+        el.style.display = 'none';
+      }
+    }
+
+    // "last seen 4m ago" is a duration, so it goes out of date on its own — and
+    // a printer that has gone silent is precisely the one that will not push
+    // another update to re-render the label. Without this a card would freeze
+    // at "last seen 0s ago" for the whole life of the tab, which is the same
+    // understatement of staleness that lastSeenText exists to avoid.
+    function refreshNoticeAges() {
+      Object.keys(window._printerCache).forEach(function(id) {
+        const card = document.getElementById('printer-' + id);
+        const p = window._printerCache[id];
+        if (!card || !p) return;
+        if (p.auth_invalid) {
+          toggleAuthBanner(card.querySelector('.auth-banner'), p);
+      toggleCloudBanner(card.querySelector('.cloud-banner'), p);
+      const badgeEl = card.querySelector('.transport-badge');
+      if (badgeEl && p.transport) {
+        badgeEl.textContent = p.transport;
+        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+      }
+        } else {
+          const staleEl = card.querySelector('.stale-banner');
+          if (staleEl && p.stale && staleEl.style.display !== 'none') {
+            staleEl.textContent = staleText(p);
+          }
+        }
+      });
+    }
+
+    // "via LAN" / "via cloud" — which path is carrying this printer right now.
+    function transportBadgeHtml(p) {
+      if (!p.transport) return '';
+      const cls = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+      var via = p.transport === 'lan' ? 'the local network' : 'Bambu Lab cloud';
+      return '<span class="' + cls + '" title="Status arrives via ' + via + '">' + escapeHtml(p.transport) + '</span>';
+    }
+
+    // Cloud credential is dead but the printer is streaming locally.
+    function cloudDegradedText(p) {
+      return 'Bambu Lab sign-in has expired. This printer is still live over the ' +
+        'local network; only remote (off-network) access is unavailable.';
+    }
+
+    function cloudBannerInner(p) {
+      return '<span>' + escapeHtml(cloudDegradedText(p)) + '</span> ' +
+        '<a class="auth-fix" href="/onboarding/bambu">Reconnect Bambu account</a>';
+    }
+
+    function cloudBannerHtml(p) {
+      if (!p.cloud_degraded) return '<div class="cloud-banner" style="display:none;"></div>';
+      return '<div class="cloud-banner">' + cloudBannerInner(p) + '</div>';
+    }
+
+    function toggleCloudBanner(el, p) {
+      if (!el) return;
+      if (p.cloud_degraded) {
+        el.innerHTML = cloudBannerInner(p);
+        el.style.display = '';
+      } else {
+        el.innerHTML = '';
+        el.style.display = 'none';
+      }
     }
 
     function renderCard(p) {
@@ -2077,9 +2316,13 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // there is real data behind this one.
       const onlineDot = p.online
         ? '<span class="card-online yes" title="Online">' + svgStatusDot(true) + '</span>'
-        : (p.stale
-            ? '<span class="card-online stale" title="' + escapeHtml(staleText(p)) + '">' + svgStatusDot(true) + '</span>'
-            : '<span class="card-online" title="Offline">' + svgStatusDot(false) + 'Offline</span>');
+        : (p.auth_invalid
+            // Red, not amber: a dropped link waits for the printer, a
+            // locked-out dashboard waits for you.
+            ? '<span class="card-online auth" title="' + escapeHtml(authBannerText(p)) + '">' + svgStatusDot(true) + '</span>'
+            : (p.stale
+                ? '<span class="card-online stale" title="' + escapeHtml(staleText(p)) + '">' + svgStatusDot(true) + '</span>'
+                : '<span class="card-online" title="Offline">' + svgStatusDot(false) + 'Offline</span>'));
 
       // Notice popover — the plain error banner plus one dismissible HMS row per
       // (already server-filtered) hms_errors/hms_warnings entry, behind the
@@ -2103,7 +2346,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           '<h2>' + escapeHtml(p.name) + '</h2>' +
           '<span class="tag ' + stCls + '">' + st + '</span>' +
           noticeChipHtml(p) +
-          onlineDot +
+          '<span class="card-status-group">' + transportBadgeHtml(p) + onlineDot + '</span>' +
         '</div>' +
         noticePopover +
         '<div class="progress-section">' +
@@ -2112,6 +2355,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '</div>' +
         // Camera section — above temps, with placeholder when no streams
         (function() {
+          if (window._camerasDisabled) return '';
           const streams = p.camera_streams || [];
           if (streams.length === 0) {
             // Placeholder with reason based on printer type
@@ -2452,6 +2696,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // failures) has no matching HMS row, so it keeps the banner as before.
     function showErrorBanner(p) {
       if ((p.state || 'unknown') !== 'error' || !p.error_msg) return false;
+      // A rejected credential surfaces as State="error" when the printer has
+      // never reported anything (there is no last-known-good to freeze), and
+      // the driver puts the same sentence in ErrorMsg that the auth banner is
+      // already rendering with a link attached. Two red banners for one cause
+      // is noise, and the one without the fix in it is the worse one to keep.
+      if (p.auth_invalid) return false;
       const errors = p.hms_errors || [];
       if (errors.length && hmsErrorSummary(errors) === p.error_msg) return false;
       return true;
@@ -2499,7 +2749,17 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         'onclick="toggleNotices(\'' + escapeJsString(p.id) + '\', false)">\u00d7</button></div>' +
         '<div class="notice-popover-inner">' +
           bannerHtml('error-banner', showErrorBanner(p), p.error_msg) +
-          bannerHtml('stale-banner', !!p.stale, p.stale ? staleText(p) : '') +
+          // The auth banner replaces the generic out-of-sync one: a rejected
+          // credential is an outage with a named cause and a fix, so it gets
+          // the louder treatment and the link rather than a footnote. Hidden
+          // rather than omitted, like every other banner here — if it were left
+          // out of the DOM whenever auth_invalid is set, a later update that
+          // clears the credential but is still stale would find no element to
+          // toggle back on and the notice would be unreachable until a reload.
+          bannerHtml('stale-banner', !!p.stale && !p.auth_invalid,
+            (p.stale && !p.auth_invalid) ? staleText(p) : '') +
+          authBannerHtml(p) +
+          cloudBannerHtml(p) +
           '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [],
             p.hms_warnings || [], p.advisories || []) + '</div>' +
         '</div></div>';
@@ -2530,15 +2790,26 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // quiet amber rather than going red and shaking over a Wi-Fi dropout.
       const staleEl = card.querySelector('.stale-banner');
       const staleShown = !!staleEl && staleEl.style.display !== 'none';
+      // The expired-sign-in notice. It replaces the out-of-sync banner rather
+      // than stacking next to it, so the two can never double-count one outage.
+      const authEl = card.querySelector('.auth-banner');
+      const authShown = !!authEl && authEl.style.display !== 'none';
+      // Cloud-dead-but-LAN-live: counts as a notice, and like a plain outage it
+      // is deliberately NOT fatal, so the bell stays quiet blue rather than red.
+      const cloudEl = card.querySelector('.cloud-banner');
+      const cloudShown = !!cloudEl && cloudEl.style.display !== 'none';
       const rows = card.querySelectorAll('.hms-row');
-      const count = (bannerShown ? 1 : 0) + (staleShown ? 1 : 0) + rows.length;
+      const count = (bannerShown ? 1 : 0) + (staleShown ? 1 : 0) + (authShown ? 1 : 0) + (cloudShown ? 1 : 0) + rows.length;
       const label = chip.querySelector('.notice-count');
       if (label) label.textContent = count;
       chip.style.display = count > 0 ? '' : 'none';
       // Fatal beats warning: red, and shaking, only when something fatal is
       // present. Warnings alone get the quiet amber chip.
       const fatal = bannerShown || !!card.querySelector('.hms-row.hms-error');
-      chip.classList.toggle('has-error', fatal);
+      // A dead credential stops the whole integration working, so it earns the
+      // red bell — but it is a standing condition, not an event, so it does not
+      // join the shake. A bell that wobbles forever is noise by day two.
+      chip.classList.toggle('has-error', fatal || authShown);
       chip.classList.toggle('shake', fatal);
       chip.setAttribute('aria-label', count + (count === 1 ? ' notification' : ' notifications'));
     }
@@ -2575,7 +2846,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       var open = (typeof force === 'boolean') ? force : !pop.classList.contains('open');
       // Measured before the class flip: max-height has to be in place while the
       // popover is still display:none, otherwise it first paints full-height.
-      if (open) positionNoticePopover(card, pop);
+      if (open) {
+        // The age text only refreshes on a server push, and a silent printer
+        // pushes nothing, so re-render it at the moment the reader asks.
+        refreshNoticeAges();
+        positionNoticePopover(card, pop);
+      }
       pop.classList.toggle('open', open);
       var chip = card.querySelector('.notice-chip');
       if (chip) chip.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -3004,6 +3280,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       }).then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.error) {
+            // The row stays put, which on its own is indistinguishable from a
+            // click that never registered — the user just presses it again. Say
+            // why it failed, same convention as cmd()/homeAll()/sendJog().
+            alert(d.error);
             console.error('dismissHms error:', d.error);
             return;
           }
@@ -3016,7 +3296,10 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           // empty), so re-measure to drop the fade / the wrapper itself.
           if (card) refreshCardOverlays(card);
         })
-        .catch(function(e) { console.error('dismissHms network error:', e); });
+        .catch(function(e) {
+          alert('Could not reach the dashboard server — the warning was not dismissed.');
+          console.error('dismissHms network error:', e);
+        });
     }
 
     window._cameraSlots = window._cameraSlots || {};
