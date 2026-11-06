@@ -71,6 +71,17 @@ type PrinterStatus struct {
 	// successfully — that is how a consumer tells "stale but we know
 	// something" apart from "no data yet".
 	LastUpdate int64 `json:"last_update,omitempty"`
+	// Transport names how the dashboard is currently reaching this printer,
+	// for drivers that have more than one path: "lan" or "cloud". Empty when
+	// the driver has only one (Snapmaker is always local) or before a session
+	// is established.
+	//
+	// This exists because a mixed fleet is not a theoretical concern — some
+	// units will be reachable locally and some only through the vendor cloud,
+	// and which is which changes when someone flips a toggle or a token
+	// expires. Without it, "why is this one updating and that one not" has no
+	// answer on screen.
+	Transport string `json:"transport,omitempty"`
 	// AuthInvalid reports that the dashboard's *credentials* for this printer's
 	// cloud account were rejected by the provider, as opposed to the printer or
 	// the network being unreachable.
@@ -89,6 +100,15 @@ type PrinterStatus struct {
 	// actually present override, so an omitted "false" would leave a card stuck
 	// on "sign in again" forever after the user had already done so.
 	AuthInvalid bool `json:"auth_invalid"`
+	// CloudDegraded is the counterpart of AuthInvalid for a driver that has
+	// more than one transport: the vendor cloud rejected our account
+	// credentials, but this printer is live over the local network, so the
+	// readings on screen are current and what is lost is cloud-only capability
+	// (reaching the printer from off-network, and the cloud-reported camera
+	// address). It is a standing notice, not an outage — flagging it as stale
+	// would have the dashboard claim it cannot see a printer it is looking at
+	// directly.
+	CloudDegraded bool `json:"cloud_degraded"`
 	// Advisories holds printer-reported faults that arrive on a channel
 	// outside the printer's own state machine, so they are deliberately NOT
 	// errors: the printer keeps printing (and finishes successfully) while

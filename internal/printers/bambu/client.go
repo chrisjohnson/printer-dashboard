@@ -211,9 +211,30 @@ type Client struct {
 	authCheckEvery time.Duration
 
 	// authInvalid is the cached verdict of the credential watchdog: the cloud
-	// API has rejected our token and will keep doing so until a human signs in
-	// again. Mirrored onto PrinterStatus.AuthInvalid. Guarded by mu.
+	// API has rejected our token AND the cloud is the transport we depend on,
+	// so the dashboard is genuinely blind. Mirrored onto
+	// PrinterStatus.AuthInvalid. Guarded by mu.
 	authInvalid bool
+
+	// cloudDegraded is the other half of that verdict: the cloud credential was
+	// rejected but the printer is live over LAN, so readings keep flowing and
+	// only cloud-dependent capability (remote access, the cloud-reported camera
+	// URL) is lost. Guarded by mu.
+	cloudDegraded bool
+
+	// retryBackoff is the doubling delay between full sweeps of the transport
+	// candidate list, reset on a successful session. Guarded by mu.
+	retryBackoff time.Duration
+
+	// activeTransport is which MQTT path the current session is riding, and
+	// doubles as the sticky preference for the next reconnect. Empty until a
+	// session is established. Guarded by mu.
+	activeTransport transportKind
+
+	// transportLost is signalled by onConnectionLost so Connect can tear down
+	// and walk the candidate list again — including switching to a different
+	// transport. Buffered size 1; each Connect iteration makes a fresh one.
+	transportLost chan struct{}
 }
 
 // commandACK is the firmware's reply to a command we published. Bambu echoes
@@ -369,144 +390,220 @@ func (c *Client) CameraStreams() []printers.CameraStream {
 	return nil
 }
 
-// Connect establishes the cloud MQTT connection and begins listening for reports.
+// Connect establishes the MQTT session and begins listening for reports.
 // Blocks until the context is cancelled (caller should run in a goroutine).
 //
-// The initial connect attempt is retried indefinitely with doubling backoff
-// (1s, 2s, 4s, ... capped at initialConnectBackoffMax) if it fails or times
-// out. There is no attempt ceiling: once connected, Paho's own AutoReconnect
-// (configured below) takes over for connection-lost-after-success, and that
-// path also retries forever — this keeps the two retry paths consistent, and
-// the current status model has no "permanently failed" state to fall back to
-// anyway. Retries stop promptly if ctx is cancelled.
+// Each pass ranks the available transports (see transportCandidates) and takes
+// the first whose handshake completes; on a dropped session it walks the list
+// again, so a printer that loses one path fails over to the other instead of
+// hammering the dead one. Retries are indefinite with doubling backoff capped at
+// initialConnectBackoffMax, and stop promptly on cancellation.
+//
+// Paho's own AutoReconnect is deliberately OFF here. It is a single-broker
+// feature: it would reconnect to whichever broker it first liked, so it cannot
+// fail over, and — the reason this used to be invisible for eight days — it
+// swallows CONNACK refusals, so a rejected credential never reached an error
+// handler. Driving the loop ourselves makes every refusal observable and lets
+// the reason be recorded per transport.
 func (c *Client) Connect(ctx context.Context) error {
-	if c.cloud == nil {
-		// Nothing to authenticate with, so there is no connection to retry and
-		// no point pretending otherwise. The server registers these printers
-		// anyway (see initPrinters) precisely so the card can say why it is
-		// blank instead of the printer quietly not existing.
-		c.MarkAuthUnavailable(noAccountReason)
-		return nil
-	}
+	// Credentials outlive connections and outlive transports: a token that
+	// expires while we are happily talking to a printer over LAN is still a
+	// problem (remote access silently dies), it is just no longer blindness.
+	go c.watchAuth(ctx)
 
-	broker := "ssl://" + MQTTBroker(c.cloud.region)
-	if c.brokerOverride != "" {
-		broker = c.brokerOverride
-	}
+	for {
+		if ctx.Err() != nil {
+			return nil
+		}
 
+		specs := c.transportCandidates()
+		if len(specs) == 0 {
+			c.markNoTransport()
+			if !sleepUntilCancelled(ctx, noTransportRetryEvery) {
+				return nil
+			}
+			continue
+		}
+
+		lost := make(chan struct{}, 1)
+		c.mu.Lock()
+		c.transportLost = lost
+		c.mu.Unlock()
+
+		var held mqtt.Client
+		var heldKind transportKind
+		for _, spec := range specs {
+			client, err := c.dial(ctx, spec, lost)
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				c.recordTransportFailure(spec, err)
+				continue
+			}
+			held, heldKind = client, spec.kind
+			break
+		}
+
+		if held == nil {
+			// Every candidate refused us. The per-attempt reasons were already
+			// recorded by recordTransportFailure; back off and walk the list
+			// again rather than spinning.
+			if !sleepUntilCancelled(ctx, c.nextRetryDelay()) {
+				return nil
+			}
+			continue
+		}
+
+		c.resetRetryBackoff()
+		c.mu.Lock()
+		c.mqttClient = held
+		c.mu.Unlock()
+		c.setTransportLive(heldKind)
+
+		select {
+		case <-ctx.Done():
+			if held.IsConnected() {
+				held.Disconnect(1000)
+				log.Printf("bambu %s: disconnected from %s MQTT", c.cfg.ID, heldKind)
+			}
+			return nil
+		case <-lost:
+			if !sleepUntilCancelled(ctx, transportLostDelay) {
+				return nil
+			}
+		}
+	}
+}
+
+// dial builds a Paho client for one transport and performs the initial connect.
+// Returns the connected client, or an error describing why this path is not
+// usable right now. AutoReconnect is off: Connect owns the retry and failover
+// loop so that a refusal here is a verdict about *this* transport.
+func (c *Client) dial(ctx context.Context, spec transportSpec, lost chan struct{}) (mqtt.Client, error) {
 	opts := mqtt.NewClientOptions().
-		AddBroker(broker).
+		AddBroker(spec.broker).
 		SetClientID(fmt.Sprintf("printer-dashboard-%s-%d", c.cfg.ID, time.Now().UnixNano())).
-		SetUsername(c.cloud.MQTTUsername()).
-		SetPassword(c.cloud.MQTTPassword()).
+		SetUsername(spec.username).
+		SetPassword(spec.password).
 		SetTLSConfig(&tls.Config{
-			InsecureSkipVerify: true, // Bambu's cloud cert may not be in system store
+			InsecureSkipVerify: true, // Bambu's certs (cloud and printer-local) are not in the system store
 		}).
-		SetOnConnectHandler(c.onConnect).
-		SetConnectionLostHandler(c.onConnectionLost).
-		SetReconnectingHandler(c.onReconnecting).
-		SetAutoReconnect(true).
-		SetMaxReconnectInterval(30 * time.Second).
+		SetOnConnectHandler(func(client mqtt.Client) { c.onConnect(client, spec.kind) }).
+		SetConnectionLostHandler(func(client mqtt.Client, err error) { c.onConnectionLost(client, err, spec.kind, lost) }).
+		SetAutoReconnect(false).
+		SetConnectTimeout(15 * time.Second).
 		SetKeepAlive(30 * time.Second).
 		SetPingTimeout(10 * time.Second).
 		SetCleanSession(true)
 
-	c.mqttClient = mqtt.NewClient(opts)
-
-	if err := c.connectWithRetry(ctx, broker); err != nil {
-		// Only returns non-nil when ctx was cancelled before a successful
-		// connect — report that as a clean (nil) shutdown-triggered return,
-		// matching the pre-retry-loop contract that Connect only returns a
-		// non-nil error for a genuine connect failure. Since retries are
-		// indefinite, the only way out without a successful connect is
-		// cancellation.
-		return nil
+	client := mqtt.NewClient(opts)
+	token := client.Connect()
+	if !token.WaitTimeout(20 * time.Second) {
+		client.Disconnect(250)
+		return nil, fmt.Errorf("MQTT connection timeout to %s", spec.broker)
 	}
-
-	log.Printf("bambu %s: connected to cloud MQTT at %s (user=%s)", c.cfg.ID, broker, c.cloud.MQTTUsername())
-
-	// Credentials outlive connections. A token that expires while this client
-	// is happily connected is invisible from MQTT's side — the broker just
-	// stops letting it back in after the next hiccup — so the health of the
-	// credential has to be checked independently of the health of the socket.
-	go c.watchAuth(ctx)
-
-	// Block until context is cancelled (keep goroutine alive)
-	<-ctx.Done()
-
-	// Disconnect
-	if c.mqttClient != nil && c.mqttClient.IsConnected() {
-		c.mqttClient.Disconnect(1000)
-		log.Printf("bambu %s: disconnected from cloud MQTT", c.cfg.ID)
+	if err := token.Error(); err != nil {
+		client.Disconnect(250)
+		return nil, err
 	}
-	return nil
+	return client, nil
 }
 
-// connectWithRetry attempts the initial MQTT connect, retrying indefinitely
-// with doubling backoff on failure/timeout until it succeeds or ctx is
-// cancelled. Returns nil on success, or ctx.Err() if ctx was cancelled
-// before a successful connect.
-func (c *Client) connectWithRetry(ctx context.Context, broker string) error {
-	backoffBase := initialConnectBackoffBase
+// recordTransportFailure stores why a transport was unusable.
+//
+// A refusal means different things per transport and the fixes are unrelated,
+// so they must not share a message: on cloud the *account token* was rejected
+// (sign in again), while on LAN the *device access code* was wrong (edit
+// access_code in config.yaml). Reporting a bad access code as an expired
+// sign-in would send the user to the one screen that cannot fix it.
+func (c *Client) recordTransportFailure(spec transportSpec, err error) {
+	log.Printf("bambu %s: %s MQTT unavailable: %v", c.cfg.ID, spec.kind, err)
+
+	if isAuthRejection(err) {
+		c.handleAuthRejection(spec.kind)
+		return
+	}
+	c.noteTransportError(spec.kind, describeTransport(err))
+}
+
+// handleAuthRejection routes a credential refusal to the right verdict for the
+// transport that produced it.
+func (c *Client) handleAuthRejection(kind transportKind) {
+	if kind == transportLAN {
+		c.noteTransportError(transportLAN, "the printer rejected the configured access code — check access_code in config.yaml")
+		return
+	}
+	c.markCloudAuthRejected()
+}
+
+// nextRetryDelay doubles the backoff across full sweeps of the candidate list,
+// capped, so a persistently unreachable printer settles into a slow poll
+// instead of a storm.
+func (c *Client) nextRetryDelay() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	base := initialConnectBackoffBase
 	if c.connectBackoffBase > 0 {
-		backoffBase = c.connectBackoffBase
+		base = c.connectBackoffBase
 	}
-	backoffMax := initialConnectBackoffMax
+	max := initialConnectBackoffMax
 	if c.connectBackoffMax > 0 {
-		backoffMax = c.connectBackoffMax
+		max = c.connectBackoffMax
 	}
 
-	backoff := backoffBase
-	attempt := 0
-	for {
-		attempt++
+	if c.retryBackoff == 0 {
+		c.retryBackoff = base
+	}
+	d := c.retryBackoff
+	if d > max {
+		d = max
+	}
+	c.retryBackoff = d * 2
+	if c.retryBackoff > max {
+		c.retryBackoff = max
+	}
+	return d
+}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+func (c *Client) resetRetryBackoff() {
+	c.mu.Lock()
+	c.retryBackoff = 0
+	c.mu.Unlock()
+}
 
-		token := c.mqttClient.Connect()
-		var connectErr error
-		if !token.WaitTimeout(15 * time.Second) {
-			connectErr = fmt.Errorf("bambu %s: cloud MQTT connection timeout to %s", c.cfg.ID, broker)
-		} else if err := token.Error(); err != nil {
-			connectErr = fmt.Errorf("bambu %s: cloud MQTT connect: %w", c.cfg.ID, err)
-		}
+// markNoTransport explains a printer with no usable path configured at all.
+func (c *Client) markNoTransport() {
+	if c.cfg.Host == "" && (c.cloud == nil || c.cloud.Token() == "") {
+		// Neither a local address nor an account: nothing to try. Registered
+		// anyway (see initPrinters) so the card names the cause instead of the
+		// printer quietly not existing on the dashboard.
+		c.MarkAuthUnavailable(noAccountReason)
+		return
+	}
+	c.markTransportLost("No MQTT path is configured for this printer — it has neither a local host and access code nor cloud credentials.")
+}
 
-		if connectErr == nil {
-			return nil
-		}
-
-		if isAuthRejection(connectErr) {
-			// The broker refused our credential. No amount of retrying fixes
-			// that, and the loop would otherwise churn here forever printing the
-			// same refusal — record the real cause and let the watchdog own it.
-			c.markAuthRejected()
-		} else {
-			c.markTransportLost(describeTransport(connectErr))
-		}
-
-		log.Printf("bambu %s: cloud MQTT initial connect attempt %d failed: %v (retry in %v)",
-			c.cfg.ID, attempt, connectErr, backoff)
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(backoff):
-		}
-
-		backoff *= 2
-		if backoff > backoffMax {
-			backoff = backoffMax
-		}
+// sleepUntilCancelled waits for d, returning false if ctx was cancelled first.
+func sleepUntilCancelled(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
-// onConnect is called when the MQTT client connects (or reconnects).
-func (c *Client) onConnect(client mqtt.Client) {
-	log.Printf("bambu %s: cloud MQTT connected (or reconnected)", c.cfg.ID)
+// onConnect is called when an MQTT client connects (or reconnects). kind names
+// which transport produced this session, so everything below — the cert install,
+// the pushall, the silence watchdog — runs identically over LAN or cloud. The
+// protocol reference confirms this is legitimate: "Command behavior over LAN is
+// identical to cloud, including the signature gate."
+func (c *Client) onConnect(client mqtt.Client, kind transportKind) {
+	log.Printf("bambu %s: %s MQTT connected (or reconnected)", c.cfg.ID, kind)
 
 	// Reset the first-report channel so the silence warning timer can
 	// monitor the next connection's report stream, and stamp a fresh
@@ -720,6 +817,7 @@ func (c *Client) markTransportLost(reason string) {
 	c.mu.Lock()
 	haveData := !c.lastStatusReport.IsZero()
 	authInvalid := c.authInvalid
+	cloudDegraded := c.cloudDegraded
 	c.mu.Unlock()
 
 	s := c.Status()
@@ -727,6 +825,7 @@ func (c *Client) markTransportLost(reason string) {
 	// Carried on every marking so a credential verdict set before this call
 	// cannot be silently dropped by a later transport hiccup.
 	s.AuthInvalid = authInvalid
+	s.CloudDegraded = cloudDegraded
 	if haveData {
 		s.Stale = true
 		s.StaleReason = reason
@@ -768,9 +867,9 @@ func (c *Client) checkCloudAuth() {
 	err := c.cloud.VerifyToken()
 	switch {
 	case err == nil:
-		c.clearAuthInvalid()
+		c.clearCloudAuthProblem()
 	case isAuthRejection(err):
-		c.markAuthRejected()
+		c.markCloudAuthRejected()
 	default:
 		// Inconclusive — the API was unreachable or unhappy, which says nothing
 		// about the credential. Keep the current verdict and stay quiet: telling
@@ -780,29 +879,63 @@ func (c *Client) checkCloudAuth() {
 	}
 }
 
-// markAuthRejected records that the cloud has refused our credential and stops
-// presenting that as a transient link problem.
-func (c *Client) markAuthRejected() {
+// markCloudAuthRejected records that Bambu's cloud has refused our account
+// token.
+//
+// Whether that is *blindness* or merely a *degradation* depends entirely on
+// which transport is live, and getting this wrong is worse than not measuring
+// at all. On cloud the dashboard has just gone from watching a printer to
+// watching a login screen — that is an outage and must be shouted about. On LAN
+// the printer is still streaming every reading it has; what was lost is remote
+// access and the cloud-reported camera URL, which is a standing notice, not an
+// emergency. Flagging a LAN-live printer as blind would have the dashboard
+// screaming "I cannot see this printer" about a printer it is looking at
+// directly.
+func (c *Client) markCloudAuthRejected() {
+	c.mu.RLock()
+	ridingLAN := c.activeTransport == transportLAN
+	c.mu.RUnlock()
+
+	blind := !ridingLAN
+
 	c.mu.Lock()
-	already := c.authInvalid
-	c.authInvalid = true
+	changed := c.authInvalid != blind || c.cloudDegraded != ridingLAN
+	c.authInvalid = blind
+	c.cloudDegraded = ridingLAN
 	c.mu.Unlock()
 
-	if already {
+	if !changed {
 		return // already surfaced; don't re-log or re-broadcast every tick
+	}
+
+	if ridingLAN {
+		log.Printf("bambu %s: Bambu cloud credentials REJECTED, but this printer is live over LAN — remote access is unavailable until the account is signed in again", c.cfg.ID)
+		c.setCloudDegraded()
+		return
 	}
 
 	log.Printf("bambu %s: Bambu cloud credentials REJECTED by the cloud API — live updates cannot resume until the account is signed in again", c.cfg.ID)
 	c.markTransportLost(authRejectedReason)
 }
 
-// clearAuthInvalid withdraws a previous rejection once the credential works
-// again, so a card that has been fixed stops advertising the outage it just
-// came back from.
-func (c *Client) clearAuthInvalid() {
+// setCloudDegraded publishes the "running locally, cloud sign-in is dead" state
+// without touching Stale: the readings on the card are live, so claiming
+// otherwise would be a lie of the opposite kind.
+func (c *Client) setCloudDegraded() {
+	s := c.Status()
+	s.CloudDegraded = true
+	s.AuthInvalid = false
+	c.setStatus(s)
+}
+
+// clearCloudAuthProblem withdraws both cloud-credential verdicts once the
+// credential works again, so a card that has been fixed stops advertising the
+// outage it just came back from.
+func (c *Client) clearCloudAuthProblem() {
 	c.mu.Lock()
-	was := c.authInvalid
+	was := c.authInvalid || c.cloudDegraded
 	c.authInvalid = false
+	c.cloudDegraded = false
 	c.mu.Unlock()
 
 	if !was {
@@ -811,28 +944,50 @@ func (c *Client) clearAuthInvalid() {
 
 	log.Printf("bambu %s: Bambu cloud credentials accepted again", c.cfg.ID)
 	s := c.Status()
-	if s.AuthInvalid {
+	if s.AuthInvalid || s.CloudDegraded {
 		s.AuthInvalid = false
+		s.CloudDegraded = false
 		c.setStatus(s)
 	}
 }
 
-// onConnectionLost is called when the MQTT connection is lost.
-func (c *Client) onConnectionLost(client mqtt.Client, err error) {
-	log.Printf("bambu %s: cloud MQTT connection lost: %v", c.cfg.ID, err)
-	// A rejected credential can also show up here (the broker lets the session
-	// drop rather than refusing the CONNECT), so classify before recording —
-	// otherwise the auth cause is overwritten by keep-alive jargon.
-	if isAuthRejection(err) {
-		c.markAuthRejected()
+// noteTransportError records why a transport is unusable — but only lets it
+// affect the visible status when that transport is the one actually backing the
+// session. A failed *candidate* (cloud refusing us while LAN streams fine) is a
+// fact about the candidate, not an outage, and must never blank a live card.
+func (c *Client) noteTransportError(kind transportKind, reason string) {
+	c.mu.RLock()
+	active := c.activeTransport
+	c.mu.RUnlock()
+
+	if active != "" && kind != active {
+		log.Printf("bambu %s: %s path unusable (status unaffected, running on %s): %s", c.cfg.ID, kind, active, reason)
 		return
 	}
-	c.markTransportLost(fmt.Sprintf("MQTT disconnected: %v", err))
+	c.markTransportLost(reason)
 }
 
-// onReconnecting is called when the client begins reconnecting.
-func (c *Client) onReconnecting(client mqtt.Client, opts *mqtt.ClientOptions) {
-	log.Printf("bambu %s: cloud MQTT reconnecting...", c.cfg.ID)
+// onConnectionLost is called when the MQTT connection is lost.
+// onConnectionLost fires when the live session drops. It records the cause and
+// then hands control back to Connect by signalling lost, so the next pass can
+// re-rank the candidates — which is how a transport that dies mid-session
+// actually fails over to the other one instead of reconnecting to the corpse.
+func (c *Client) onConnectionLost(client mqtt.Client, err error, kind transportKind, lost chan struct{}) {
+	log.Printf("bambu %s: %s MQTT connection lost: %v", c.cfg.ID, kind, err)
+
+	if isAuthRejection(err) {
+		// The broker can express a dead credential by dropping the session
+		// rather than refusing the CONNECT, so classify here too — otherwise
+		// the auth cause is overwritten by keep-alive jargon.
+		c.handleAuthRejection(kind)
+	} else {
+		c.noteTransportError(kind, fmt.Sprintf("MQTT disconnected: %v", err))
+	}
+
+	select {
+	case lost <- struct{}{}:
+	default:
+	}
 }
 
 // handleReport processes incoming MQTT messages on the report topic.
@@ -904,12 +1059,19 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	c.lastStatusReport = reportAt
 	// Data is flowing, so whatever the last verdict said, the credential is
 	// demonstrably working right now.
-	authWasRejected := c.authInvalid
+	// Live reports prove the transport we are riding works, which is enough to
+	// withdraw "we cannot see this printer" (authInvalid). They say NOTHING
+	// about the cloud credential: a printer streaming happily over LAN while the
+	// account token is dead is precisely the state cloudDegraded describes, so
+	// clearing it here would make the notice blink off on every report and the
+	// expired sign-in would go unreported again. Only the watchdog, which
+	// actually asks Bambu, may clear it.
+	authWasBlind := c.authInvalid
 	c.authInvalid = false
 	c.mu.Unlock()
 
-	if authWasRejected {
-		log.Printf("bambu %s: live reports resumed, credential rejection cleared", c.cfg.ID)
+	if authWasBlind {
+		log.Printf("bambu %s: live reports resumed, credential blindness cleared", c.cfg.ID)
 	}
 
 	s := c.Status()

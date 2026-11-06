@@ -680,6 +680,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
        "we went blind", red means "we were locked out". */
     .card-online.auth { color: var(--tag-error-text); }
 
+    /* Which transport is actually carrying this printer. On a mixed fleet —
+       some units local, some cloud, toggles changing under you — this is the
+       first thing you need, and without it "why is that one updating and this
+       one not" has no answer on screen. Deliberately quiet: it is context, not
+       an alert. */
+    .transport-badge {
+      font-size: 0.625rem; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius-pill);
+      background: var(--tag-neutral-bg); color: var(--tag-neutral-text-secondary);
+    }
+    .transport-badge.lan { background: var(--tag-success-bg); color: var(--tag-success-text); }
+
+    /* Cloud credentials are dead but the printer is live over LAN. Blue, not
+       red or amber: nothing is broken and nothing is frozen, one capability
+       (reaching this printer from off-network) is gone until someone signs in.
+       Using it rather than escalating the outage banner is the whole point. */
+    .cloud-banner {
+      background: var(--tag-info-bg); color: var(--tag-info-text);
+      padding: 8px 12px; border-radius: var(--radius-control);
+      font-size: 0.8125rem; line-height: 1.4;
+      word-break: break-word;
+    }
+    .cloud-banner .auth-fix {
+      color: inherit; font-weight: 600; white-space: nowrap;
+      text-decoration: underline; text-underline-offset: 2px;
+    }
+
     /* HMS (Health Management System) rows — one per hms_errors/hms_warnings
        entry, replacing the old single-string warning-banner (see K-075).
        .hms-list is the always-in-DOM container (mirrors .error-banner's
@@ -1266,7 +1293,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         <button class="notice-chip" type="button" style="display:none;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><span class="notice-count"></span></button>
         <span class="card-online"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6"/></svg>Offline</span>
       </div>
-      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="stale-banner" style="display:none;"></div><div class="auth-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
+      <div class="notice-popover"><div class="notice-popover-inner"><div class="error-banner" style="display:none;"></div><div class="stale-banner" style="display:none;"></div><div class="auth-banner" style="display:none;"></div><div class="cloud-banner" style="display:none;"></div><div class="hms-list"></div></div></div>
       <div class="progress-section">
         <div class="progress-bar"><div class="fill" style="width:0%"></div></div>
         <div class="progress-text"><span>&nbsp;</span><span>&nbsp;</span></div>
@@ -1564,6 +1591,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // cause and a link — see noticePopoverHtml.
       toggleBanner(staleEl, !!p.stale && !p.auth_invalid, (p.stale && !p.auth_invalid) ? staleText(p) : '');
       toggleAuthBanner(card.querySelector('.auth-banner'), p);
+      toggleCloudBanner(card.querySelector('.cloud-banner'), p);
+      const badgeEl = card.querySelector('.transport-badge');
+      if (badgeEl && p.transport) {
+        badgeEl.textContent = p.transport;
+        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+      }
 
       // 3. Progress bar fill
       const fill = card.querySelector('.progress-bar .fill');
@@ -2186,6 +2219,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         if (!card || !p) return;
         if (p.auth_invalid) {
           toggleAuthBanner(card.querySelector('.auth-banner'), p);
+      toggleCloudBanner(card.querySelector('.cloud-banner'), p);
+      const badgeEl = card.querySelector('.transport-badge');
+      if (badgeEl && p.transport) {
+        badgeEl.textContent = p.transport;
+        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+      }
         } else {
           const staleEl = card.querySelector('.stale-banner');
           if (staleEl && p.stale && staleEl.style.display !== 'none') {
@@ -2193,6 +2232,41 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
         }
       });
+    }
+
+    // "via LAN" / "via cloud" — which path is carrying this printer right now.
+    function transportBadgeHtml(p) {
+      if (!p.transport) return '';
+      const cls = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+      var via = p.transport === 'lan' ? 'the local network' : 'Bambu Lab cloud';
+      return '<span class="' + cls + '" title="Status arrives via ' + via + '">' + escapeHtml(p.transport) + '</span>';
+    }
+
+    // Cloud credential is dead but the printer is streaming locally.
+    function cloudDegradedText(p) {
+      return 'Bambu Lab sign-in has expired. This printer is still live over the ' +
+        'local network; only remote (off-network) access is unavailable.';
+    }
+
+    function cloudBannerInner(p) {
+      return '<span>' + escapeHtml(cloudDegradedText(p)) + '</span> ' +
+        '<a class="auth-fix" href="/onboarding/bambu">Reconnect Bambu account</a>';
+    }
+
+    function cloudBannerHtml(p) {
+      if (!p.cloud_degraded) return '<div class="cloud-banner" style="display:none;"></div>';
+      return '<div class="cloud-banner">' + cloudBannerInner(p) + '</div>';
+    }
+
+    function toggleCloudBanner(el, p) {
+      if (!el) return;
+      if (p.cloud_degraded) {
+        el.innerHTML = cloudBannerInner(p);
+        el.style.display = '';
+      } else {
+        el.innerHTML = '';
+        el.style.display = 'none';
+      }
     }
 
     function renderCard(p) {
@@ -2254,6 +2328,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '<div class="card-header">' +
           '<h2>' + escapeHtml(p.name) + '</h2>' +
           '<span class="tag ' + stCls + '">' + st + '</span>' +
+          transportBadgeHtml(p) +
           noticeChipHtml(p) +
           onlineDot +
         '</div>' +
@@ -2667,6 +2742,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           bannerHtml('stale-banner', !!p.stale && !p.auth_invalid,
             (p.stale && !p.auth_invalid) ? staleText(p) : '') +
           authBannerHtml(p) +
+          cloudBannerHtml(p) +
           '<div class="hms-list">' + hmsRowsHtml(p.id, p.hms_errors || [],
             p.hms_warnings || [], p.advisories || []) + '</div>' +
         '</div></div>';
@@ -2701,8 +2777,12 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       // than stacking next to it, so the two can never double-count one outage.
       const authEl = card.querySelector('.auth-banner');
       const authShown = !!authEl && authEl.style.display !== 'none';
+      // Cloud-dead-but-LAN-live: counts as a notice, and like a plain outage it
+      // is deliberately NOT fatal, so the bell stays quiet blue rather than red.
+      const cloudEl = card.querySelector('.cloud-banner');
+      const cloudShown = !!cloudEl && cloudEl.style.display !== 'none';
       const rows = card.querySelectorAll('.hms-row');
-      const count = (bannerShown ? 1 : 0) + (staleShown ? 1 : 0) + (authShown ? 1 : 0) + rows.length;
+      const count = (bannerShown ? 1 : 0) + (staleShown ? 1 : 0) + (authShown ? 1 : 0) + (cloudShown ? 1 : 0) + rows.length;
       const label = chip.querySelector('.notice-count');
       if (label) label.textContent = count;
       chip.style.display = count > 0 ? '' : 'none';

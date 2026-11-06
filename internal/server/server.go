@@ -179,6 +179,9 @@ func (s *Server) initBambuCloud() {
 	}
 
 	s.bambuCloud = bambu.NewBambuCloudClient(cfg.BambuAccount.Region)
+	// Seed the user ID from config before any auth attempt, so command signing
+	// survives a dead or missing token (see SetUserID).
+	s.bambuCloud.SetUserID(cfg.BambuAccount.UserID)
 
 	// Token persistence: ~/.printer-dashboard/bambu_token_{email}.json
 	tokenPath := bambu.DefaultTokenPath(cfg.BambuAccount.Email)

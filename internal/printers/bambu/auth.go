@@ -647,6 +647,22 @@ func (c *BambuCloudClient) Token() string { return c.token }
 // UserID returns the numeric user ID.
 func (c *BambuCloudClient) UserID() string { return c.userID }
 
+// SetUserID seeds the user ID from configuration.
+//
+// This matters more than it looks. Command signing is keyed by user ID, and
+// without a signer every `print`-namespace command (pause, cancel, movement)
+// is rejected by post-January-2025 firmware. If the user ID only ever arrived
+// from a successful cloud login, then a dead token would also disable signing —
+// stranding exactly the printers that are still reachable, and reachable only
+// over LAN, which is the case where local commands are the whole point. The
+// account's user_id is sitting in config.yaml; use it as the floor, and let a
+// successful login overwrite it with the authoritative value.
+func (c *BambuCloudClient) SetUserID(uid string) {
+	if uid != "" {
+		c.userID = uid
+	}
+}
+
 // GetDevices fetches the list of devices bound to the user's account.
 func (c *BambuCloudClient) GetDevices() ([]DeviceInfo, error) {
 	data, err := c.doAuthJSON("GET", "/v1/iot-service/api/user/bind", nil)

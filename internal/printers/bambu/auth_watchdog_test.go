@@ -2,6 +2,7 @@ package bambu
 
 import (
 	"context"
+	"net"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -276,7 +277,7 @@ func TestCheckCloudAuth_InconclusiveLeavesVerdictAlone(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c.markAuthRejected()
+	c.markCloudAuthRejected()
 	c.checkCloudAuth()
 
 	s := c.Status()
@@ -291,7 +292,7 @@ func TestCheckCloudAuth_AcceptedClearsRejection(t *testing.T) {
 	})
 	defer srv.Close()
 
-	c.markAuthRejected()
+	c.markCloudAuthRejected()
 	if !c.Status().AuthInvalid {
 		t.Fatal("setup: expected the rejection to be recorded first")
 	}
@@ -314,8 +315,8 @@ func TestMarkAuthRejected_IsIdempotent(t *testing.T) {
 	updates := make(chan printers.PrinterStatus, 8)
 	c.StatusCh = updates
 
-	c.markAuthRejected()
-	c.markAuthRejected()
+	c.markCloudAuthRejected()
+	c.markCloudAuthRejected()
 
 	select {
 	case <-updates:
@@ -324,7 +325,7 @@ func TestMarkAuthRejected_IsIdempotent(t *testing.T) {
 	}
 	select {
 	case <-updates:
-		t.Error("second markAuthRejected re-broadcast a status; a standing condition should be recorded once")
+		t.Error("second markCloudAuthRejected re-broadcast a status; a standing condition should be recorded once")
 	default:
 	}
 }
@@ -337,7 +338,7 @@ func TestOnConnectionLost_AuthRefusalMarksAuthInvalid(t *testing.T) {
 	c.setStatus(printers.PrinterStatus{ID: "test-id", Name: "Test Printer", Type: "bambu", Online: true, State: "printing"})
 	markReported(c)
 
-	c.onConnectionLost(nil, errors.New("not Authorized"))
+	c.onConnectionLost(nil, errors.New("not Authorized"), transportCloud, lostSink())
 
 	s := c.Status()
 	if !s.AuthInvalid {
@@ -415,27 +416,48 @@ func TestMarkAuthUnavailable_NoAccountConfigured(t *testing.T) {
 	})
 }
 
-func TestConnect_NilCloudDoesNotPanic(t *testing.T) {
-	// Guards the reason initPrinters can now register an unauthenticated
-	// printer: Connect used to dereference c.cloud unconditionally.
+func TestConnect_NoCloudStillAttemptsLAN(t *testing.T) {
+	// A client with no cloud account is no longer a dead end: the printer's own
+	// local broker is a valid transport, and this config has a host and access
+	// code. The old code dereferenced c.cloud unconditionally and panicked.
 	c := New(testPrinterClientConfig, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
+	// Point the only available candidate at a listener that refuses us, so the
+	// sweep fails fast instead of hanging on an unroutable address.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+	defer ln.Close()
+
+	c.brokerOverride = "tcp://" + ln.Addr().String()
+	c.cfg.MQTTTransport = transportCloudPin // isolate: exercise the no-cloud path only
+	c.connectBackoffBase = 5 * time.Millisecond
+	c.connectBackoffMax = 10 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- c.Connect(ctx) }()
+
+	time.Sleep(50 * time.Millisecond) // let it sweep and back off a few times
+	cancel()
 
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("Connect() = %v, want nil", err)
+			t.Errorf("Connect() = %v, want nil on cancellation", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Connect() did not return for a client with no cloud credentials")
-	}
-
-	if s := c.Status(); !s.AuthInvalid {
-		t.Error("AuthInvalid = false; want the no-account state recorded")
+		t.Fatal("Connect() did not return after its context was cancelled")
 	}
 }
 

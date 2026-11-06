@@ -39,16 +39,20 @@ type BambuAccount struct {
 
 // PrinterDef describes a printer to connect to.
 type PrinterDef struct {
-	ID         string `yaml:"id"`
-	Name       string `yaml:"name"`
-	Type       string `yaml:"type"` // "bambu" or "snapmaker"
-	// Bambu cloud printers don't need host/port — we connect via Bambu's cloud MQTT.
-	// For camera access, the printer's local IP + access_code is still needed.
-	Host       string `yaml:"host,omitempty"`       // Printer LAN IP (for camera, optional)
-	Port       int    `yaml:"port,omitempty"`       // Not used for cloud MQTT
-	AccessCode string `yaml:"access_code,omitempty"` // Bambu access code (for camera, optional without LAN mode)
-	Serial     string `yaml:"serial"`                // Bambu device serial number (dev_id)
-	Model      string `yaml:"model,omitempty"`       // e.g., "H2S", "P1S", "X1C" — used for camera URL format
+	ID     string `yaml:"id"`
+	Name   string `yaml:"name"`
+	Type   string `yaml:"type"` // "bambu" or "snapmaker"
+	// Host and AccessCode do double duty for Bambu printers: they are the
+	// credentials for the printer's own local MQTT broker (preferred when
+	// reachable) as well as for the local camera stream. Leaving them off
+	// falls the printer back to Bambu's cloud MQTT, which needs no local
+	// network access but does depend on an account token that can expire.
+	Host         string `yaml:"host,omitempty"`         // Printer LAN IP
+	Port         int    `yaml:"port,omitempty"`         // Not used for Bambu MQTT
+	AccessCode   string `yaml:"access_code,omitempty"`  // Bambu device access code
+	Serial       string `yaml:"serial"`                 // Bambu device serial number (dev_id)
+	Model        string `yaml:"model,omitempty"`        // e.g., "H2S", "P1S", "X1C" — used for camera URL format
+	MQTTTransport string `yaml:"mqtt_transport,omitempty"` // "auto" (default), "lan", or "cloud"
 }
 
 // CameraDef describes an external camera.

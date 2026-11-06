@@ -3587,6 +3587,10 @@ func TestConnect_RetryLoopRespectsContextCancellation(t *testing.T) {
 
 // markReported stamps lastStatusReport so the client looks like a printer the
 // dashboard has successfully heard from at least once.
+// lostSink returns a discard channel satisfying onConnectionLost's failover
+// signal for tests that call the handler directly rather than through Connect.
+func lostSink() chan struct{} { return make(chan struct{}, 1) }
+
 func markReported(c *Client) {
 	c.mu.Lock()
 	c.lastStatusReport = time.Now()
@@ -3607,7 +3611,7 @@ func TestOnConnectionLost_WithCachedTelemetry_MarksStale(t *testing.T) {
 	})
 	markReported(c)
 
-	c.onConnectionLost(nil, errors.New("read tcp 10.0.0.1:8883: connection reset by peer"))
+	c.onConnectionLost(nil, errors.New("read tcp 10.0.0.1:8883: connection reset by peer"), transportCloud, lostSink())
 
 	s := c.Status()
 	if s.Online {
@@ -3644,7 +3648,7 @@ func TestOnConnectionLost_NeverReported_KeepsPlainError(t *testing.T) {
 	// plain error is the honest thing to show.
 	c := newTestPrinterClient(nil)
 
-	c.onConnectionLost(nil, errors.New("no route to host"))
+	c.onConnectionLost(nil, errors.New("no route to host"), transportCloud, lostSink())
 
 	s := c.Status()
 	if s.Stale {
