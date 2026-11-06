@@ -68,6 +68,7 @@ docker build -t "$NAME" .
 # Remove any leftover container from a previous run, then start a new one
 docker rm -f "$NAME" || true
 docker run -d --name "$NAME" \
+  --user 0:0 \
   -p 0:8080 \
   -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
   -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \
@@ -91,8 +92,41 @@ Notes:
   it doesn't make sense to duplicate it per checkout — edit it once at
   `~/.printer-dashboard/config.yaml` and every worktree's container uses it.
 - `-v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:ro"` mounts the config
-  read-only; drop `:ro` if you rely on the app's config `Save()` behavior and want it
-  to persist back to disk.
+  read-only, which is fine if you edit it by hand — but then the onboarding wizard
+  cannot save, and printers have to be added by editing the file and restarting.
+  See the next section for what makes the writable mount actually work.
+
+### Why `--user 0:0` is required
+
+The image builds with `USER app` (uid 1000), but `config.yaml` on the host is owned by
+*you*, and a bind mount carries host ownership through the container's uid mapping
+unchanged. The process inside is therefore a different user from the one that owns the
+file it has mounted, and writes to it are refused — **even with `:rw` on the mount**,
+which governs the mount, not the file's own permissions. This is a common enough trap
+that the error message names both the file and the fix rather than just saying
+`permission denied`.
+
+It bites in exactly one place: the onboarding wizard's **Add Selected Printers** step,
+which persists your new Bambu credentials and printer list via `Config.Save()`. Without
+the flag that write fails, and the sign-in you just completed — 2FA and all — is gone on
+the next restart.
+
+`--user 0:0` fixes it by making the container's uid the one that owns those files:
+
+- **Rootless Podman** (the usual case on this machine): container uid 0 *is* your host
+  user, so this grants no extra privilege over running the binary directly — it simply
+  matches the ownership of everything you already own.
+- **Rootful Docker**: container uid 0 is real root, which can write the mount. If you
+  would rather not run as root, `chown` the mounted paths to the image's user instead
+  (`sudo chown -R 1000:1000 ~/.printer-dashboard`) and drop the flag.
+
+One consequence worth knowing: files the container creates in the mounted token cache —
+the Bambu token, and the cached `bambu_app_cert.pem` / `bambu_app_key.pem` /
+`bambu_app_crl.pem` signing credentials — end up owned by whichever uid the container
+runs as. Switching between the two approaches can leave files the other uid cannot
+read. If Bambu command signing (needed for H2S movement without Developer Mode) stops
+working after you change how the container is run, delete those three `.pem` files from
+`~/.printer-dashboard/` and let the app re-fetch them.
 
 ### Running a published image on another machine
 
@@ -124,6 +158,7 @@ vim ~/.printer-dashboard/config.yaml
 
 docker rm -f printer-dashboard || true
 docker run -d --name printer-dashboard \
+  --user 0:0 \
   -p 8080:8080 \
   -v "${HOME}/.printer-dashboard:/home/app/.printer-dashboard:rw" \
   -v "${HOME}/.printer-dashboard/config.yaml:/app/config.yaml:rw" \

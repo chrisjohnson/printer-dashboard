@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log"
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sort"
@@ -94,6 +96,8 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	s.wsHub = ws.NewHub()
 	go s.wsHub.Run()
 
+	s.warnIfConfigUnwritable()
+
 	s.initBambuCloud()
 	s.initPrinters()
 	s.migratePrinterModels() // backfill model for printers added before model field existed
@@ -128,6 +132,43 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 
 	s.registerRoutes()
 	return s, nil
+}
+
+// warnIfConfigUnwritable checks at startup whether the dashboard can persist
+// config changes, and says so plainly when it cannot.
+//
+// Checked at startup rather than discovered at save time, because the only thing
+// that needs a writable config is the onboarding wizard — and finding out mid
+// flow, after the user has already completed an email-and-2FA Bambu sign-in,
+// means the credential they just earned is quietly thrown away. The usual cause
+// is a bind-mounted config.yaml owned by a host user the container's own user
+// is not, which `:rw` on the mount does nothing about: the mount flag governs
+// the mount, not the file's permissions. See "Why --user 0:0 is required" in
+// the README.
+//
+// Opens without O_TRUNC or O_CREATE, so this is a pure permission probe and
+// cannot disturb the file.
+func (s *Server) warnIfConfigUnwritable() {
+	if s.configPath == "" {
+		return
+	}
+
+	f, err := os.OpenFile(s.configPath, os.O_WRONLY, 0)
+	if err == nil {
+		f.Close()
+		return
+	}
+
+	if errors.Is(err, fs.ErrPermission) {
+		log.Printf("WARNING: %s is not writable by this process, so config changes cannot be saved.", s.configPath)
+		log.Printf("  Adding printers from the onboarding wizard will fail at the final step.")
+		log.Printf("  Run the container as a user that owns the file (e.g. --user 0:0 under")
+		log.Printf("  rootless podman) or make it writable — see the README.")
+		return
+	}
+	// Missing or unreadable for some other reason: worth a line, but the server
+	// has already loaded a config and can still run.
+	log.Printf("WARNING: could not open %s for writing: %v", s.configPath, err)
 }
 
 // initBambuCloud sets up the Bambu cloud client and attempts authentication.
