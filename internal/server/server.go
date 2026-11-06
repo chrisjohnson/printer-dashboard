@@ -46,11 +46,16 @@ type Server struct {
 	// but here is the frame we still have, N seconds old" instead of
 	// declaring the camera gone.
 	cameraFrames      *camera.FrameCache
-	// camerasDisabled mirrors config.CamerasDisabledByEnv for this process.
-	// When true the instance never opens a camera connection and advertises no
-	// camera streams — see the doc on that function for why the toggle is
-	// per-instance rather than a config.yaml key.
-	camerasDisabled bool
+	// camerasEnabled is the live camera-streaming state, toggled at runtime from
+	// the dashboard header. Guarded by mu because the HTTP handlers read it on
+	// every request while the toggle writes it.
+	//
+	// DISABLE_CAMERAS only chooses the *initial* value: production omits it and
+	// comes up streaming, dev instances set it and come up quiet, and either can
+	// be flipped from the UI without a restart. The state is deliberately not
+	// persisted — a dev instance that enabled cameras for a look should not come
+	// back up next week still holding a printer's single camera session.
+	camerasEnabled bool
 	skipTracker       *SkipTracker            // per-printer skipped-object history for the current print
 	hmsDismissTracker *HMSDismissTracker      // per-printer dismissed HMS codes
 
@@ -107,45 +112,11 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	s.initPrinters()
 	s.migratePrinterModels() // backfill model for printers added before model field existed
 
-	s.camerasDisabled = config.CamerasDisabledByEnv()
-	if s.camerasDisabled {
-		log.Printf("cameras disabled for this instance (DISABLE_CAMERAS): no camera connections will be opened")
-	}
-
-	// Pre-connect camera streams eagerly on startup so frames are already
-	// buffered before the first browser page load. This eliminates the
-	// broken-image flash when the dashboard initially renders.
-	//
-	// Skipped entirely when disabled: Bambu camera ports are single-session and
-	// the printer silently drops extra clients, so an instance that pre-connects
-	// a camera it will never show is not merely idle — it actively locks the
-	// camera away from every other instance on the machine.
-	for _, pdef := range cfg.Printers {
-		if s.camerasDisabled {
-			break
-		}
-		if pdef.Type != "bambu" || pdef.Host == "" || pdef.AccessCode == "" {
-			continue
-		}
-		if bambu.UsesRTSPS(pdef.Model) {
-			// H2-series / X1-series: try RTSPS streams (port 322, requires LAN mode).
-			// Only pre-connects the BirdsEye (/live/1) feed to eliminate the
-			// broken-image flash on first load; the Toolhead (/live/2) feed
-			// is started lazily on first request via camera.RTSPStreamKey.
-			rtspsURL := fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", pdef.AccessCode, pdef.Host)
-			parsedURL, err := url.Parse(rtspsURL)
-			if err != nil {
-				log.Printf("camera: failed to parse RTSPS camera URL for %s: %v", pdef.Name, err)
-				continue
-			}
-			streamKey := camera.RTSPStreamKey(parsedURL)
-			if _, err := s.rtspMgr.Start(context.Background(), streamKey, rtspsURL); err != nil {
-				log.Printf("camera: failed to pre-connect camera %s via RTSPS: %v", pdef.Name, err)
-			}
-		} else {
-			// P1S/A1 series: use bambus:// binary protocol on port 6000
-			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
-		}
+	s.camerasEnabled = !config.CamerasDisabledByEnv()
+	if s.camerasEnabled {
+		s.warmUpCameras()
+	} else {
+		log.Printf("cameras start disabled (DISABLE_CAMERAS); enable them from the dashboard header if needed")
 	}
 
 	s.registerRoutes()
@@ -595,6 +566,8 @@ func (s *Server) registerRoutes() {
 	// API
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/printers", s.handleListPrinters)
+	s.mux.HandleFunc("GET /api/cameras", s.handleGetCameras)
+	s.mux.HandleFunc("POST /api/cameras", s.handleSetCameras)
 	s.mux.HandleFunc("GET /api/printers/{id}", s.handleGetPrinter)
 	s.mux.HandleFunc("POST /api/printers/{id}/pause", s.handlePause)
 	s.mux.HandleFunc("POST /api/printers/{id}/resume", s.handleResume)
@@ -679,11 +652,137 @@ func (s *Server) enrichStatusWithCameras(printerID string, status printers.Print
 // enrichWithStreams is a helper that merges camera streams into a status.
 // It does not acquire any locks — the caller is responsible for ensuring
 // the config data is safe to read.
+// warmUpCameras pre-connects every configured camera so frames are already
+// buffered before the first browser page load, eliminating the broken-image
+// flash. Called at startup when cameras start enabled, and again whenever the
+// runtime toggle turns them on.
+func (s *Server) warmUpCameras() {
+	for _, pdef := range s.cfg.Printers {
+		if pdef.Type != "bambu" || pdef.Host == "" || pdef.AccessCode == "" {
+			continue
+		}
+		if bambu.UsesRTSPS(pdef.Model) {
+			// H2-series / X1-series: try RTSPS streams (port 322, requires LAN
+			// mode). Only the BirdsEye (/live/1) feed is pre-connected; the
+			// Toolhead (/live/2) feed starts lazily on first request.
+			rtspsURL := fmt.Sprintf("rtsps://bblp:%s@%s:322/streaming/live/1", pdef.AccessCode, pdef.Host)
+			parsedURL, err := url.Parse(rtspsURL)
+			if err != nil {
+				log.Printf("camera: failed to parse RTSPS camera URL for %s: %v", pdef.Name, err)
+				continue
+			}
+			streamKey := camera.RTSPStreamKey(parsedURL)
+			if _, err := s.rtspMgr.Start(context.Background(), streamKey, rtspsURL); err != nil {
+				log.Printf("camera: failed to pre-connect camera %s via RTSPS: %v", pdef.Name, err)
+			}
+		} else {
+			// P1S/A1 series: use bambus:// binary protocol on port 6000
+			s.cameraMgr.GetBuffer(pdef.Host, 6000, pdef.AccessCode)
+		}
+	}
+}
+
+// releaseCameras hands every camera session back to the printers. Cancelling
+// the connections rather than just hiding the pictures is the point: Bambu
+// camera ports are single-session and silently drop further clients, so an
+// instance that merely stops displaying a camera it still holds would leave
+// every other instance — including production — staring at a timeout.
+func (s *Server) releaseCameras() {
+	// Nil-tolerant: a Server built without the camera managers (unit tests, and
+	// any future construction path that wires them lazily) must still be able to
+	// record the state change rather than crash on the way to saying "nothing to
+	// release".
+	if s.cameraMgr != nil {
+		s.cameraMgr.ReleaseAll()
+	}
+	if s.rtspMgr != nil {
+		s.rtspMgr.StopAll()
+	}
+	if s.cameraFrames != nil {
+		s.cameraFrames.ClearAll()
+	}
+}
+
+// camerasOn reports the live toggle state.
+func (s *Server) camerasOn() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.camerasEnabled
+}
+
+// setCamerasOn flips the runtime state and starts or releases the connections
+// to match. Returns the number of local camera sessions still held, so the
+// caller can confirm the release actually happened.
+func (s *Server) setCamerasOn(on bool) int {
+	s.mu.Lock()
+	changed := s.camerasEnabled != on
+	s.camerasEnabled = on
+	s.mu.Unlock()
+
+	if !changed {
+		return s.activeCameraSessions()
+	}
+
+	if on {
+		log.Printf("camera streaming enabled at runtime")
+		s.warmUpCameras()
+	} else {
+		log.Printf("camera streaming disabled at runtime, releasing sessions")
+		s.releaseCameras()
+	}
+	return s.activeCameraSessions()
+}
+
+// activeCameraSessions is the nil-safe read used by the toggle and the API.
+func (s *Server) activeCameraSessions() int {
+	if s.cameraMgr == nil {
+		return 0
+	}
+	return s.cameraMgr.ActiveCameras()
+}
+
+// handleGetCameras reports the live camera-streaming state.
+func (s *Server) handleGetCameras(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{
+		"enabled":  s.camerasOn(),
+		"sessions": s.activeCameraSessions(),
+	})
+}
+
+// handleSetCameras flips camera streaming at runtime.
+//
+// The state is in memory only and intentionally never written to config.yaml:
+// DISABLE_CAMERAS picks the starting value, this chooses the current one, and a
+// restart resets it. That is what makes it safe to leave a dev instance running
+// after taking a look at the video — it cannot come back tomorrow still holding
+// a printer's single camera session.
+func (s *Server) handleSetCameras(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, `expected JSON body {"enabled": true|false}`)
+		return
+	}
+	if body.Enabled == nil {
+		writeError(w, http.StatusBadRequest, `missing "enabled"`)
+		return
+	}
+
+	sessions := s.setCamerasOn(*body.Enabled)
+	log.Printf("camera streaming %v requested (sessions now held: %d)", *body.Enabled, sessions)
+
+	writeJSON(w, 200, map[string]any{
+		"enabled":  s.camerasOn(),
+		"sessions": sessions,
+	})
+}
+
 // gateCameras wraps a camera handler so a DISABLE_CAMERAS instance refuses the
 // request instead of opening a connection to the printer.
 func (s *Server) gateCameras(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.camerasDisabled {
+		if !s.camerasOn() {
 			writeJSON(w, http.StatusForbidden, map[string]any{
 				"ok": false, "disabled": true,
 				"error": "cameras are disabled in this instance (DISABLE_CAMERAS)",
@@ -695,7 +794,7 @@ func (s *Server) gateCameras(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) enrichWithStreams(driverStreams []printers.CameraStream, printerID string, status printers.PrinterStatus) printers.PrinterStatus {
-	if s.camerasDisabled {
+	if !s.camerasOn() {
 		// Nothing to advertise, so nothing to render and nothing to poll. This
 		// is the one place both handleListPrinters and handleGetPrinter funnel
 		// camera data through, so gating here covers the whole API.
@@ -798,7 +897,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	renderTemplate(w, indexDashboardTemplate, map[string]any{
 		"HasPrinters":     true,
 		"SkeletonCards":   make([]struct{}, printerCount),
-		"CamerasDisabled": s.camerasDisabled,
+		"CamerasEnabled":  s.camerasOn(),
 	})
 }
 
@@ -867,7 +966,14 @@ func (s *Server) handleListPrinters(w http.ResponseWriter, r *http.Request) {
 		return strings.ToLower(printerList[i].Name) < strings.ToLower(printerList[j].Name)
 	})
 
-	writeJSON(w, 200, map[string]any{"printers": printerList})
+	// cameras_enabled rides along so every poll re-syncs the header toggle.
+	// The state is server-side and global, so two tabs must agree with each
+	// other and with reality rather than each keeping a private idea of it.
+	writeJSON(w, 200, map[string]any{
+		"printers":         printerList,
+		"cameras_enabled":  s.camerasOn(),
+		"cameras_sessions": s.activeCameraSessions(),
+	})
 }
 
 func (s *Server) handleGetPrinter(w http.ResponseWriter, r *http.Request) {
@@ -1289,7 +1395,7 @@ func (s *Server) handleDismissHMS(w http.ResponseWriter, r *http.Request) {
 // frame we got, N seconds ago, and we cannot get a newer one". The frontend
 // keeps showing the picture in the second case.
 func (s *Server) handleCameraStatus(w http.ResponseWriter, r *http.Request) {
-	if s.camerasDisabled {
+	if !s.camerasOn() {
 		// Distinct from "no camera": the UI must not render a failure notice
 		// for a stream this instance was told never to open.
 		writeJSON(w, 200, map[string]any{
@@ -1410,7 +1516,7 @@ func (s *Server) cameraStreamStatus(rawURL string) (bool, string) {
 // state) for a printer's camera stream, giving the user a "refresh" action
 // when auth/stream errors have been detected.
 func (s *Server) handleCameraReconnect(w http.ResponseWriter, r *http.Request) {
-	if s.camerasDisabled {
+	if !s.camerasOn() {
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok": false, "disabled": true,
 			"error": "cameras are disabled in this instance (DISABLE_CAMERAS)",

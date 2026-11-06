@@ -2,6 +2,7 @@ package camera
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -274,4 +275,59 @@ func TestCameraManager_Stop(t *testing.T) {
 	mgr.Stop()
 	cancel()
 	// If goroutines leak, the test process won't exit cleanly.
+}
+
+// TestFrameBufferUpdateAfterCloseDoesNotPanic is a regression test for a crash
+// found by toggling camera streaming off in the running dashboard: releasing a
+// camera cancels the connection's context, but the reader can still deliver one
+// final frame, and Update closed the notify channel unconditionally — "close of
+// closed channel", taking the whole process down.
+func TestFrameBufferUpdateAfterCloseDoesNotPanic(t *testing.T) {
+	fb := NewFrameBuffer()
+	fb.Update([]byte("first"))
+	fb.Close()
+
+	// Must be a silent no-op, not a panic: the frame is stale and nobody is left
+	// waiting for it.
+	fb.Update([]byte("arrived after release"))
+
+	if got := fb.Latest(); string(got) != "first" {
+		t.Errorf("Latest() = %q, want the pre-close frame; a closed buffer must stop accepting updates", got)
+	}
+}
+
+// TestFrameBufferCloseIsIdempotent covers the two paths that can both reach
+// Close: per-camera release when streaming is toggled off, and manager shutdown.
+func TestFrameBufferCloseIsIdempotent(t *testing.T) {
+	fb := NewFrameBuffer()
+	fb.Close()
+	fb.Close() // must not panic
+}
+
+// TestFrameBufferConcurrentUpdateAndClose runs the actual race under -race with
+// a writer that never stops and a close in the middle.
+func TestFrameBufferConcurrentUpdateAndClose(t *testing.T) {
+	fb := NewFrameBuffer()
+	done := make(chan struct{})
+	go func() {
+		for i := 0; ; i++ {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			fb.Update([]byte{byte(i)})
+		}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	fb.Close()
+	time.Sleep(20 * time.Millisecond)
+	close(done)
+
+	// Ask for something newer than any sequence the writer could have stored,
+	// so the only way out is the closed check rather than a real frame.
+	if _, _, err := fb.WaitForFrame(context.Background(), ^uint64(0)); !errors.Is(err, errBufferClosed) {
+		t.Errorf("WaitForFrame after Close = %v, want errBufferClosed", err)
+	}
 }

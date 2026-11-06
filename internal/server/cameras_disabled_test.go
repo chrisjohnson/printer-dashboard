@@ -32,7 +32,7 @@ func TestEnrichWithStreams_DisabledInstanceAdvertisesNothing(t *testing.T) {
 
 	t.Run("disabled", func(t *testing.T) {
 		s := newTestServer(nil)
-		s.camerasDisabled = true
+		s.setCamerasOn(false)
 
 		got := s.enrichWithStreams(driverStreams, "p1s", status)
 		if len(got.CameraStreams) != 0 {
@@ -57,7 +57,7 @@ func TestEnrichWithStreams_DisabledInstanceAdvertisesNothing(t *testing.T) {
 // from an instance configured never to touch cameras.
 func TestCameraRoutesAreNotRegisteredWhenDisabled(t *testing.T) {
 	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
-	s.camerasDisabled = true
+	s.setCamerasOn(false)
 
 	for _, path := range []string{"/api/camera/proxy", "/api/camera/frame"} {
 		rec := httptest.NewRecorder()
@@ -82,7 +82,7 @@ func TestCameraRoutesAreNotRegisteredWhenDisabled(t *testing.T) {
 // made the stale-container incident read as a printer fault.
 func TestHandleCameraStatus_DisabledIsNotReportedAsFailure(t *testing.T) {
 	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
-	s.camerasDisabled = true
+	s.setCamerasOn(false)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/printers/p1s/camera-status", nil)
 	req.SetPathValue("id", "p1s")
@@ -107,17 +107,17 @@ func TestHandleCameraStatus_DisabledIsNotReportedAsFailure(t *testing.T) {
 func TestHandleIndex_SetsCamerasDisabledFlag(t *testing.T) {
 	build := func(disabled bool) string {
 		s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
-		s.camerasDisabled = disabled
+		s.setCamerasOn(!disabled)
 		rec := httptest.NewRecorder()
 		s.handleIndex(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 		b, _ := io.ReadAll(rec.Body)
 		return string(b)
 	}
 
-	if got := build(true); !strings.Contains(got, "window._camerasDisabled = true;") {
+	if got := build(true); !strings.Contains(got, "window._camerasEnabled = false;") {
 		t.Error("index with cameras disabled did not set the JS flag")
 	}
-	if got := build(false); !strings.Contains(got, "window._camerasDisabled = false;") {
+	if got := build(false); !strings.Contains(got, "window._camerasEnabled = true;") {
 		t.Error("index with cameras enabled did not set the JS flag to false")
 	}
 }
@@ -127,7 +127,7 @@ func TestHandleIndex_SetsCamerasDisabledFlag(t *testing.T) {
 // that silently drops them and shows a bogus printer error.
 func TestHandleListPrinters_NoStreamLeakWhenDisabled(t *testing.T) {
 	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
-	s.camerasDisabled = true
+	s.setCamerasOn(false)
 
 	rec := httptest.NewRecorder()
 	s.handleListPrinters(rec, httptest.NewRequest(http.MethodGet, "/api/printers", nil))
@@ -143,5 +143,99 @@ func TestHandleListPrinters_NoStreamLeakWhenDisabled(t *testing.T) {
 	}
 	if len(payload.Printers[0].CameraStreams) != 0 {
 		t.Errorf("API leaked camera streams on a disabled instance: %+v", payload.Printers[0].CameraStreams)
+	}
+}
+
+// ── runtime toggle ───────────────────────────────────────────────────────────
+
+// TestSetCamerasOnFlipsStateWithoutRestart is the point of the toggle: the env
+// var only picks the starting value, and the operator can look at the video on a
+// dev instance without editing anything or bouncing the container.
+func TestSetCamerasOnFlipsStateWithoutRestart(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
+
+	if !s.camerasOn() {
+		t.Fatal("a test server should start with cameras on")
+	}
+	s.setCamerasOn(false)
+	if s.camerasOn() {
+		t.Error("cameras still on after setCamerasOn(false)")
+	}
+	if len(s.enrichWithStreams(cameraMock().CameraStreams(), "p1s", printers.PrinterStatus{}).CameraStreams) != 0 {
+		t.Error("streams still advertised after disabling at runtime")
+	}
+
+	s.setCamerasOn(true)
+	if !s.camerasOn() {
+		t.Error("cameras did not come back on")
+	}
+	if len(s.enrichWithStreams(cameraMock().CameraStreams(), "p1s", printers.PrinterStatus{}).CameraStreams) == 0 {
+		t.Error("streams not advertised again after re-enabling")
+	}
+}
+
+// TestSetCamerasOnIsIdempotent: the poll re-applies the server value on every
+// refresh, so re-setting the current state must not tear down and rebuild live
+// camera connections each time.
+func TestSetCamerasOnIsIdempotent(t *testing.T) {
+	s := newTestServer(nil)
+	s.setCamerasOn(true)
+	s.setCamerasOn(true)
+	s.setCamerasOn(false)
+	s.setCamerasOn(false)
+	if s.camerasOn() {
+		t.Error("final state should be off")
+	}
+}
+
+func TestHandleSetCamerasAPI(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
+
+	post := func(body string) map[string]any {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/cameras", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		s.handleSetCameras(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return out
+	}
+
+	if got := post(`{"enabled":false}`); got["enabled"] != false {
+		t.Errorf("disable response = %v", got)
+	}
+	if got := post(`{"enabled":true}`); got["enabled"] != true {
+		t.Errorf("enable response = %v", got)
+	}
+	if rec := httptest.NewRecorder(); func() bool {
+		s.handleSetCameras(rec, httptest.NewRequest(http.MethodPost, "/api/cameras", strings.NewReader(`{}`)))
+		return rec.Code == http.StatusBadRequest
+	}() != true {
+		t.Error("missing \"enabled\" should be a 400, not silently accepted")
+	}
+}
+
+// TestHandleListPrintersReportsCameraState keeps the poll in sync with reality so
+// a second tab reflects a flip made in the first, rather than each browser
+// holding a private opinion about a shared printer resource.
+func TestHandleListPrintersReportsCameraState(t *testing.T) {
+	s := newTestServer(map[string]printers.Printer{"p1s": cameraMock()})
+
+	read := func() (any, any) {
+		rec := httptest.NewRecorder()
+		s.handleListPrinters(rec, httptest.NewRequest(http.MethodGet, "/api/printers", nil))
+		var payload map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return payload["cameras_enabled"], payload["cameras_sessions"]
+	}
+
+	if on, _ := read(); on != true {
+		t.Errorf("cameras_enabled = %v, want true", on)
+	}
+	s.setCamerasOn(false)
+	if on, _ := read(); on != false {
+		t.Errorf("cameras_enabled = %v after disabling, want false", on)
 	}
 }

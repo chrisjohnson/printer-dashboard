@@ -45,6 +45,24 @@ not a self-contained choice.
 When disabled, the instance opens no camera connection, advertises no camera
 streams, and renders cards without a camera block at all.
 
+### The env var picks the starting state; the header toggle is the real control
+
+There is a **Cameras on/off switch in the dashboard header**, next to the
+detailed/compact toggle. It starts and stops streaming at runtime — enabling
+connects, disabling closes the sockets and hands the camera back to whoever else
+is waiting. So you do not need to restart a container to look at the video.
+
+`DISABLE_CAMERAS` only chooses the initial value. The runtime state is in memory
+and is **never persisted**: an instance that enabled cameras for a look comes back
+after a restart in whatever its environment says, which for a dev instance means
+off again. That is deliberate — a forgotten "on" must not survive to starve
+production of a camera days later.
+
+If you are driving the API directly rather than clicking: `GET /api/cameras`
+reports `{enabled, sessions}`, `POST /api/cameras {"enabled": true|false}`
+changes it. The `sessions` count is the honest confirmation that a release
+actually closed the sockets.
+
 ## Building and running: use podman, not docker
 
 This machine has no usable Docker for project work — you are not in the `docker`
