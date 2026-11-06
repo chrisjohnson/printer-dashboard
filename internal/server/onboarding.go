@@ -1378,6 +1378,11 @@ const indexDashboardTemplate = `<!DOCTYPE html>
   </div>
   <script>
     window._printerCache = {};
+    // Set by the server when this instance runs with DISABLE_CAMERAS. Cards
+    // then render no camera block at all rather than the "add LAN IP and
+    // access code" placeholder, which would blame the operator for a choice
+    // this process made deliberately.
+    window._camerasDisabled = {{if .CamerasDisabled}}true{{else}}false{{end}};
     window._skippedCounts = {};
     window._jogBusy = {};
     window._wsReconnectDelay = 1000;
@@ -1850,7 +1855,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
           }
           // Periodic camera health check: if the camera stream is failing
           // (e.g. auth token expired), surface the error with a refresh button.
-          if (!window._camHealthInterval) {
+          if (!window._camHealthInterval && !window._camerasDisabled) {
             window._camHealthInterval = setInterval(function() {
               document.querySelectorAll('.camera-slot[data-type="internal"]').forEach(function(slot) {
                 const printerId = slot.id.replace(/^cam-/, '').replace(/-\d+$/, '');
@@ -2339,6 +2344,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
         '</div>' +
         // Camera section — above temps, with placeholder when no streams
         (function() {
+          if (window._camerasDisabled) return '';
           const streams = p.camera_streams || [];
           if (streams.length === 0) {
             // Placeholder with reason based on printer type

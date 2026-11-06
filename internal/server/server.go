@@ -46,6 +46,11 @@ type Server struct {
 	// but here is the frame we still have, N seconds old" instead of
 	// declaring the camera gone.
 	cameraFrames      *camera.FrameCache
+	// camerasDisabled mirrors config.CamerasDisabledByEnv for this process.
+	// When true the instance never opens a camera connection and advertises no
+	// camera streams — see the doc on that function for why the toggle is
+	// per-instance rather than a config.yaml key.
+	camerasDisabled bool
 	skipTracker       *SkipTracker            // per-printer skipped-object history for the current print
 	hmsDismissTracker *HMSDismissTracker      // per-printer dismissed HMS codes
 
@@ -102,10 +107,23 @@ func New(cfg *config.Config, configPath string) (*Server, error) {
 	s.initPrinters()
 	s.migratePrinterModels() // backfill model for printers added before model field existed
 
+	s.camerasDisabled = config.CamerasDisabledByEnv()
+	if s.camerasDisabled {
+		log.Printf("cameras disabled for this instance (DISABLE_CAMERAS): no camera connections will be opened")
+	}
+
 	// Pre-connect camera streams eagerly on startup so frames are already
 	// buffered before the first browser page load. This eliminates the
 	// broken-image flash when the dashboard initially renders.
+	//
+	// Skipped entirely when disabled: Bambu camera ports are single-session and
+	// the printer silently drops extra clients, so an instance that pre-connects
+	// a camera it will never show is not merely idle — it actively locks the
+	// camera away from every other instance on the machine.
 	for _, pdef := range cfg.Printers {
+		if s.camerasDisabled {
+			break
+		}
 		if pdef.Type != "bambu" || pdef.Host == "" || pdef.AccessCode == "" {
 			continue
 		}
@@ -649,6 +667,13 @@ func (s *Server) enrichStatusWithCameras(printerID string, status printers.Print
 // It does not acquire any locks — the caller is responsible for ensuring
 // the config data is safe to read.
 func (s *Server) enrichWithStreams(driverStreams []printers.CameraStream, printerID string, status printers.PrinterStatus) printers.PrinterStatus {
+	if s.camerasDisabled {
+		// Nothing to advertise, so nothing to render and nothing to poll. This
+		// is the one place both handleListPrinters and handleGetPrinter funnel
+		// camera data through, so gating here covers the whole API.
+		return status
+	}
+
 	// External cameras from config
 	var configStreams []printers.CameraStream
 	for _, cam := range s.cfg.Cameras {
@@ -743,8 +768,9 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	// client-side innerHTML swap in loadPrinters() doesn't change page
 	// height/layout once real data arrives.
 	renderTemplate(w, indexDashboardTemplate, map[string]any{
-		"HasPrinters":   true,
-		"SkeletonCards": make([]struct{}, printerCount),
+		"HasPrinters":     true,
+		"SkeletonCards":   make([]struct{}, printerCount),
+		"CamerasDisabled": s.camerasDisabled,
 	})
 }
 
@@ -1235,6 +1261,16 @@ func (s *Server) handleDismissHMS(w http.ResponseWriter, r *http.Request) {
 // frame we got, N seconds ago, and we cannot get a newer one". The frontend
 // keeps showing the picture in the second case.
 func (s *Server) handleCameraStatus(w http.ResponseWriter, r *http.Request) {
+	if s.camerasDisabled {
+		// Distinct from "no camera": the UI must not render a failure notice
+		// for a stream this instance was told never to open.
+		writeJSON(w, 200, map[string]any{
+			"ok": false, "disabled": true,
+			"error": "cameras are disabled in this instance (DISABLE_CAMERAS)",
+		})
+		return
+	}
+
 	id := r.PathValue("id")
 	p, ok := s.getPrinter(id)
 	if !ok {
@@ -1346,6 +1382,14 @@ func (s *Server) cameraStreamStatus(rawURL string) (bool, string) {
 // state) for a printer's camera stream, giving the user a "refresh" action
 // when auth/stream errors have been detected.
 func (s *Server) handleCameraReconnect(w http.ResponseWriter, r *http.Request) {
+	if s.camerasDisabled {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"ok": false, "disabled": true,
+			"error": "cameras are disabled in this instance (DISABLE_CAMERAS)",
+		})
+		return
+	}
+
 	id := r.PathValue("id")
 	p, ok := s.getPrinter(id)
 	if !ok {

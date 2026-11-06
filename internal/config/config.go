@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -146,4 +147,31 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// CamerasDisabledByEnv reports whether this process should run with camera
+// support switched off, via DISABLE_CAMERAS=1 (also accepts true/yes/on).
+//
+// This is deliberately an environment variable and not a config.yaml key. The
+// config file is shared machine-wide by design — every worktree's container
+// mounts the same one, because it describes the printers rather than the
+// process — so a config key could only ever turn cameras off for everything at
+// once, including production. The toggle has to be per-instance, and the
+// instance is what the environment describes.
+//
+// Why per-instance matters: Bambu camera ports are single-session. The P1S
+// accepts exactly one client on :6000 and silently drops further connection
+// attempts (no SYN-ACK, no RST), so they surface as an i/o timeout that looks
+// identical to "liveview is disabled". Every dashboard instance eagerly
+// pre-connects its cameras at startup, so whichever boots first wins the
+// camera and every other instance is left showing a misleading error about
+// the printer's power or LAN mode. Dev and test instances almost never need
+// video, so they should not be competing for it.
+func CamerasDisabledByEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DISABLE_CAMERAS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
