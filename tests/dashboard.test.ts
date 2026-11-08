@@ -1222,3 +1222,29 @@ test.describe('Transport badge', () => {
     await expect(page.locator('#printer-p .transport-badge')).toHaveText('lan');
   });
 });
+
+test.describe('List order — error kinds', () => {
+  test('a standing maintenance fault sorts below an active print', async ({ page }) => {
+    // Both report state "error" vs "printing", but only the failed job is
+    // urgent. The chronic case is a P1S that has been complaining about its SD
+    // card for weeks while printing fine on request; it used to sit at the top
+    // of the dashboard permanently and bury every live job.
+    await page.route('**/api/printers', async (route) =>
+      route.fulfill({
+        json: {
+          printers: [
+            { ...base, id: 'fault', name: 'AAA Standing Fault', state: 'error', print_failed: false },
+            { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
+            { ...base, id: 'dead', name: 'MMM Failed Print', state: 'error', print_failed: true },
+          ],
+        },
+      }),
+    );
+    await page.goto('/');
+
+    const order = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('#printer-list .card')).map((c) => c.id),
+    );
+    expect(order).toEqual(['printer-dead', 'printer-run', 'printer-fault']);
+  });
+});

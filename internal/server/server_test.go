@@ -536,12 +536,14 @@ func TestHandleListPrinters(t *testing.T) {
 		}
 	})
 
-	t.Run("three-tier sort error active idle", func(t *testing.T) {
+	t.Run("four-tier sort failed active fault idle", func(t *testing.T) {
 		pIdle1 := &MockPrinter{
 			id:   "idle1",
 			name: "echo",
 			stat: printers.PrinterStatus{ID: "idle1", Name: "echo", State: "idle"},
 		}
+		// A standing maintenance fault on an idle printer: an error, but not one
+		// that outranks someone else's live job.
 		pError1 := &MockPrinter{
 			id:   "err1",
 			name: "foxtrot",
@@ -552,10 +554,11 @@ func TestHandleListPrinters(t *testing.T) {
 			name: "delta",
 			stat: printers.PrinterStatus{ID: "act1", Name: "delta", State: "printing"},
 		}
+		// A print that actually failed: this one does lead the list.
 		pError2 := &MockPrinter{
 			id:   "err2",
 			name: "alpha",
-			stat: printers.PrinterStatus{ID: "err2", Name: "alpha", State: "error"},
+			stat: printers.PrinterStatus{ID: "err2", Name: "alpha", State: "error", PrintFailed: true},
 		}
 		pActive2 := &MockPrinter{
 			id:   "act2",
@@ -589,8 +592,10 @@ func TestHandleListPrinters(t *testing.T) {
 			t.Fatalf("expected 6 printers, got %d", len(list))
 		}
 
-		// Error first (A-Z), then active (A-Z), then idle (A-Z).
-		expected := []string{"alpha", "foxtrot", "bravo", "delta", "charlie", "echo"}
+		// Failed print first, then active (A-Z), then the standing fault, then
+		// idle (A-Z). The chronic fault used to sit at the top forever and bury
+		// every running job.
+		expected := []string{"alpha", "bravo", "delta", "foxtrot", "charlie", "echo"}
 		for i, want := range expected {
 			got := list[i].(map[string]any)["name"].(string)
 			if got != want {

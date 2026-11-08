@@ -928,15 +928,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // sort promotion.
 func printerSortPriority(s printers.PrinterStatus) int {
 	if s.AuthInvalid {
-		return 2
+		// Our problem, not the printer's, and it will not resolve on its own.
+		return 3
 	}
 	switch s.State {
 	case "error":
-		return 0
+		if s.PrintFailed {
+			// A job died. Filament is in the nozzle and something is waiting on
+			// a human, so this is the top of the list.
+			return 0
+		}
+		// A standing fault on an idle printer — a degraded SD card, a worn
+		// part. Worth knowing about, but it has been true for weeks and will
+		// still be true tomorrow, so it must not permanently outrank every
+		// print that is actually running right now.
+		return 2
 	case "printing", "paused":
 		return 1
 	default: // "idle", "complete", "unknown", ""
-		return 2
+		return 3
 	}
 }
 

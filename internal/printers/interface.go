@@ -100,6 +100,21 @@ type PrinterStatus struct {
 	// actually present override, so an omitted "false" would leave a card stuck
 	// on "sign in again" forever after the user had already done so.
 	AuthInvalid bool `json:"auth_invalid"`
+	// PrintFailed distinguishes *why* a printer is in the error state, which
+	// changes what the error is worth to the person looking at the dashboard.
+	//
+	// true  — a job died: gcode_state came back FAILED, or a print_error arrived
+	//         while the print was in an unhealthy state. Filament is stuck in the
+	//         nozzle and something needs doing.
+	// false — a standing condition on an otherwise idle printer, e.g. a P1S that
+	//         reports a degraded SD card every time it is asked and will keep
+	//         doing so for weeks while printing perfectly well when told to.
+	//
+	// Both are "error", but only the first is urgent, and treating them alike
+	// meant an unactionable maintenance notice permanently outranked every active
+	// print on the fleet. No omitempty: a cleared verdict has to propagate, or
+	// mergeWithCache keeps the stale true forever.
+	PrintFailed bool `json:"print_failed"`
 	// CloudDegraded is the counterpart of AuthInvalid for a driver that has
 	// more than one transport: the vendor cloud rejected our account
 	// credentials, but this printer is live over the local network, so the

@@ -26,19 +26,36 @@ func TestPrinterSortPriority(t *testing.T) {
 		want int
 		why  string
 	}{
-		{"error", printers.PrinterStatus{State: "error"}, 0, "a fault needs attention before anything else"},
+		{
+			"failed print",
+			printers.PrinterStatus{State: "error", PrintFailed: true},
+			0,
+			"a job died: filament in the nozzle, something waiting on a human",
+		},
+		{
+			"standing fault on an idle printer",
+			printers.PrinterStatus{State: "error", PrintFailed: false},
+			2,
+			"a degraded SD card has been true for weeks and must not outrank a live print",
+		},
 		{"printing", printers.PrinterStatus{State: "printing"}, 1, "a live job is the reason the dashboard is open"},
 		{"paused", printers.PrinterStatus{State: "paused"}, 1, "a paused job still needs a decision"},
-		{"complete", printers.PrinterStatus{State: "complete"}, 2, "finished is finished — it must not outrank a running job"},
-		{"idle", printers.PrinterStatus{State: "idle"}, 2, "nothing running"},
-		{"unknown", printers.PrinterStatus{State: "unknown"}, 2, "nothing known is not the same as something running"},
-		{"blank", printers.PrinterStatus{State: ""}, 2, "blank state is not an active print"},
-		{"unrecognised", printers.PrinterStatus{State: "bogus_future_state"}, 2, "an unrecognised state must not be promoted to active"},
+		{"complete", printers.PrinterStatus{State: "complete"}, 3, "finished is finished — it must not outrank a running job"},
+		{"idle", printers.PrinterStatus{State: "idle"}, 3, "nothing running"},
+		{"unknown", printers.PrinterStatus{State: "unknown"}, 3, "nothing known is not the same as something running"},
+		{"blank", printers.PrinterStatus{State: ""}, 3, "blank state is not an active print"},
+		{"unrecognised", printers.PrinterStatus{State: "bogus_future_state"}, 3, "an unrecognised state must not be promoted to active"},
 		{
 			"locked out",
 			printers.PrinterStatus{State: "error", AuthInvalid: true},
-			2,
+			3,
 			"an expired sign-in is the dashboard being blind, not the printer being broken",
+		},
+		{
+			"locked out beats nothing but ties idle",
+			printers.PrinterStatus{State: "error", AuthInvalid: true, PrintFailed: true},
+			3,
+			"AuthInvalid wins: we cannot see the printer, so its reported failure is not ours to act on",
 		},
 	}
 
@@ -136,19 +153,22 @@ func TestHandleListPrinters_ActivePrintsComeFirst(t *testing.T) {
 	}
 }
 
-// TestHandleListPrinters_ErrorFirstThenActiveThenIdle pins the full three-tier
-// contract in one pass, including that A-Z still orders within a tier.
-func TestHandleListPrinters_ErrorFirstThenActiveThenIdle(t *testing.T) {
+// TestHandleListPrinters_FailedPrintBeatsActiveBeatsStandingFault pins the full
+// four-tier contract in one pass, including that A-Z still orders within a tier.
+func TestHandleListPrinters_FailedPrintBeatsActiveBeatsStandingFault(t *testing.T) {
 	s := newSortTestServer(
 		printers.PrinterStatus{ID: "c", Name: "Bravo", State: "complete"},
-		printers.PrinterStatus{ID: "a", Name: "Alpha", State: "error"},
+		printers.PrinterStatus{ID: "a", Name: "Alpha", State: "error", PrintFailed: true},
 		printers.PrinterStatus{ID: "d", Name: "Delta", State: "idle"},
 		printers.PrinterStatus{ID: "b", Name: "Charlie", State: "printing"},
 		printers.PrinterStatus{ID: "e", Name: "Echo", State: "paused"},
+		printers.PrinterStatus{ID: "f", Name: "Foxtrot", State: "error"}, // idle + maintenance fault
 	)
 
 	got := listPrinterNames(t, s)
-	want := []string{"Alpha", "Charlie", "Echo", "Bravo", "Delta"}
+	// Alpha's job died, so it leads. Charlie and Echo are running. Foxtrot's
+	// fault is chronic, so it waits behind the live work.
+	want := []string{"Alpha", "Charlie", "Echo", "Foxtrot", "Bravo", "Delta"}
 
 	if len(got) != len(want) {
 		t.Fatalf("got %v, want %v", got, want)

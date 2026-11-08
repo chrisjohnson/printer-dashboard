@@ -1356,6 +1356,25 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 	// since print_error can stay 0 the whole time.
 	if p.GcodeState == "FAILED" || printErrorIsFault || len(s.HMSErrors) > 0 {
 		s.State = "error"
+		// A failed job and a standing health fault both land in "error", but
+		// only the failed job is urgent, and the honest way to tell them apart
+		// is the transition rather than the code.
+		//
+		// We were printing (or paused) and now we are not: a job just died in
+		// front of us. Filament is in the nozzle and something is waiting on a
+		// human.
+		//
+		// We arrived already in error — first report after a connect or a
+		// restart — is a condition the printer was in before we looked. A P1S
+		// reports its degraded SD card this way forever, and prints perfectly
+		// well when told to, so letting it claim the top of the list buries
+		// every live job on the fleet indefinitely.
+		//
+		// Deliberately not a lookup table of which error codes are "maintenance"
+		// codes: that is the firmware-table trap again, and the transition is
+		// both cheaper and truer to what the operator actually cares about.
+		wasActive := c.Status().State == "printing" || c.Status().State == "paused"
+		s.PrintFailed = wasActive && (p.GcodeState == "FAILED" || printErrorIsFault || len(s.HMSErrors) > 0)
 		switch {
 		case printErrorIsFault:
 			// print_error is the reason the printer is in this state, so it
@@ -1379,6 +1398,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		// fields doesn't blank out the explanation an earlier report gave.
 	} else if s.State != "error" {
 		s.ErrorMsg = ""
+		s.PrintFailed = false
 	} else if hadHMSErrors && p.GcodeState == "" {
 		// Secondary un-latch case: HMS errors existed before this report and
 		// are gone now (explicit "hms: []" above, or decayed via the
@@ -1391,6 +1411,7 @@ func (c *Client) handleReport(_ mqtt.Client, msg mqtt.Message) {
 		// gcode_state) rather than leaving it stuck on "error" indefinitely.
 		s.State = "idle"
 		s.ErrorMsg = ""
+		s.PrintFailed = false
 	}
 
 	c.setStatus(s)
