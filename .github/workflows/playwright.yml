@@ -1,0 +1,60 @@
+name: Playwright e2e
+
+# The suite is fully stubbed (tests/stub/snapmaker.js + tests/testdata/
+# config.test.yaml), so it needs no printers and can run on a shared runner.
+# It runs on pull requests so a red frontend cannot land silently, and on push
+# to main so a merge that skipped the check is still caught.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    name: playwright
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          go build ./...
+          go vet ./...
+          go build -o printer-dashboard .
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        run: scripts/run-playwright-ci.sh
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7

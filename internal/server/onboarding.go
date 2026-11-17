@@ -1520,9 +1520,21 @@ const indexDashboardTemplate = `<!DOCTYPE html>
     // refreshes an existing block rather than creating one, so a mid-session
     // flip has to rebuild outright or enabling cameras advertises streams into
     // cards with nowhere to put them.
-    function applyCamerasState(on) {
+    //
+    // aboutToRender is what the caller in loadPrinters() passes: that handler
+    // rebuilds every card from _camerasServer a few lines later anyway, so the
+    // comparison below would schedule a second full fetch of /api/printers for
+    // nothing. It was being passed already and ignored, which meant every page
+    // load asked for the fleet twice — and anything that touched the DOM between
+    // the two renders (a test injecting a card, or a user mid-selection) was
+    // wiped by the second one.
+    function applyCamerasState(on, aboutToRender) {
       window._camerasServer = !!on;
       paintCameraSwitch(!!on);
+      if (aboutToRender) {
+        window._camerasRendered = window._camerasServer;
+        return;
+      }
       if (window._camerasServer !== window._camerasRendered) loadPrinters();
     }
 
@@ -1694,11 +1706,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       card.dataset.printFailed = p.print_failed ? '1' : '0';
       toggleAuthBanner(card.querySelector('.auth-banner'), p);
       toggleCloudBanner(card.querySelector('.cloud-banner'), p);
-      const badgeEl = card.querySelector('.transport-badge');
-      if (badgeEl && p.transport) {
-        badgeEl.textContent = p.transport;
-        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
-      }
+      syncTransportBadge(card, p);
 
       // 3. Progress bar fill
       const fill = card.querySelector('.progress-bar .fill');
@@ -2334,11 +2342,7 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       card.dataset.printFailed = p.print_failed ? '1' : '0';
       toggleAuthBanner(card.querySelector('.auth-banner'), p);
       toggleCloudBanner(card.querySelector('.cloud-banner'), p);
-      const badgeEl = card.querySelector('.transport-badge');
-      if (badgeEl && p.transport) {
-        badgeEl.textContent = p.transport;
-        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
-      }
+      syncTransportBadge(card, p);
         } else {
           const staleEl = card.querySelector('.stale-banner');
           if (staleEl && p.stale && staleEl.style.display !== 'none') {
@@ -2354,6 +2358,33 @@ const indexDashboardTemplate = `<!DOCTYPE html>
       const cls = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
       var via = p.transport === 'lan' ? 'the local network' : 'Bambu Lab cloud';
       return '<span class="' + cls + '" title="Status arrives via ' + via + '">' + escapeHtml(p.transport) + '</span>';
+    }
+
+    // Brings an already-rendered card's transport badge in line with a status
+    // payload.
+    //
+    // renderCard() omits the element entirely for a printer with no transport
+    // (a Snapmaker has one path, so a badge would be noise), which used to mean
+    // the update paths could only rewrite a badge that was already there — and
+    // so a printer whose transport only gets established after the page loaded
+    // (the normal case at startup: transport is empty until a session connects,
+    // and it changes again when one fails over) stayed badge-less until a reload.
+    // Creating it here is what makes updateCard() agree with renderCard().
+    function syncTransportBadge(card, p) {
+      const group = card.querySelector('.card-status-group');
+      if (!group) return;
+      const badgeEl = group.querySelector('.transport-badge');
+      if (!p.transport) {
+        if (badgeEl) badgeEl.remove();
+        return;
+      }
+      if (badgeEl) {
+        badgeEl.textContent = p.transport;
+        badgeEl.className = p.transport === 'lan' ? 'transport-badge lan' : 'transport-badge';
+        return;
+      }
+      // Same position renderCard() puts it: first in the group, dot after it.
+      group.insertAdjacentHTML('afterbegin', transportBadgeHtml(p));
     }
 
     // Cloud credential is dead but the printer is streaming locally.

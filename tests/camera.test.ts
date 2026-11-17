@@ -34,9 +34,12 @@ test.describe('Camera Stream Proxy', () => {
   });
 
   test('proxy serves snapmaker touchscreen snapshot', async ({ page }) => {
-    // The U1 snapmaker has a /screen/snapshot endpoint that returns PNG
+    // The stub U1 (tests/stub/snapmaker.js, started by tests/run-test-server.sh)
+    // serves /screen/snapshot with a real PNG. This used to name the live
+    // printer's LAN address, so the test failed whenever that machine was
+    // offline, firewalled, or simply not on the runner's network.
     const response = await page.request.get(
-      '/api/camera/proxy?url=http%3A%2F%2F192.168.1.10%3A80%2Fscreen%2Fsnapshot',
+      '/api/camera/proxy?url=http%3A%2F%2F127.0.0.1%3A18081%2Fscreen%2Fsnapshot',
     );
     expect(response.status()).toBe(200);
     const ct = response.headers()['content-type'] || '';
