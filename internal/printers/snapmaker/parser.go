@@ -3,7 +3,9 @@ package snapmaker
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -114,6 +116,7 @@ type printStatsInfo struct {
 type printStatsReport struct {
 	Filename      string          `json:"filename"`
 	PrintDuration float64         `json:"print_duration"`
+	TotalDuration float64         `json:"total_duration"`
 	State         string          `json:"state"`
 	Message       string          `json:"message"`
 	Info          *printStatsInfo `json:"info,omitempty"`
@@ -189,6 +192,45 @@ func parseQueryReport(data []byte) (*moonrakerQueryResponse, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// Suffix patterns for the slicer estimate embedded in a Snapmaker G-code
+// filename: "_16h33m.gcode", or "_16h.gcode" for a whole-hour estimate.
+// Case-insensitive because the app has been seen writing both "16h33m" and
+// "16H33M".
+var (
+	estimateHMSuffixRe = regexp.MustCompile(`(?i)_(\d+)h(\d+)m\.gcode$`)
+	estimateHSuffixRe  = regexp.MustCompile(`(?i)_(\d+)h\.gcode$`)
+)
+
+// estimatedTimeFromFilename extracts the slicer's total print-time estimate
+// that the Snapmaker app embeds in the G-code filename it sends, returning it
+// in seconds. A live example: "Stoner Kit - Body_PETG_16h33m.gcode" -> 59580.
+//
+// This is the only total-duration source Moonraker offers. Its own
+// print_stats.total_duration is wall-clock time since the job started (pauses
+// included), not the plan, and there is no remaining-time field at all — while
+// the vendor phone app counts down from exactly this filename figure, so
+// sourcing the dashboard's total here is what makes the two agree.
+//
+// The pattern is anchored to the end of the name because the estimate is
+// always the app's final suffix token; a "16h33m" earlier in a model name is
+// not an estimate. The hours-only "_<Xh>.gcode" variant is accepted too, since
+// whole-hour estimates are written without the minutes part.
+//
+// Reports (0, false) when the name carries no estimate — a file sent from
+// something other than the Snapmaker app, or a hand-named G-code.
+func estimatedTimeFromFilename(name string) (int, bool) {
+	if m := estimateHMSuffixRe.FindStringSubmatch(name); m != nil {
+		hours, _ := strconv.Atoi(m[1])
+		minutes, _ := strconv.Atoi(m[2])
+		return hours*3600 + minutes*60, true
+	}
+	if m := estimateHSuffixRe.FindStringSubmatch(name); m != nil {
+		hours, _ := strconv.Atoi(m[1])
+		return hours * 3600, true
+	}
+	return 0, false
 }
 
 // mapMoonrakerState converts Moonraker state.text + flags into canonical state.

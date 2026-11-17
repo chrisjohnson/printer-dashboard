@@ -2695,29 +2695,42 @@ const indexDashboardTemplate = `<!DOCTYPE html>
 
     // Build the time text shown beside the percentage, as "remaining / total".
     //
-    // No printer reports a total print time, so it is derived from whatever the
-    // driver does report: Bambu sends remaining_time (mc_remaining_time) plus
-    // an elapsed_time the server measures itself, while Snapmaker/Moonraker
-    // sends only elapsed_time (print_duration) alongside progress. Hence:
-    //   remaining + elapsed  ->  total = remaining + elapsed
-    //   elapsed only         ->  total = elapsed / progress, remaining = total - elapsed
-    //   neither              ->  nothing to show
+    // The numbers come from the driver, never from a guess: Bambu reports
+    // remaining_time (mc_remaining_time) plus an elapsed_time the server
+    // measures itself, so its total is the two summed; Snapmaker/Moonraker
+    // reports elapsed_time (print_duration) plus a total_time parsed from the
+    // slicer estimate the app embeds in the G-code filename, and derives
+    // remaining from those. Hence, in order of preference:
+    //   remaining + total    ->  remaining / total
+    //   remaining only       ->  remaining / (remaining + elapsed)
+    //   total only           ->  (total - elapsed) / total
+    //   elapsed only         ->  the bare elapsed time, with no total claimed
+    //   nothing              ->  nothing to show
     // An elapsed_time of 0 always means "unknown" (a driver that never saw the
     // job start, e.g. right after a dashboard restart mid-print), never "just
     // started" — so that case degrades to the bare remaining time instead of a
     // meaningless "1h 20m / 1h 20m".
+    //
+    // There used to be a fifth rule here that extrapolated a total as
+    // elapsed / progress when only elapsed was known. It was wrong in the
+    // direction that matters: progress is coarse and lags early in a long job,
+    // so a 16h 33m print displayed "17h 43m / 19h 59m" at 2.4% — a number no
+    // slicer ever produced, which read as the dashboard lying. Showing the
+    // honest elapsed time with no total is better than an invented total.
     function timeSummary(p) {
       const remaining = p.remaining_time > 0 ? p.remaining_time : 0;
       const elapsed = p.elapsed_time > 0 ? p.elapsed_time : 0;
+      const total = p.total_time > 0 ? p.total_time : 0;
       if (remaining > 0) {
+        if (total > 0) return formatTime(remaining) + ' / ' + formatTime(total);
         return elapsed > 0
           ? formatTime(remaining) + ' / ' + formatTime(remaining + elapsed)
           : formatTime(remaining);
       }
-      if (elapsed > 0 && p.progress > 0.02) {
-        const total = elapsed / p.progress;
-        return formatTime(total - elapsed) + ' / ' + formatTime(total);
+      if (total > 0) {
+        return formatTime(Math.max(0, total - elapsed)) + ' / ' + formatTime(total);
       }
+      if (elapsed > 0) return formatTime(elapsed);
       return '';
     }
 

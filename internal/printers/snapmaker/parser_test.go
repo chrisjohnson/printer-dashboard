@@ -212,6 +212,7 @@ func TestParseQueryReport(t *testing.T) {
 						PrintStats: &printStatsReport{
 							Filename:      "test.gcode",
 							PrintDuration: 28125.6,
+							TotalDuration: 28185.7,
 							State:         "printing",
 							Info: &printStatsInfo{
 								CurrentLayer: 42,
@@ -291,6 +292,46 @@ func TestParseQueryReport(t *testing.T) {
 			}
 
 			compareQueryResponse(t, tt.want, got)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// estimatedTimeFromFilename tests
+// ---------------------------------------------------------------------------
+
+func TestEstimatedTimeFromFilename(t *testing.T) {
+	tests := []struct {
+		name   string
+		file   string
+		want   int
+		wantOK bool
+	}{
+		// The live case from the ticket: the Snapmaker app's own filename for a
+		// job the slicer estimated at 16h 33m.
+		{name: "app filename with material segment", file: "Stoner Kit - Body_PETG_16h33m.gcode", want: 59580, wantOK: true},
+		{name: "hours and minutes", file: "m_10h46m.gcode", want: 38760, wantOK: true},
+		{name: "hours only", file: "m_2h.gcode", want: 7200, wantOK: true},
+		{name: "uppercase suffix", file: "x_10H46M.gcode", want: 38760, wantOK: true},
+		{name: "zero minutes", file: "vase_8h00m.gcode", want: 28800, wantOK: true},
+		{name: "no estimate", file: "MyModel.gcode", want: 0, wantOK: false},
+		// The estimate is the app's final suffix token; a duration-looking
+		// fragment earlier in the name is part of the model's name.
+		{name: "estimate not at the end", file: "16h33m model.gcode", want: 0, wantOK: false},
+		{name: "no underscore separator", file: "model16h33m.gcode", want: 0, wantOK: false},
+		{name: "empty name", file: "", want: 0, wantOK: false},
+		{name: "not a gcode", file: "model_16h33m.3mf", want: 0, wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := estimatedTimeFromFilename(tt.file)
+			if ok != tt.wantOK {
+				t.Errorf("estimatedTimeFromFilename(%q) ok = %v; want %v", tt.file, ok, tt.wantOK)
+			}
+			if got != tt.want {
+				t.Errorf("estimatedTimeFromFilename(%q) = %d; want %d", tt.file, got, tt.want)
+			}
 		})
 	}
 }
@@ -483,6 +524,9 @@ func comparePrintStats(t *testing.T, want, got *printStatsReport) {
 	}
 	if math.Abs(got.PrintDuration-want.PrintDuration) > epsilon {
 		t.Errorf("PrintStats.PrintDuration = %f; want %f", got.PrintDuration, want.PrintDuration)
+	}
+	if math.Abs(got.TotalDuration-want.TotalDuration) > epsilon {
+		t.Errorf("PrintStats.TotalDuration = %f; want %f", got.TotalDuration, want.TotalDuration)
 	}
 	if got.State != want.State {
 		t.Errorf("PrintStats.State = %q; want %q", got.State, want.State)
