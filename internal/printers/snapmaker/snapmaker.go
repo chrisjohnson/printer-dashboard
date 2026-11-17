@@ -529,18 +529,31 @@ func (p *Printer) handleQueryReport(q *moonrakerQueryResponse) {
 	if vsd := q.Result.Status.VirtualSDCard; vsd != nil {
 		current.Progress = vsd.Progress
 	}
-	// ElapsedTime: Moonraker's print_duration is the current job's accumulated
-	// printing time with pauses excluded — exactly what the UI needs to derive
-	// a total print time, since Moonraker reports no total (and no remaining
-	// time) at all. Cleared when not printing/paused: Moonraker keeps
-	// reporting the finished job's duration after it ends, and a stale total
-	// on an idle printer would be misleading.
+	// ElapsedTime / TotalTime / RemainingTime: Moonraker's print_duration is
+	// the current job's accumulated printing time with pauses excluded.
+	// Moonraker reports no total (and no remaining time) of its own, so the
+	// total comes from the slicer estimate the Snapmaker app embeds in the
+	// G-code filename it sends (see estimatedTimeFromFilename), and the
+	// remaining time is that estimate minus the elapsed time — pauses
+	// excluded, which is what the vendor phone app counts down from too.
+	// All three are cleared when there is no estimate or the job is not
+	// printing/paused: Moonraker keeps reporting the finished job's duration
+	// after it ends, and a stale total on an idle printer would be misleading.
 	if current.State == "printing" || current.State == "paused" {
 		if ps := q.Result.Status.PrintStats; ps != nil {
 			current.ElapsedTime = int(ps.PrintDuration)
+			if est, ok := estimatedTimeFromFilename(ps.Filename); ok {
+				current.TotalTime = est
+				current.RemainingTime = max(0, est-current.ElapsedTime)
+			} else {
+				current.TotalTime = 0
+				current.RemainingTime = 0
+			}
 		}
 	} else {
 		current.ElapsedTime = 0
+		current.TotalTime = 0
+		current.RemainingTime = 0
 	}
 	if gm := q.Result.Status.GcodeMove; gm != nil {
 		// Paxx firmware doesn't expose homed_axes in gcode_move status.

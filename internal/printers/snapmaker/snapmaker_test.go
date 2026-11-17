@@ -1150,6 +1150,120 @@ func TestHandleQueryReport_ElapsedTimeClearedWhenNotPrinting(t *testing.T) {
 	}
 }
 
+// queryReportWith is a small builder for the handleQueryReport tests: a
+// print_stats block plus a virtual_sdcard progress value.
+func queryReportWith(state, filename string, printDuration, progress float64) *moonrakerQueryResponse {
+	r := &moonrakerQueryResponse{}
+	r.Result.Status = &queryStatus{
+		PrintStats:    &printStatsReport{Filename: filename, PrintDuration: printDuration, State: state},
+		VirtualSDCard: &virtualSDCardReport{Progress: progress},
+	}
+	return r
+}
+
+func TestHandleQueryReport_TotalFromFilenameEstimate(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true, State: "printing",
+	})
+
+	// The live ticket case: a 16h 33m job (59580 s) two hours in. Moonraker
+	// gives only the elapsed time; the slicer's total comes from the filename
+	// the Snapmaker app sent, and remaining is the difference.
+	p.handleQueryReport(queryReportWith("printing", "Stoner Kit - Body_PETG_16h33m.gcode", 7200.4, 0.12))
+
+	s := p.Status()
+	if s.TotalTime != 59580 {
+		t.Errorf("TotalTime = %d; want 59580 (16h33m from the filename)", s.TotalTime)
+	}
+	if s.RemainingTime != 59580-7200 {
+		t.Errorf("RemainingTime = %d; want %d", s.RemainingTime, 59580-7200)
+	}
+	if s.ElapsedTime != 7200 {
+		t.Errorf("ElapsedTime = %d; want 7200", s.ElapsedTime)
+	}
+}
+
+func TestHandleQueryReport_TotalFromEstimateWhilePaused(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true, State: "paused",
+	})
+
+	// A paused job keeps its estimate: print_duration excludes the pause, so
+	// the countdown stays where the phone app left it.
+	p.handleQueryReport(queryReportWith("paused", "m_10h46m.gcode", 3600.0, 0.3))
+
+	s := p.Status()
+	if s.TotalTime != 38760 {
+		t.Errorf("TotalTime = %d; want 38760 (10h46m from the filename)", s.TotalTime)
+	}
+	if s.RemainingTime != 38760-3600 {
+		t.Errorf("RemainingTime = %d; want %d", s.RemainingTime, 38760-3600)
+	}
+}
+
+func TestHandleQueryReport_NoEstimateInFilenameClearsTotal(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	// A previous job left a total and a countdown behind; a file with no
+	// estimate in its name must clear them rather than carry them over.
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true,
+		State: "printing", TotalTime: 38760, RemainingTime: 12345,
+	})
+
+	p.handleQueryReport(queryReportWith("printing", "hand-named.gcode", 600.0, 0.05))
+
+	s := p.Status()
+	if s.TotalTime != 0 {
+		t.Errorf("TotalTime = %d; want 0 (no estimate to report)", s.TotalTime)
+	}
+	if s.RemainingTime != 0 {
+		t.Errorf("RemainingTime = %d; want 0 (no estimate to report)", s.RemainingTime)
+	}
+	if s.ElapsedTime != 600 {
+		t.Errorf("ElapsedTime = %d; want 600 (still reported while printing)", s.ElapsedTime)
+	}
+}
+
+func TestHandleQueryReport_EstimateBehindElapsedClampsRemaining(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true, State: "printing",
+	})
+
+	// The slicer underestimated: more time has gone by than the estimate. The
+	// countdown must stop at zero, never go negative.
+	p.handleQueryReport(queryReportWith("printing", "m_1h.gcode", 5400.0, 0.9))
+
+	s := p.Status()
+	if s.RemainingTime != 0 {
+		t.Errorf("RemainingTime = %d; want 0 (clamped, estimate overrun)", s.RemainingTime)
+	}
+	if s.TotalTime != 3600 {
+		t.Errorf("TotalTime = %d; want 3600", s.TotalTime)
+	}
+}
+
+func TestHandleQueryReport_TimesClearedWhenNotPrinting(t *testing.T) {
+	p := New(config.PrinterDef{ID: "test", Name: "Test"})
+	p.setStatus(printers.PrinterStatus{
+		ID: "test", Name: "Test", Type: "snapmaker", Online: true, State: "complete",
+		ElapsedTime: 59580, TotalTime: 59580, RemainingTime: 400,
+	})
+
+	// Moonraker keeps reporting the finished job's print_duration and filename
+	// after it ends, so all three time fields must be cleared or the card shows
+	// a live countdown on an idle printer.
+	p.handleQueryReport(queryReportWith("complete", "Stoner Kit - Body_PETG_16h33m.gcode", 59580.2, 1.0))
+
+	s := p.Status()
+	if s.ElapsedTime != 0 || s.TotalTime != 0 || s.RemainingTime != 0 {
+		t.Errorf("times while complete = elapsed %d, total %d, remaining %d; want all 0",
+			s.ElapsedTime, s.TotalTime, s.RemainingTime)
+	}
+}
+
 func TestHandleQueryReport_NilReport(t *testing.T) {
 	p := New(config.PrinterDef{ID: "test", Name: "Test"})
 	p.setStatus(printers.PrinterStatus{ID: "test", Name: "Test", Online: true, State: "idle"})

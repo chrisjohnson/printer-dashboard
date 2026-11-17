@@ -592,15 +592,16 @@ test.describe('Dashboard', () => {
   });
 
   // The progress row shows the print time beside the percentage, as
-  // "remaining / total". No printer reports a total print time, so the
-  // frontend derives it: Bambu sends remaining_time plus an elapsed_time the
-  // server measures (total = the two summed), Snapmaker/Moonraker sends only
-  // elapsed_time alongside progress (total extrapolated from progress), and an
-  // elapsed_time of 0 means "unknown" — e.g. the dashboard restarted mid-print
-  // — and degrades to the bare remaining time rather than a bogus "1h 20m /
-  // 1h 20m". Cards are synthetic because the Bambu-backed test printers need
-  // real cloud auth to render at all (same pre-existing gap as the tests
-  // above).
+  // "remaining / total". Every number in it comes from the driver, never from a
+  // guess: Bambu sends remaining_time plus an elapsed_time the server measures
+  // (total = the two summed), Snapmaker sends elapsed_time plus a total_time
+  // parsed from the slicer estimate in the G-code filename (and the remaining
+  // derived from those), and a driver that has only elapsed_time shows that
+  // bare elapsed time. An elapsed_time of 0 means "unknown" — e.g. the
+  // dashboard restarted mid-print — and degrades to the bare remaining time
+  // rather than a bogus "1h 20m / 1h 20m". Cards are synthetic because the
+  // Bambu-backed test printers need real cloud auth to render at all (same
+  // pre-existing gap as the tests above).
   test.describe('progress time summary', () => {
     const syntheticPrinter = {
       id: 'zz-time',
@@ -610,6 +611,7 @@ test.describe('Dashboard', () => {
       progress: 0,
       remaining_time: 0,
       elapsed_time: 0,
+      total_time: 0,
       current_file: null,
       current_layer: 0,
       total_layers: 0,
@@ -631,6 +633,18 @@ test.describe('Dashboard', () => {
     ): Promise<{ percent: string; time: string }> => {
       await page.route('**/ws', (route) => route.abort());
       await page.goto('/');
+      // Let the page's own initial loadPrinters() land before inserting the
+      // synthetic card. It replaces #printer-list's contents wholesale, so a
+      // card inserted while that fetch is still in flight is wiped a moment
+      // later — invisible to a test that reads the card inside the same
+      // evaluate, but fatal to one (updateCard below) that comes back for a
+      // second round-trip and finds its card gone. An empty fleet resolves
+      // immediately via the catch: there is then nothing to wait for.
+      await page
+        .waitForFunction(
+          () => Object.keys((window as any)._printerCache || {}).length > 0,
+        )
+        .catch(() => {});
       return page.evaluate((override) => {
         const w = window as any;
         const printer = { ...override };
@@ -661,15 +675,47 @@ test.describe('Dashboard', () => {
       expect(time).toBe('1h 20m / 3h 8m');
     });
 
-    test('extrapolates remaining and total from progress when only elapsed is known', async ({
+    test('prefers the driver-reported total over the elapsed sum', async ({
       page,
     }) => {
-      // Snapmaker path: 1h printed at 25% -> 4h total, 3h still to go.
+      // Snapmaker path: the driver parsed "3h20m" out of the filename and
+      // counted 1h20m off it. The reported total wins over remaining+elapsed
+      // (which would have said 3h 8m) because it is the slicer's own figure.
+      const { time } = await renderProgressRow(page, {
+        progress: 0.45,
+        remaining_time: 4800,
+        elapsed_time: 6480,
+        total_time: 12000,
+      });
+      expect(time).toBe('1h 20m / 3h 20m');
+    });
+
+    test('shows remaining counted off the total when the driver reports no remaining', async ({
+      page,
+    }) => {
+      // A total with nothing left to go: the countdown is total - elapsed, and
+      // a job that has overrun its estimate clamps to 0h 0m rather than going
+      // negative.
+      const { time } = await renderProgressRow(page, {
+        progress: 0.9,
+        elapsed_time: 10800,
+        total_time: 12000,
+      });
+      expect(time).toBe('0h 20m / 3h 20m');
+    });
+
+    test('shows the bare elapsed time when that is all the driver reports', async ({
+      page,
+    }) => {
+      // No estimate in the filename and no remaining time: the card says what
+      // has been printed and invents nothing. Extrapolating a total from
+      // progress used to land here and produced wildly wrong figures early in a
+      // long job (a 16h 33m print at 2.4% claimed 19h 59m), so it is gone.
       const { time } = await renderProgressRow(page, {
         progress: 0.25,
         elapsed_time: 3600,
       });
-      expect(time).toBe('3h 0m / 4h 0m');
+      expect(time).toBe('1h 0m');
     });
 
     test('falls back to the bare remaining time when elapsed is unknown', async ({

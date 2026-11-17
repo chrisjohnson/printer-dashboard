@@ -20,13 +20,29 @@ type PrinterStatus struct {
 	RemainingTime     int      `json:"remaining_time"` // seconds
 	// ElapsedTime is how long the current print job has been actively
 	// printing, in seconds, with paused time excluded. It exists so the UI can
-	// show a total print time: neither Bambu's LAN MQTT report nor Moonraker
-	// reports a job's total duration directly, so the dashboard derives it
-	// from elapsed time (see the frontend's timeSummary()). A driver sets it
-	// to 0 when there is no active print or the elapsed time is unknown —
-	// notably a Bambu dashboard restart mid-print, where the start time was
-	// never observed.
+	// show print-time context when no total is known: neither Bambu's LAN MQTT
+	// report nor Moonraker reports a job's total duration, so a driver that
+	// has nothing else falls back to showing elapsed time alone (see the
+	// frontend's timeSummary()). A driver sets it to 0 when there is no active
+	// print or the elapsed time is unknown — notably a Bambu dashboard restart
+	// mid-print, where the start time was never observed.
 	ElapsedTime int `json:"elapsed_time"`
+	// TotalTime is the expected wall-clock duration of the whole current job,
+	// in seconds. 0 means unknown — a driver that has no source for it leaves
+	// it at 0 rather than guessing.
+	//
+	// Snapmaker/Moonraker is the driver that populates it: Moonraker itself
+	// reports no total, but the Snapmaker app names every G-code file it sends
+	// with the slicer's estimate as a trailing "_<XhYm>" token
+	// ("Stoner Kit - Body_PETG_16h33m.gcode"), which is the same figure the
+	// vendor phone app counts down from. Parsing it beats extrapolating a total
+	// from elapsed/progress, which ran ~20% high on long jobs.
+	//
+	// No omitempty, for the same reason ElapsedTime has none: the browser merges
+	// each WebSocket push over the last cached status and only lets a field that
+	// is actually present override, so an omitted 0 would leave a finished job's
+	// total pinned to the card forever.
+	TotalTime int `json:"total_time"`
 	CurrentFile       string   `json:"current_file"`
 	BedTemp           *float64 `json:"bed_temp"`
 	BedTargetTemp     *float64 `json:"bed_target_temp"`
