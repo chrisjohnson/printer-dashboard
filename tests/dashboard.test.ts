@@ -1,5 +1,101 @@
 import { test, expect, type Page } from '@playwright/test';
 
+// A minimal, fully synthetic printer shared by the ordering and transport
+// describes at the bottom of this file. Declared at module scope because three
+// describes use it ('List order', 'Transport badge', 'List order — error
+// kinds'); it used to live inside 'List order', where the other two could not
+// see it and threw `ReferenceError: base is not defined` on every run.
+const base = {
+  type: 'snapmaker',
+  online: true,
+  progress: 0.5,
+  remaining_time: 0,
+  elapsed_time: 0,
+  current_file: '',
+  current_layer: 0,
+  total_layers: 0,
+  bed_temp: 20,
+  bed_target_temp: null,
+  nozzle_temp: 20,
+  nozzle_target_temp: null,
+  chamber_temp: null,
+  chamber_target_temp: null,
+  has_chamber: false,
+  hms_errors: [],
+  hms_warnings: [],
+};
+
+// Silences the page's own status socket for a spec that drives the frontend by
+// hand (mergeWithCache()/updateCard()).
+//
+// The specs used to do this with `page.route('**/ws', abort)`, which has never
+// worked: Playwright does not intercept WebSocket handshakes, so the socket
+// connected anyway and the real drivers kept pushing over it (the stub U1 polls
+// every 3s and broadcasts each poll). Replacing the constructor before any page
+// script runs is the only thing that actually stops it — and it also keeps the
+// socket's reconnect path from firing loadPrinters() again mid-test, which
+// replaces #printer-list wholesale and wipes a synthetic card a test has just
+// injected.
+const silenceWebSocket = (page: Page) =>
+  page.addInitScript(() => {
+    (window as any).WebSocket = function StubWebSocket() {
+      this.onopen = null;
+      this.onmessage = null;
+      this.onclose = null;
+      this.onerror = null;
+      this.readyState = 0;
+      this.close = function () {};
+      this.send = function () {};
+    } as any;
+  });
+
+// Resolves once the page's own initial loadPrinters() has landed.
+//
+// loadPrinters() replaces #printer-list's contents wholesale, so a card a test
+// injects before it finishes is gone a moment later, and a test that reads the
+// card list before it runs sees the pre-load skeleton cards (which have no id
+// at all). The cache is populated and the cards rendered in one synchronous
+// block, so a non-empty cache means "the real cards are in the DOM"; the
+// _camerasRendered check is the belt to that braces — the camera state is what
+// decides whether a card gets a camera block at all, and it used to land on a
+// second loadPrinters() pass (see applyCamerasState's aboutToRender).
+const waitForFleet = async (page: Page) => {
+  await page.waitForFunction(() => {
+    const w = window as any;
+    return (
+      Object.keys(w._printerCache || {}).length > 0 &&
+      w._camerasRendered === w._camerasServer
+    );
+  });
+};
+
+// Injects the given printers as real cards, in the order given, then lets the
+// client's own sort place each one and returns the resulting card ids.
+//
+// The cards are inserted worst-first on purpose, so an order that comes out
+// right can only have come from the sort and not from insertion order.
+// `container.innerHTML = ''` first drops the stub fleet, so the assertion is
+// about exactly these cards.
+const sortViaReorderCard = async (
+  page: Page,
+  printers: Array<Record<string, unknown> & { id: string }>,
+): Promise<string[]> => {
+  await silenceWebSocket(page);
+  await page.goto('/');
+  await waitForFleet(page);
+  return page.evaluate((list) => {
+    const w = window as any;
+    const container = document.getElementById('printer-list');
+    container.innerHTML = '';
+    for (const p of list) {
+      w._printerCache[p.id] = p;
+      container.insertAdjacentHTML('beforeend', w.renderCard(p));
+    }
+    for (const p of list) w.reorderCard(p.id);
+    return Array.from(container.querySelectorAll('.card')).map((c) => c.id);
+  }, printers);
+};
+
 test.describe('Dashboard', () => {
   test('page title is Printer Dashboard', async ({ page }) => {
     await page.goto('/');
@@ -101,7 +197,7 @@ test.describe('Dashboard', () => {
     // Block the real WebSocket connection so genuine printer_update pushes
     // (these test printers cycle through connection-error states) can't
     // interfere with the deterministic race we're simulating below.
-    await page.route('**/ws', (route) => route.abort());
+    await silenceWebSocket(page);
 
     await page.goto('/');
     await expect(page.locator('#printer-u1 [data-light] .toggle input')).toBeAttached();
@@ -193,10 +289,26 @@ test.describe('Dashboard', () => {
   });
 
   // K-081: movement/homing control pad (jog X/Y/Z + Home All). u1 (Snapmaker)
-  // is used throughout since it's reliably online+idle in this sandbox (the
-  // Bambu test printers require real cloud credentials — see the chamber
-  // temp row test above).
+  // is used throughout because the stub fleet makes it deterministically
+  // online+idle (the Bambu test printers require real cloud credentials — see
+  // the chamber temp row test above).
   test.describe('Movement pad', () => {
+    // The pad lives inside a collapsed <details> since the #27 card redesign,
+    // so anything that clicks a jog button has to open it first, exactly the way
+    // a user reaches it. Assertions about enabled/disabled state do not — those
+    // do not require visibility.
+    const openMovementPad = async (page: Page) => {
+      await page.goto('/');
+      const pad = page.locator('#printer-u1 .move-section-collapsible');
+      await expect(pad).toBeAttached();
+      if (!(await pad.evaluate((el) => (el as HTMLDetailsElement).open))) {
+        await page.locator('#printer-u1 .move-section-summary').click();
+      }
+      expect(await pad.evaluate((el) => (el as HTMLDetailsElement).open)).toBe(
+        true,
+      );
+    };
+
     test('jog and Home All buttons are disabled while printing, enabled while idle', async ({
       page,
     }) => {
@@ -249,7 +361,7 @@ test.describe('Dashboard', () => {
         });
       });
 
-      await page.goto('/');
+      await openMovementPad(page);
       await expect(page.locator('#printer-u1 .jog-x-plus')).toBeEnabled();
 
       // Default step size is the smallest/most conservative option (0.1mm).
@@ -287,7 +399,7 @@ test.describe('Dashboard', () => {
         });
       });
 
-      await page.goto('/');
+      await openMovementPad(page);
       await expect(page.locator('#printer-u1 .jog-z-plus')).toBeEnabled();
 
       // Clicking Z+ shows the in-page confirmation modal (not a native
@@ -325,7 +437,7 @@ test.describe('Dashboard', () => {
         });
       });
 
-      await page.goto('/');
+      await openMovementPad(page);
       await expect(page.locator('#printer-u1 .btn-home-all')).toBeEnabled();
 
       page.once('dialog', (dialog) => {
@@ -448,7 +560,7 @@ test.describe('Dashboard', () => {
     // Block the real WebSocket so genuine printer_update pushes (these test
     // printers cycle through connection-error states) can't race the
     // deterministic update simulated below — same precaution as the K-080 test.
-    await page.route('**/ws', (route) => route.abort());
+    await silenceWebSocket(page);
 
     await page.goto('/');
     const bedVal = page.locator('#printer-u1 .temp-row .val').first();
@@ -522,14 +634,15 @@ test.describe('Dashboard', () => {
   // synthetic card via the real renderCard() helper (a plain global, like
   // the other onboarding.go helpers used throughout this file) rather than
   // depending on Bambu connectivity. Named so it alphabetically sorts after
-  // "Snapmaker U1" while idle, then forced into the 'error' tier (which
-  // sorts first, per reorderCard()'s sortPriority()) to prove it actually
-  // moves to the front of #printer-list.
+  // "Snapmaker U1" while idle, then forced into the failed-print tier
+  // (sortPriority() 0, the top tier) to prove it actually moves to the front of
+  // #printer-list.
   test('reorderCard still moves a card when its sort position genuinely changes', async ({
     page,
   }) => {
-    await page.route('**/ws', (route) => route.abort());
+    await silenceWebSocket(page);
     await page.goto('/');
+    await waitForFleet(page);
     await expect(page.locator('#printer-u1')).toBeAttached();
 
     await page.evaluate(() => {
@@ -573,7 +686,15 @@ test.describe('Dashboard', () => {
 
     await page.evaluate(() => {
       const w = window as any;
-      const merged = w.mergeWithCache({ id: 'zz-synthetic', state: 'error' });
+      const merged = w.mergeWithCache({
+        id: 'zz-synthetic',
+        state: 'error',
+        // A bare 'error' is a standing maintenance fault since #42 and sorts in
+        // tier 2 — below the live prints, and level with the Bambu test printers
+        // the stub fleet leaves in that tier. print_failed is what puts a card
+        // at the very top (tier 0), which is the move this asserts.
+        print_failed: true,
+      });
       w.updateCard(merged);
     });
 
@@ -585,8 +706,9 @@ test.describe('Dashboard', () => {
         (c) => c.id,
       ),
     );
-    // Error tier sorts first (sortPriority() returns 0 for 'error'), so the
-    // synthetic card must now be the first card in the DOM.
+    // A failed print is the top tier (sortPriority() returns 0 for
+    // error+print_failed), so the synthetic card must now be the first card in
+    // the DOM.
     expect(orderAfter[0]).toBe('printer-zz-synthetic');
     expect(orderAfter).not.toEqual(orderBefore);
   });
@@ -631,20 +753,15 @@ test.describe('Dashboard', () => {
       page: Page,
       status: Record<string, unknown>,
     ): Promise<{ percent: string; time: string }> => {
-      await page.route('**/ws', (route) => route.abort());
+      await silenceWebSocket(page);
       await page.goto('/');
       // Let the page's own initial loadPrinters() land before inserting the
       // synthetic card. It replaces #printer-list's contents wholesale, so a
       // card inserted while that fetch is still in flight is wiped a moment
       // later — invisible to a test that reads the card inside the same
       // evaluate, but fatal to one (updateCard below) that comes back for a
-      // second round-trip and finds its card gone. An empty fleet resolves
-      // immediately via the catch: there is then nothing to wait for.
-      await page
-        .waitForFunction(
-          () => Object.keys((window as any)._printerCache || {}).length > 0,
-        )
-        .catch(() => {});
+      // second round-trip and finds its card gone.
+      await waitForFleet(page);
       return page.evaluate((override) => {
         const w = window as any;
         const printer = { ...override };
@@ -769,6 +886,11 @@ test.describe('Out of sync', () => {
     name: 'ZZ Out Of Sync',
     type: 'snapmaker',
     online: true,
+    // Explicit, because mergeWithCache() keeps every cached key an update omits
+    // and the Go field has no omitempty — so a real recovery push always carries
+    // stale:false. Left implicit here, a "recovered" update could never clear an
+    // outage the card was already showing.
+    stale: false,
     state: 'printing',
     progress: 0.42,
     remaining_time: 0,
@@ -792,7 +914,7 @@ test.describe('Out of sync', () => {
     ],
     camera_streams: [
       {
-        url: '/api/camera/proxy?url=http%3A%2F%2F192.168.1.10%2Fwebcam%2Fstream.mjpg',
+        url: '/api/camera/proxy?url=http%3A%2F%2F127.0.0.1%3A18081%2Fwebcam%2Fstream.mjpg',
         type: 'internal',
         label: 'Camera',
       },
@@ -808,19 +930,28 @@ test.describe('Out of sync', () => {
     online: false,
     stale: true,
     stale_reason:
-      'status poll failed: http request: Get "http://192.168.1.10/api/printer": context deadline exceeded',
+      'status poll failed: http request: Get "http://127.0.0.1:18081/api/printer": context deadline exceeded',
     last_update: lastUpdate,
   };
 
-  const mountCard = async (page: Page, status: Record<string, unknown>) => {
-    await page.route('**/ws', (route) => route.abort());
+  const mountCard = async (
+    page: Page,
+    status: Record<string, unknown> & { id: string },
+  ) => {
+    await silenceWebSocket(page);
     await page.goto('/');
+    await waitForFleet(page);
     await page.evaluate((printer) => {
       const w = window as any;
       w._printerCache[printer.id] = printer;
       document
         .getElementById('printer-list')!
         .insertAdjacentHTML('beforeend', w.renderCard(printer));
+      // renderCard() always emits the bell hidden — loadPrinters() is what
+      // calls refreshCardOverlays() once the markup is in the DOM, and a test
+      // that mounts a card by hand has to do the same or the notice chip never
+      // appears.
+      w.refreshCardOverlays(document.getElementById('printer-' + printer.id));
     }, status);
   };
 
@@ -959,7 +1090,11 @@ test.describe('Out of sync', () => {
     );
     // The whole point of the server-side frame cache: the picture stays up.
     await expect(page.locator('#cam-zz-oos-0 img')).toBeVisible();
-    await expect(page.locator('.cam-refresh-btn')).toBeVisible();
+    // Scoped to this card's slot: every printer in the stub fleet renders a
+    // camera block, so a bare .cam-refresh-btn matches four of them.
+    await expect(
+      page.locator('#cam-zz-oos-0 .cam-refresh-btn'),
+    ).toBeVisible();
   });
 
   test('a camera with nothing cached still shows the hard error', async ({
@@ -1027,15 +1162,24 @@ test.describe('Expired sign-in', () => {
     hms_warnings: [],
   };
 
-  const mount = async (page: Page, status: Record<string, unknown>) => {
-    await page.route('**/ws', (route) => route.abort());
+  const mount = async (
+    page: Page,
+    status: Record<string, unknown> & { id: string },
+  ) => {
+    await silenceWebSocket(page);
     await page.goto('/');
+    await waitForFleet(page);
     await page.evaluate((printer) => {
       const w = window as any;
       w._printerCache[printer.id] = printer;
       document
         .getElementById('printer-list')!
         .insertAdjacentHTML('beforeend', w.renderCard(printer));
+      // renderCard() always emits the bell hidden — loadPrinters() is what
+      // calls refreshCardOverlays() once the markup is in the DOM, and a test
+      // that mounts a card by hand has to do the same or the notice chip never
+      // appears.
+      w.refreshCardOverlays(document.getElementById('printer-' + printer.id));
     }, status);
   };
 
@@ -1093,6 +1237,11 @@ test.describe('Expired sign-in', () => {
   test('re-authenticating withdraws the notice', async ({ page }) => {
     await mount(page, lockedOutPrinter);
     const card = page.locator('#printer-zz-auth');
+    // The written-out notice lives inside the header bell's popover since the
+    // #38 refactor, so the popover has to be open for "visible" to mean
+    // anything. The update below leaves it open, so the second assertion reads
+    // the same way the first does.
+    await card.locator('.notice-chip').click();
     await expect(card.locator('.auth-banner')).toBeVisible();
 
     await page.evaluate(() => {
@@ -1115,84 +1264,52 @@ test.describe('Expired sign-in', () => {
 });
 
 // The list is ordered by what deserves attention, and a finished print is not
-// more urgent than a running one. The bug: printerSortPriority let "complete"
-// fall through to the active tier, so a P1S that ended hours ago beat a U1
-// printing right now purely on the A-Z tiebreak.
+// more urgent than a running one. The bug #40 fixed: printerSortPriority let
+// "complete" fall through to the active tier, so a P1S that ended hours ago beat
+// a U1 printing right now purely on the A-Z tiebreak.
+//
+// Two sorts implement that contract and they have to agree:
+//
+//   * the server's, on /api/printers — printerSortPriority in server.go, pinned
+//     by internal/server/printer_sort_test.go;
+//   * the client's, on every WS update — reorderCard()'s JS mirror.
+//
+// These specs drive the client mirror. They used to stub /api/printers and
+// expect the browser to re-sort the response, but the browser deliberately does
+// not: loadPrinters() renders the order the server already put it in, so those
+// expectations described a sort that never runs. (They were also written on a
+// box with no working Playwright install and had never been executed — see the
+// #40 commit message.)
 test.describe('List order', () => {
-  const base = {
-    type: 'snapmaker',
-    online: true,
-    progress: 0.5,
-    remaining_time: 0,
-    elapsed_time: 0,
-    current_file: '',
-    current_layer: 0,
-    total_layers: 0,
-    bed_temp: 20,
-    bed_target_temp: null,
-    nozzle_temp: 20,
-    nozzle_target_temp: null,
-    chamber_temp: null,
-    chamber_target_temp: null,
-    has_chamber: false,
-    hms_errors: [],
-    hms_warnings: [],
-  };
-
   test('a running print sorts above a completed one', async ({ page }) => {
-    await page.route('**/ws', (route) => route.abort());
-    await page.route('**/api/printers', (route) =>
-      void route.fulfill({
-        json: {
-          printers: [
-            // Deliberately served worst-first so any correct ordering has to
-            // be produced by the sort, not inherited from the response.
-            { ...base, id: 'done', name: 'AAA Done', state: 'complete' },
-            { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
-            { ...base, id: 'rest', name: 'MMM Idle', state: 'idle' },
-          ],
-        },
-      }),
-    );
-    await page.goto('/');
-
-    const order = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#printer-list .card')).map(
-        (c) => c.id,
-      ),
-    );
-    expect(order).toEqual(['printer-run', 'printer-rest', 'printer-done']);
+    const order = await sortViaReorderCard(page, [
+      // "AAA Done" is both inserted first and alphabetically first, so only the
+      // tier sort can demote it below the running printer.
+      { ...base, id: 'done', name: 'AAA Done', state: 'complete' },
+      { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
+      { ...base, id: 'rest', name: 'MMM Idle', state: 'idle' },
+    ]);
+    // printing is its own tier; idle and complete share the last tier and are
+    // ordered A-Z within it — the same contract printerSortPriority implements
+    // and printer_sort_test.go pins server-side.
+    expect(order).toEqual(['printer-run', 'printer-done', 'printer-rest']);
   });
 
   test('a printer we are locked out of does not take the top slot', async ({
     page,
   }) => {
-    await page.route('**/ws', (route) => route.abort());
-    await page.route('**/api/printers', (route) =>
-      void route.fulfill({
-        json: {
-          printers: [
-            {
-              ...base,
-              id: 'blind',
-              name: 'AAA Blind',
-              state: 'error',
-              online: false,
-              auth_invalid: true,
-              error_msg: 'Bambu Lab sign-in has expired',
-            },
-            { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
-          ],
-        },
-      }),
-    );
-    await page.goto('/');
-
-    const order = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#printer-list .card')).map(
-        (c) => c.id,
-      ),
-    );
+    const order = await sortViaReorderCard(page, [
+      {
+        ...base,
+        id: 'blind',
+        name: 'AAA Blind',
+        state: 'error',
+        online: false,
+        auth_invalid: true,
+        error_msg: 'Bambu Lab sign-in has expired',
+      },
+      { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
+    ]);
     // The lockout is the dashboard's problem, not a printer fault, and it is
     // permanent until a human fixes it — it must not bury the live print.
     expect(order).toEqual(['printer-run', 'printer-blind']);
@@ -1216,6 +1333,7 @@ test.describe('Transport badge', () => {
       }),
     );
     await page.goto('/');
+    await waitForFleet(page);
 
     const layout = await page.evaluate(() =>
       Array.from(document.querySelectorAll('#printer-list .card')).map((c) => {
@@ -1252,6 +1370,7 @@ test.describe('Transport badge', () => {
       route.fulfill({ json: { printers: [{ ...base, id: 'p', name: 'P', state: 'printing' }] } }),
     );
     await page.goto('/');
+    await waitForFleet(page);
     expect(await page.locator('#printer-p .transport-badge').count()).toBe(0);
 
     // Transport can change at runtime when a session fails over, so an update
@@ -1275,22 +1394,14 @@ test.describe('List order — error kinds', () => {
     // urgent. The chronic case is a P1S that has been complaining about its SD
     // card for weeks while printing fine on request; it used to sit at the top
     // of the dashboard permanently and bury every live job.
-    await page.route('**/api/printers', async (route) =>
-      route.fulfill({
-        json: {
-          printers: [
-            { ...base, id: 'fault', name: 'AAA Standing Fault', state: 'error', print_failed: false },
-            { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
-            { ...base, id: 'dead', name: 'MMM Failed Print', state: 'error', print_failed: true },
-          ],
-        },
-      }),
-    );
-    await page.goto('/');
-
-    const order = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#printer-list .card')).map((c) => c.id),
-    );
+    //
+    // Driven through reorderCard() for the same reason as the 'List order'
+    // specs above: the tier sort the client owns is what is under test.
+    const order = await sortViaReorderCard(page, [
+      { ...base, id: 'fault', name: 'AAA Standing Fault', state: 'error', print_failed: false },
+      { ...base, id: 'run', name: 'ZZZ Running', state: 'printing' },
+      { ...base, id: 'dead', name: 'MMM Failed Print', state: 'error', print_failed: true },
+    ]);
     expect(order).toEqual(['printer-dead', 'printer-run', 'printer-fault']);
   });
 });

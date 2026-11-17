@@ -1,4 +1,27 @@
-listen: ":8080"
+# Test-only config for the Playwright suite. tests/run-test-server.sh starts the
+# dashboard with this file; nothing in it points at real hardware, so the suite
+# is reproducible on any machine and cannot be disturbed by a printer that
+# happens to be busy.
+#
+#   listen 127.0.0.1:18080
+#       A dedicated port. :8080 is the Caddy-visible dev default (see
+#       AGENTS.md), so a dev instance already running there used to be silently
+#       tested instead of the fixture server — playwright.config.ts now sets
+#       reuseExistingServer: false and uses a port nothing else claims.
+#
+#   u1 -> 127.0.0.1:18081
+#       The stub Snapmaker in tests/stub/snapmaker.js, which answers with a
+#       fixed idle state. The real U1's LAN address used to sit here, so every
+#       test that assumes an idle printer failed whenever someone was actually
+#       printing against it.
+#
+#   p1s / h2s -> 127.0.0.1
+#       Unreachable on purpose: their LAN MQTT probes are refused immediately
+#       instead of timing out against a printer that is not on this network.
+#       The entries stay because config-driven rendering is tested through them
+#       (the chamber-temp row test reads #printer-p1s / #printer-h2s, which only
+#       exist for printers declared here), not because they need to connect.
+listen: "127.0.0.1:18080"
 auth:
   enabled: false
 bambu_account:
@@ -10,7 +33,7 @@ printers:
     name: "Bambu P1S"
     type: bambu
     serial: "SERIAL000000000001"
-    host: 192.168.1.100
+    host: 127.0.0.1
     access_code: "12345678"
 
   - id: h2s
@@ -18,13 +41,13 @@ printers:
     type: bambu
     model: H2S
     serial: "SERIAL000000000002"
-    host: 192.168.1.101
+    host: 127.0.0.1
     access_code: "12345678"
 
   - id: u1
     name: "Snapmaker U1"
     type: snapmaker
-    host: 192.168.1.10
-    port: 80
+    host: 127.0.0.1
+    port: 18081
     access_code: ""
 cameras: []
